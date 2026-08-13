@@ -11,6 +11,68 @@ const SEED_STAGES: { name: string; kind: "open" | "won" | "lost" }[] = [
   { name: "Perdido", kind: "lost" },
 ];
 
+export type CreateOrganizationWithDefaultsInput = {
+  name: string;
+  slug: string;
+  ownerUserId: string;
+};
+
+/** Cliente de escritura compatible con `getDb()` y el `tx` de `transaction`. */
+type DbWriter = {
+  insert: ReturnType<typeof getDb>["insert"];
+};
+
+/**
+ * Crea una organización nueva con membership owner, pipeline inicial y
+ * agent_profile. Espera un `slug` aún no usado (no es upsert).
+ *
+ * Si se pasa `tx`, escribe en esa transacción; si no, abre una propia para
+ * que la inicialización sea atómica.
+ */
+export async function createOrganizationWithDefaults(
+  input: CreateOrganizationWithDefaultsInput,
+  tx?: DbWriter
+): Promise<{ organizationId: string }> {
+  if (tx) {
+    return insertOrganizationWithDefaults(tx, input);
+  }
+  return getDb().transaction((inner) =>
+    insertOrganizationWithDefaults(inner, input)
+  );
+}
+
+async function insertOrganizationWithDefaults(
+  db: DbWriter,
+  input: CreateOrganizationWithDefaultsInput
+): Promise<{ organizationId: string }> {
+  const organizationId = newId("organization");
+  await db.insert(schema.organization).values({
+    id: organizationId,
+    name: input.name,
+    slug: input.slug,
+  });
+  await db.insert(schema.member).values({
+    id: newId("member"),
+    organizationId,
+    userId: input.ownerUserId,
+    role: "owner",
+  });
+  await db.insert(schema.pipelineStage).values(
+    SEED_STAGES.map((s, i) => ({
+      id: newId("stage"),
+      organizationId,
+      name: s.name,
+      position: i,
+      kind: s.kind,
+    }))
+  );
+  await db.insert(schema.agentProfile).values({
+    id: newId("agentProfile"),
+    organizationId,
+  });
+  return { organizationId };
+}
+
 /**
  * Primer registro de la instancia: crea la organización, deja al usuario como
  * propietario y siembra pipeline + perfil del agente.
@@ -30,31 +92,14 @@ export async function onUserCreated(userId: string, userName: string) {
       .from(schema.organization);
     if ((orgs?.n ?? 0) > 0) return;
 
-    const orgId = newId("organization");
-    await tx.insert(schema.organization).values({
-      id: orgId,
-      name: userName ? `Negocio de ${userName}` : "Mi negocio",
-      slug: "principal",
-    });
-    await tx.insert(schema.member).values({
-      id: newId("member"),
-      organizationId: orgId,
-      userId,
-      role: "owner",
-    });
-    await tx.insert(schema.pipelineStage).values(
-      SEED_STAGES.map((s, i) => ({
-        id: newId("stage"),
-        organizationId: orgId,
-        name: s.name,
-        position: i,
-        kind: s.kind,
-      }))
+    await createOrganizationWithDefaults(
+      {
+        name: userName ? `Negocio de ${userName}` : "Mi negocio",
+        slug: "principal",
+        ownerUserId: userId,
+      },
+      tx
     );
-    await tx.insert(schema.agentProfile).values({
-      id: newId("agentProfile"),
-      organizationId: orgId,
-    });
   });
 }
 
