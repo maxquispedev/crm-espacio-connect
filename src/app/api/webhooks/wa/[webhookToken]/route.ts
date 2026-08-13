@@ -5,6 +5,7 @@ import {
   isValidWebhookToken,
   type WebhookPayload,
 } from "@/server/inbox/webhook";
+import { processHistoryValue, processStateSyncValue } from "@/server/inbox/history";
 import { processEchoesValue, processMessagesValue } from "@/server/inbox/ingest";
 import { processTemplateStatusValue } from "@/server/whatsapp/template-events";
 
@@ -77,6 +78,12 @@ async function processPayload(payload: WebhookPayload): Promise<void> {
       } else if (change.field === "smb_message_echoes") {
         // 008: mensajes enviados a mano desde la app del teléfono (coexistence)
         await processEchoesValue(change.value);
+      } else if (change.field === "history") {
+        // Historial previo al onboarding (coexistence). Camino dedicado:
+        // no toca agente, unread, handoff ni leads.
+        await processHistoryValue(change.value);
+      } else if (change.field === "smb_app_state_sync") {
+        await processStateSyncValue(change.value);
       } else if (change.field === "message_template_status_update") {
         await processTemplateStatusValue(entry.id ?? null, change.value);
       }

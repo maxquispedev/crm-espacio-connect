@@ -5,6 +5,7 @@ import {
   tokenLast4,
 } from "@/server/whatsapp/credentials";
 import { subscribeAppToWaba, testConnection } from "@/server/whatsapp/connect";
+import { requestCoexistenceSync } from "@/server/whatsapp/smb-app-data";
 
 export const embeddedSignupBodySchema = z.object({
   code: z.string().trim().min(1),
@@ -91,6 +92,14 @@ export async function completeEmbeddedSignup(input: {
     token,
     displayPhoneNumber: check.displayPhoneNumber,
     verifiedName: check.verifiedName,
+  });
+
+  // Best-effort: si Meta rechaza el sync, el número YA quedó conectado.
+  // Debe ir DESPUÉS de saveCredentials para que los webhooks history/
+  // smb_app_state_sync puedan enrutarse por phone_number_id.
+  await requestCoexistenceSync({
+    phoneNumberId: input.phoneNumberId,
+    token,
   });
 
   return {

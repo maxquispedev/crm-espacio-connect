@@ -210,6 +210,27 @@ export async function POST(req: Request, ctx: Params) {
     return Response.json({ success: true });
   }
 
+  // POST {phoneNumberId}/smb_app_data → sync de coexistence (agenda / historial)
+  if (path.length === 2 && path[1] === "smb_app_data") {
+    if (path[0] === "PN-NOSYNC") {
+      return Response.json(
+        {
+          error: {
+            message: "Cannot sync SMB app data",
+            type: "OAuthException",
+            code: 100,
+            fbtrace_id: "mock",
+          },
+        },
+        { status: 400 }
+      );
+    }
+    return Response.json({
+      messaging_product: "whatsapp",
+      request_id: `req_mock_${nextN()}`,
+    });
+  }
+
   return Response.json({});
 }
 

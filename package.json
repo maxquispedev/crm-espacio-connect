@@ -22,7 +22,8 @@
     "db:migrate": "drizzle-kit migrate",
     "seed:demo": "esbuild scripts/seed/demo.ts --bundle --platform=node --format=esm --outfile=.tmp-seed-demo.mjs --alias:@=./src --packages=external && node .tmp-seed-demo.mjs",
     "org:create": "esbuild scripts/org/create.ts --bundle --platform=node --format=esm --outfile=.tmp-org-create.mjs --alias:@=./src --packages=external && node .tmp-org-create.mjs",
-    "org:rename": "esbuild scripts/org/rename.ts --bundle --platform=node --format=esm --outfile=.tmp-org-rename.mjs --alias:@=./src --packages=external && node .tmp-org-rename.mjs"
+    "org:rename": "esbuild scripts/org/rename.ts --bundle --platform=node --format=esm --outfile=.tmp-org-rename.mjs --alias:@=./src --packages=external && node .tmp-org-rename.mjs",
+    "whatsapp:sync-history": "esbuild scripts/whatsapp/sync-history.ts --bundle --platform=node --format=esm --outfile=.tmp-whatsapp-sync-history.mjs --alias:@=./src --packages=external && node .tmp-whatsapp-sync-history.mjs"
   },
   "dependencies": {
     "@dnd-kit/core": "^6.3.1",

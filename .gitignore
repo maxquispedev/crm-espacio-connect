@@ -39,4 +39,5 @@ Thumbs.db
 .claude/settings.local.json
 .playwright-mcp/
 .tmp-seed-demo.mjs
+.tmp-whatsapp-sync-history.mjs
 .dev-media/

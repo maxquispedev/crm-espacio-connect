@@ -249,3 +249,139 @@ export function buildTemplateStatusPayload(input: {
     ],
   };
 }
+
+export type MockHistoryMessage = {
+  from: string;
+  to?: string;
+  id?: string;
+  timestamp: number;
+  type?: string;
+  text?: string;
+  historyStatus?: string;
+  mediaId?: string;
+  mimeType?: string;
+  caption?: string;
+};
+
+/**
+ * Payload `field: "history"` de coexistence (historial previo al onboarding).
+ */
+export function buildHistoryPayload(input: {
+  wabaId: string;
+  phoneNumberId: string;
+  displayPhoneNumber?: string;
+  phase?: number;
+  chunkOrder?: number;
+  progress?: number;
+  threads: {
+    id: string;
+    messages: MockHistoryMessage[];
+  }[];
+  errors?: { code: number; title?: string; message?: string }[];
+}) {
+  return {
+    object: "whatsapp_business_account",
+    entry: [
+      {
+        id: input.wabaId,
+        changes: [
+          {
+            field: "history",
+            value: {
+              messaging_product: "whatsapp",
+              metadata: {
+                display_phone_number: input.displayPhoneNumber ?? "5215500000000",
+                phone_number_id: input.phoneNumberId,
+              },
+              history: [
+                {
+                  metadata: {
+                    phase: input.phase ?? 0,
+                    chunk_order: input.chunkOrder ?? 1,
+                    progress: input.progress ?? 100,
+                  },
+                  ...(input.errors ? { errors: input.errors } : {}),
+                  threads: input.threads.map((thread) => ({
+                    id: thread.id,
+                    messages: thread.messages.map((m) => {
+                      const type = m.type ?? "text";
+                      const message: Record<string, unknown> = {
+                        from: m.from,
+                        id: m.id ?? `wamid.mock.hist.${nextN()}`,
+                        timestamp: String(m.timestamp),
+                        type,
+                        history_context: {
+                          status: m.historyStatus ?? "READ",
+                        },
+                      };
+                      if (m.to) message.to = m.to;
+                      if (type === "text") {
+                        message.text = { body: m.text ?? "" };
+                      } else if (type === "media_placeholder") {
+                        // sin contenido: el follow-up trae el asset
+                      } else if (type === "image") {
+                        message.image = {
+                          id: m.mediaId ?? `mockmedia_${nextN()}`,
+                          mime_type: m.mimeType ?? "image/jpeg",
+                          caption: m.caption,
+                        };
+                      }
+                      return message;
+                    }),
+                  })),
+                },
+              ],
+            },
+          },
+        ],
+      },
+    ],
+  };
+}
+
+/**
+ * Payload `field: "smb_app_state_sync"` (agenda de la WhatsApp Business App).
+ */
+export function buildStateSyncPayload(input: {
+  wabaId: string;
+  phoneNumberId: string;
+  contacts: {
+    action: "add" | "remove";
+    phone_number: string;
+    full_name?: string;
+    first_name?: string;
+  }[];
+}) {
+  return {
+    object: "whatsapp_business_account",
+    entry: [
+      {
+        id: input.wabaId,
+        changes: [
+          {
+            field: "smb_app_state_sync",
+            value: {
+              messaging_product: "whatsapp",
+              metadata: {
+                display_phone_number: "5215500000000",
+                phone_number_id: input.phoneNumberId,
+              },
+              state_sync: input.contacts.map((c) => ({
+                type: "contact",
+                action: c.action,
+                contact: {
+                  phone_number: c.phone_number,
+                  full_name: c.full_name,
+                  first_name: c.first_name,
+                },
+                metadata: {
+                  timestamp: String(Math.floor(Date.now() / 1000)),
+                },
+              })),
+            },
+          },
+        ],
+      },
+    ],
+  };
+}

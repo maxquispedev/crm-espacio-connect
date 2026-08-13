@@ -40,7 +40,7 @@ const BINARY_MEDIA_TYPES = new Set([
   "sticker",
 ] as const);
 
-type MediaInput = {
+export type MediaInput = {
   kind: (typeof schema.mediaAsset.$inferSelect)["kind"];
   waMediaId: string | null;
   mimeType: string | null;
@@ -103,7 +103,7 @@ export function mediaInputFrom(msg: WebhookMessage): MediaInput | null {
  * Crea el media_asset de un mensaje recién insertado y dispara la descarga en
  * segundo plano si hay binario. Jamás lanza hacia el webhook (FR-013).
  */
-async function attachMediaAsset(
+export async function attachMediaAsset(
   organizationId: string,
   messageId: string,
   media: MediaInput

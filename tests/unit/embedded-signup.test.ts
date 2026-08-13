@@ -2,10 +2,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { MetaApiError } from "@/lib/meta/client";
 import { resetEnvCache } from "@/lib/env";
 
-const { exchangeOAuthCode, graphRequest, insertedRows } = vi.hoisted(() => ({
+const { exchangeOAuthCode, graphRequest, insertedRows, timeline } = vi.hoisted(() => ({
   exchangeOAuthCode: vi.fn(),
   graphRequest: vi.fn(),
   insertedRows: [] as Record<string, unknown>[],
+  timeline: [] as string[],
 }));
 
 vi.mock("@/lib/meta/client", async (importOriginal) => {
@@ -22,6 +23,7 @@ vi.mock("@/lib/db", () => ({
     insert: () => ({
       values: (v: Record<string, unknown>) => {
         insertedRows.push(v);
+        timeline.push("save");
         return { onConflictDoUpdate: () => Promise.resolve() };
       },
     }),
@@ -46,12 +48,17 @@ describe("completeEmbeddedSignup", () => {
   beforeEach(() => {
     stubEnv();
     insertedRows.length = 0;
+    timeline.length = 0;
     exchangeOAuthCode.mockReset();
     graphRequest.mockReset();
     exchangeOAuthCode.mockResolvedValue(TOKEN);
     graphRequest.mockImplementation(async (path: string) => {
+      timeline.push(String(path));
       if (String(path).includes("subscribed_apps")) {
         return { success: true };
+      }
+      if (String(path).includes("smb_app_data")) {
+        return { messaging_product: "whatsapp", request_id: "req_test" };
       }
       return {
         display_phone_number: "+52 55 0000 0000",
@@ -112,6 +119,11 @@ describe("completeEmbeddedSignup", () => {
       "WABA1/subscribed_apps",
       expect.objectContaining({ method: "POST", token: TOKEN })
     );
+    const saveIdx = timeline.indexOf("save");
+    const syncIdx = timeline.findIndex((x) => x.includes("smb_app_data"));
+    expect(saveIdx).toBeGreaterThan(-1);
+    expect(syncIdx).toBeGreaterThan(saveIdx);
+    expect(timeline.filter((x) => x.includes("smb_app_data"))).toHaveLength(2);
   });
 
   it("onboarding de org A no escribe org B", async () => {
@@ -191,5 +203,35 @@ describe("completeEmbeddedSignup", () => {
     if (result.ok) return;
     expect(result.code).toBe("subscribe_failed");
     expect(insertedRows).toHaveLength(0);
+  });
+
+  it("fallo de smb_app_data no rompe el onboarding (best-effort)", async () => {
+    graphRequest.mockImplementation(async (path: string) => {
+      timeline.push(String(path));
+      if (String(path).includes("subscribed_apps")) {
+        return { success: true };
+      }
+      if (String(path).includes("smb_app_data")) {
+        throw new MetaApiError("Cannot sync SMB app data", { status: 400, code: 100 });
+      }
+      return {
+        display_phone_number: "+52 55 0000 0000",
+        verified_name: "Max",
+        id: "pn1",
+      };
+    });
+    const { completeEmbeddedSignup } = await import(
+      "@/server/whatsapp/embedded-signup"
+    );
+    const result = await completeEmbeddedSignup({
+      organizationId: "org_A",
+      code: "c",
+      wabaId: "W1",
+      phoneNumberId: "P1",
+    });
+    expect(result.ok).toBe(true);
+    expect(insertedRows).toHaveLength(1);
+    expect(timeline.includes("save")).toBe(true);
+    expect(timeline.some((x) => x.includes("smb_app_data"))).toBe(true);
   });
 });

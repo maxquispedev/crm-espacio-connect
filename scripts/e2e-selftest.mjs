@@ -681,6 +681,219 @@ async function main() {
     JSON.stringify(echoImg?.media)
   );
 
+  console.log("\n== coexistence: historial y agenda (history / smb_app_state_sync) ==");
+  const HIST_LEAD = "5214627009001"; // → 524627009001
+  const HIST_BIZ = "5215500000000";
+  const tsOld = 1_690_000_000;
+  const tsMid = 1_700_000_000;
+  const tsNew = 1_700_002_000;
+
+  const hist1 = await api("/api/dev/wa-mock/history", {
+    method: "POST",
+    body: JSON.stringify({
+      phoneNumberId: PN,
+      displayPhoneNumber: HIST_BIZ,
+      threads: [
+        {
+          id: HIST_LEAD,
+          messages: [
+            {
+              from: HIST_LEAD,
+              id: "wamid.e2e.hist.in.2",
+              timestamp: tsNew,
+              text: "mensaje reciente del historial",
+              historyStatus: "READ",
+            },
+            {
+              from: HIST_BIZ,
+              to: HIST_LEAD,
+              id: "wamid.e2e.hist.out.1",
+              timestamp: tsMid,
+              text: "respuesta vieja del negocio",
+              historyStatus: "DELIVERED",
+            },
+          ],
+        },
+      ],
+    }),
+  });
+  ok("webhook history entregado", hist1.res.ok, JSON.stringify(hist1.json));
+  await sleep(1200);
+
+  const histOld = await api("/api/dev/wa-mock/history", {
+    method: "POST",
+    body: JSON.stringify({
+      phoneNumberId: PN,
+      displayPhoneNumber: HIST_BIZ,
+      chunkOrder: 0,
+      threads: [
+        {
+          id: HIST_LEAD,
+          messages: [
+            {
+              from: HIST_LEAD,
+              id: "wamid.e2e.hist.in.1",
+              timestamp: tsOld,
+              text: "mensaje más viejo",
+              historyStatus: "READ",
+            },
+          ],
+        },
+      ],
+    }),
+  });
+  ok("chunk histórico más viejo entregado", histOld.res.ok, JSON.stringify(histOld.json));
+  await sleep(1200);
+
+  const histDup = await api("/api/dev/wa-mock/history", {
+    method: "POST",
+    body: JSON.stringify({
+      phoneNumberId: PN,
+      displayPhoneNumber: HIST_BIZ,
+      threads: [
+        {
+          id: HIST_LEAD,
+          messages: [
+            {
+              from: HIST_LEAD,
+              id: "wamid.e2e.hist.in.2",
+              timestamp: tsNew,
+              text: "mensaje reciente del historial",
+            },
+          ],
+        },
+      ],
+    }),
+  });
+  ok("reproceso history entregado", histDup.res.ok);
+
+  const histPlaceholder = await api("/api/dev/wa-mock/history", {
+    method: "POST",
+    body: JSON.stringify({
+      phoneNumberId: PN,
+      displayPhoneNumber: HIST_BIZ,
+      threads: [
+        {
+          id: HIST_LEAD,
+          messages: [
+            {
+              from: HIST_LEAD,
+              id: "wamid.e2e.hist.media",
+              timestamp: tsMid + 10,
+              type: "media_placeholder",
+            },
+          ],
+        },
+      ],
+    }),
+  });
+  ok("placeholder de media entregado", histPlaceholder.res.ok);
+  await sleep(800);
+
+  const histMedia = await api("/api/dev/wa-mock/history", {
+    method: "POST",
+    body: JSON.stringify({
+      phoneNumberId: PN,
+      displayPhoneNumber: HIST_BIZ,
+      threads: [
+        {
+          id: HIST_LEAD,
+          messages: [
+            {
+              from: HIST_LEAD,
+              id: "wamid.e2e.hist.media",
+              timestamp: tsMid + 10,
+              type: "image",
+              mediaId: "media-e2e-hist",
+              caption: "foto del historial",
+            },
+          ],
+        },
+      ],
+    }),
+  });
+  ok("follow-up de media (mismo wamid) entregado", histMedia.res.ok);
+  await sleep(1600);
+
+  const histConvs = (await api("/api/conversations")).json?.conversations ?? [];
+  const histConv = histConvs.find((c) => c.contact.phone === "524627009001");
+  ok("conversación histórica visible", Boolean(histConv), "sin conversación 524627009001");
+  ok(
+    "historial no marca no leídos",
+    histConv?.unreadCount === 0,
+    `unread=${histConv?.unreadCount}`
+  );
+  ok(
+    "historial no pausa la IA",
+    histConv?.aiEnabled === true && !histConv?.handoffReason,
+    JSON.stringify({ aiEnabled: histConv?.aiEnabled, reason: histConv?.handoffReason })
+  );
+
+  const histMsgs =
+    (await api(`/api/conversations/${histConv?.id}/messages`)).json?.messages ?? [];
+  const histTexts = histMsgs.map((m) => m.text).filter(Boolean);
+  ok(
+    "no duplica el mensaje reprocesado",
+    histTexts.filter((t) => t === "mensaje reciente del historial").length === 1,
+    JSON.stringify(histTexts)
+  );
+  const idxOld = histMsgs.findIndex((m) => m.text === "mensaje más viejo");
+  const idxMid = histMsgs.findIndex((m) => m.text === "respuesta vieja del negocio");
+  const idxNew = histMsgs.findIndex((m) => m.text === "mensaje reciente del historial");
+  ok(
+    "mensajes ordenados por fecha histórica",
+    idxOld !== -1 && idxMid !== -1 && idxNew !== -1 && idxOld < idxMid && idxMid < idxNew,
+    JSON.stringify(histMsgs.map((m) => ({ text: m.text, at: m.createdAt, origin: m.origin, dir: m.direction })))
+  );
+  const histOut = histMsgs.find((m) => m.text === "respuesta vieja del negocio");
+  ok(
+    "saliente histórico es origin=manual y no dispara handoff",
+    histOut?.direction === "out" && histOut?.origin === "manual"
+  );
+  const histMediaMsg = histMsgs.find((m) => m.media?.caption === "foto del historial");
+  ok(
+    "placeholder de media se enriqueció con el mismo wamid",
+    histMediaMsg?.type === "image" && Boolean(histMediaMsg?.media),
+    JSON.stringify(histMediaMsg)
+  );
+
+  const board = await api("/api/pipeline/board");
+  const histLeadOnBoard = (board.json?.leads ?? []).some(
+    (l) => l.contact?.phone === "524627009001"
+  );
+  ok("importar historial no crea leads", !histLeadOnBoard);
+
+  const agendaPhone = "5214627009111";
+  const syncAdd = await api("/api/dev/wa-mock/state-sync", {
+    method: "POST",
+    body: JSON.stringify({
+      phoneNumberId: PN,
+      contacts: [
+        { action: "add", phone_number: agendaPhone, full_name: "Agenda Histórica" },
+      ],
+    }),
+  });
+  ok("state-sync add entregado", syncAdd.res.ok, JSON.stringify(syncAdd.json));
+  await sleep(800);
+  const contactsAdd = (await api("/api/contacts?q=Agenda")).json?.contacts ?? [];
+  const agenda = contactsAdd.find((c) => c.phone === "524627009111" || c.name === "Agenda Histórica");
+  ok("state-sync add crea contacto", Boolean(agenda), JSON.stringify(contactsAdd.map((c) => c.name)));
+
+  const syncRm = await api("/api/dev/wa-mock/state-sync", {
+    method: "POST",
+    body: JSON.stringify({
+      phoneNumberId: PN,
+      contacts: [{ action: "remove", phone_number: agendaPhone }],
+    }),
+  });
+  ok("state-sync remove entregado", syncRm.res.ok);
+  await sleep(500);
+  const contactsAfterRm = (await api("/api/contacts?q=Agenda")).json?.contacts ?? [];
+  ok(
+    "state-sync remove NO borra el contacto",
+    contactsAfterRm.some((c) => c.id === agenda?.id || c.name === "Agenda Histórica")
+  );
+
   console.log(`\n===== ${checks - failures}/${checks} checks OK, ${failures} fallos =====`);
   process.exit(failures > 0 ? 1 : 0);
 }

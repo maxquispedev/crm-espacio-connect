@@ -76,6 +76,8 @@ export type WebhookMessage = {
   sticker?: WebhookMediaPayload;
   location?: WebhookLocation;
   contacts?: unknown[];
+  /** Solo historial de coexistence: estado de entrega en el dispositivo. */
+  history_context?: { status?: string };
 };
 
 export type WebhookStatus = {
@@ -94,12 +96,51 @@ export type WebhookValue = {
   /** Echoes de coexistence (008): mensajes enviados desde la app del teléfono. */
   message_echoes?: WebhookMessage[];
   statuses?: WebhookStatus[];
+  /**
+   * Historial de coexistence (`field: "history"`). Chunks con threads de
+   * mensajes previos al onboarding (hasta 180 días).
+   */
+  history?: WebhookHistoryChunk[];
+  /**
+   * Agenda de la WhatsApp Business App (`field: "smb_app_state_sync"`).
+   */
+  state_sync?: WebhookStateSyncItem[];
   // message_template_status_update
   event?: string;
   message_template_name?: string;
   message_template_language?: string;
   message_template_id?: number | string;
   reason?: string | null;
+};
+
+export type WebhookHistoryError = {
+  code?: number;
+  title?: string;
+  message?: string;
+  error_data?: { details?: string };
+};
+
+export type WebhookHistoryThread = {
+  /** Teléfono del lead (usuario de WhatsApp), no el del negocio. */
+  id?: string;
+  messages?: WebhookMessage[];
+};
+
+export type WebhookHistoryChunk = {
+  metadata?: { phase?: number; chunk_order?: number; progress?: number };
+  threads?: WebhookHistoryThread[];
+  errors?: WebhookHistoryError[];
+};
+
+export type WebhookStateSyncItem = {
+  type?: string;
+  action?: string;
+  contact?: {
+    full_name?: string;
+    first_name?: string;
+    phone_number?: string;
+  };
+  metadata?: { timestamp?: string };
 };
 
 export type WebhookChange = { field?: string; value?: WebhookValue };
