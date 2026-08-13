@@ -15,6 +15,7 @@ import {
 import type { Branding } from "@/lib/branding";
 import { cn, initials } from "@/lib/utils";
 import { signOut } from "@/lib/auth/client";
+import { OrganizationSwitcher } from "@/components/organization-switcher";
 import { useEvents } from "@/components/use-events";
 
 const NAV = [
@@ -27,10 +28,12 @@ const NAV = [
 
 export function AppNav({
   branding,
+  organizationId,
   userName,
   role,
 }: {
   branding: Branding;
+  organizationId: string;
   userName: string;
   role: string;
 }) {
@@ -58,20 +61,23 @@ export function AppNav({
 
   return (
     <aside className="flex w-56 shrink-0 flex-col border-r bg-subtle px-3 pb-3.5 pt-4">
-      {/* Brand white-label */}
-      <div className="mb-4 flex items-center gap-2.5 px-2">
-        <span
-          className="flex h-[30px] w-[30px] shrink-0 items-center justify-center rounded-sm bg-brand text-[15px] font-bold text-white"
-          aria-hidden
-        >
-          {branding.name.charAt(0).toUpperCase()}
-        </span>
-        <span className="min-w-0">
-          <span className="block truncate text-[16px] font-[650] leading-tight tracking-tight">
-            {branding.name}
+      {/* Brand white-label + selector de organización */}
+      <div className="mb-4 px-2">
+        <div className="flex items-center gap-2.5">
+          <span
+            className="flex h-[30px] w-[30px] shrink-0 items-center justify-center rounded-sm bg-brand text-[15px] font-bold text-white"
+            aria-hidden
+          >
+            {branding.name.charAt(0).toUpperCase()}
           </span>
-          <span className="block text-[11px] text-text-3">CRM · WhatsApp</span>
-        </span>
+          <span className="min-w-0">
+            <span className="block truncate text-[16px] font-[650] leading-tight tracking-tight">
+              {branding.name}
+            </span>
+            <span className="block text-[11px] text-text-3">CRM · WhatsApp</span>
+          </span>
+        </div>
+        <OrganizationSwitcher organizationId={organizationId} />
       </div>
 
       <nav className="flex flex-col gap-0.5">

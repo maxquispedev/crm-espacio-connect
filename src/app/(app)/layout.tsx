@@ -19,6 +19,7 @@ export default async function AppLayout({
     <div className="flex h-screen overflow-hidden bg-background">
       <AppNav
         branding={branding}
+        organizationId={session.organizationId}
         userName={authSession?.user.name ?? "Usuario"}
         role={session.role}
       />
