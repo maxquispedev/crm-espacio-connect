@@ -69,7 +69,7 @@ export default function LoginPage() {
           </Button>
           <p className="text-center text-sm text-muted-foreground">
             ¿Primera vez aquí?{" "}
-            <Link href="/register" className="text-primary hover:underline">
+            <Link href="/register" className="text-brand-text hover:underline">
               Crear la cuenta inicial
             </Link>
           </p>

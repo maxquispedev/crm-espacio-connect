@@ -133,7 +133,7 @@ function StageColumn({ stage, leads }: { stage: StageDto; leads: BoardLead[] }) 
     >
       <div className="flex items-center justify-between px-3 py-2.5">
         <span className="flex items-center gap-1.5 text-sm font-semibold">
-          {stage.kind === "won" && <Trophy className="h-3.5 w-3.5 text-primary" />}
+          {stage.kind === "won" && <Trophy className="h-3.5 w-3.5 text-brand-text" />}
           {stage.kind === "lost" && (
             <XCircle className="h-3.5 w-3.5 text-muted-foreground" />
           )}

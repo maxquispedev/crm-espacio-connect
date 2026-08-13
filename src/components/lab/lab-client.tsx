@@ -121,7 +121,7 @@ export function LabClient() {
       <div className="flex h-full flex-col">
         <Header running={false} launching={false} onLaunch={() => {}} disabled />
         <div className="m-6 rounded-lg border border-brand-soft bg-brand-tint p-8 text-center">
-          <Sparkles className="mx-auto mb-2 h-8 w-8 text-primary" />
+          <Sparkles className="mx-auto mb-2 h-8 w-8 text-brand-text" />
           <p className="font-medium">
             Configura tu proveedor de IA para usar el Laboratorio
           </p>
@@ -199,7 +199,7 @@ function Header({
     <header className="flex items-center justify-between border-b px-6 py-4">
       <div>
         <h2 className="flex items-center gap-2 font-semibold">
-          <FlaskConical className="h-4 w-4 text-primary" /> Laboratorio
+          <FlaskConical className="h-4 w-4 text-brand-text" /> Laboratorio
         </h2>
         <p className="text-xs text-muted-foreground">
           Sandbox interno — no envía mensajes reales
@@ -378,7 +378,7 @@ function CaseCard({ testCase, onApplied }: { testCase: Case; onApplied: () => vo
                 <p key={i}>
                   <span
                     className={
-                      t.role === "cliente" ? "text-[#5b7291]" : "text-primary"
+                      t.role === "cliente" ? "text-[#5b7291]" : "text-brand-text"
                     }
                   >
                     {t.role === "cliente" ? "Cliente" : "Agente"}:

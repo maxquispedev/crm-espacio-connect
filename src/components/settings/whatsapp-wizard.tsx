@@ -180,7 +180,7 @@ function ConnectForm({
           <p className="font-medium">¿De dónde sale el token?</p>
           <div className="grid gap-3 md:grid-cols-2">
             <div className="rounded-md border p-3">
-              <p className="mb-1 font-medium text-primary">Modo directo</p>
+              <p className="mb-1 font-medium text-brand-text">Modo directo</p>
               <p className="text-muted-foreground">
                 El negocio tiene su propia app en{" "}
                 <span className="text-foreground">developers.facebook.com</span>:
@@ -190,7 +190,7 @@ function ConnectForm({
               </p>
             </div>
             <div className="rounded-md border p-3">
-              <p className="mb-1 font-medium text-primary">Modo agencia (Tech Provider)</p>
+              <p className="mb-1 font-medium text-brand-text">Modo agencia (Tech Provider)</p>
               <p className="text-muted-foreground">
                 Tu agencia hace el Embedded Signup en SU plataforma y su
                 backend obtiene el token del cliente; te lo entrega para
@@ -315,7 +315,7 @@ function WebhookCard({ webhook }: { webhook: WebhookInfo }) {
               <Copy className="h-4 w-4" />
             </Button>
             {copied === "url" && (
-              <span className="text-xs text-primary">Copiada ✓</span>
+              <span className="text-xs text-brand-text">Copiada ✓</span>
             )}
           </div>
           <p className="text-xs text-muted-foreground">
@@ -338,7 +338,7 @@ function WebhookCard({ webhook }: { webhook: WebhookInfo }) {
               <Copy className="h-4 w-4" />
             </Button>
             {copied === "vt" && (
-              <span className="text-xs text-primary">Copiado ✓</span>
+              <span className="text-xs text-brand-text">Copiado ✓</span>
             )}
           </div>
         </div>

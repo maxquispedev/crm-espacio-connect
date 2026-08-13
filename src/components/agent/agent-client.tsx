@@ -75,7 +75,7 @@ export function AgentClient() {
       <header className="flex items-center justify-between border-b px-6 py-4">
         <h2 className="font-semibold">Agente de IA</h2>
         <div className="flex items-center gap-3">
-          {saved && <span className="text-xs text-primary">Guardado ✓</span>}
+          {saved && <span className="text-xs text-brand-text">Guardado ✓</span>}
           <span className="text-sm text-muted-foreground">
             {profile.enabled ? "Encendido" : "Apagado"}
           </span>
@@ -100,7 +100,7 @@ export function AgentClient() {
 
       {!aiConfigured && (
         <div className="mx-6 mt-6 rounded-lg border border-brand-soft bg-brand-tint p-6 text-center">
-          <Sparkles className="mx-auto mb-2 h-8 w-8 text-primary" />
+          <Sparkles className="mx-auto mb-2 h-8 w-8 text-brand-text" />
           <p className="font-medium">Configura tu proveedor de IA para activar el agente</p>
           <p className="mx-auto mt-1 max-w-md text-sm text-muted-foreground">
             Agrega <code className="rounded bg-secondary px-1">OPENROUTER_API_TOKEN</code> y{" "}
