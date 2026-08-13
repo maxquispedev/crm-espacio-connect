@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { apiError, parseBody, withAuth } from "@/lib/api";
+import { getEnv } from "@/lib/env";
 import {
   getCredentialsByOrg,
   saveCredentials,
@@ -9,9 +10,21 @@ import { subscribeAppToWaba, testConnection } from "@/server/whatsapp/connect";
 
 export const dynamic = "force-dynamic";
 
+function publicEmbeddedSignup() {
+  const env = getEnv();
+  return {
+    appId: env.META_APP_ID ?? null,
+    configId: env.META_EMBEDDED_SIGNUP_CONFIG_ID ?? null,
+    graphVersion: env.META_GRAPH_API_VERSION,
+  };
+}
+
 export const GET = withAuth(async (session) => {
   const creds = await getCredentialsByOrg(session.organizationId);
-  if (!creds) return Response.json({ connection: null });
+  const embeddedSignup = publicEmbeddedSignup();
+  if (!creds) {
+    return Response.json({ connection: null, embeddedSignup });
+  }
   return Response.json({
     connection: {
       wabaId: creds.wabaId,
@@ -21,6 +34,7 @@ export const GET = withAuth(async (session) => {
       status: creds.status,
       tokenLast4: tokenLast4(creds.token),
     },
+    embeddedSignup,
   });
 });
 

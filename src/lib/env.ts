@@ -20,6 +20,9 @@ const envSchema = z.object({
     }),
   META_WEBHOOK_VERIFY_TOKEN: z.string().min(8),
   META_APP_SECRET: z.string().optional(),
+  // Públicas (se exponen al wizard autenticado). El App Secret NUNCA sale del servidor.
+  META_APP_ID: z.string().optional(),
+  META_EMBEDDED_SIGNUP_CONFIG_ID: z.string().optional(),
   META_GRAPH_API_VERSION: z.string().default("v25.0"),
   META_GRAPH_BASE_URL: z.string().url().default("https://graph.facebook.com"),
   OPENROUTER_API_TOKEN: z.string().optional(),
@@ -69,6 +72,11 @@ export function getEnv(): Env {
   }
   cached = parsed.data;
   return cached;
+}
+
+/** Invalida el cache de env. Solo para tests que cambian process.env entre casos. */
+export function resetEnvCache(): void {
+  cached = null;
 }
 
 function stripEmpty(env: NodeJS.ProcessEnv): Record<string, string> {

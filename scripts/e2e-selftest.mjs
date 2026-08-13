@@ -98,6 +98,101 @@ async function main() {
     conn.res.ok,
     JSON.stringify(conn.json)
   );
+  const connGet = await api("/api/settings/whatsapp");
+  const esCfg = connGet.json?.embeddedSignup;
+  ok(
+    "GET expone Embedded Signup público (appId/configId) sin App Secret",
+    !!esCfg &&
+      Object.prototype.hasOwnProperty.call(esCfg, "appId") &&
+      Object.prototype.hasOwnProperty.call(esCfg, "configId") &&
+      !JSON.stringify(esCfg).toLowerCase().includes("secret") &&
+      !JSON.stringify(connGet.json).includes("tok-e2e"),
+    JSON.stringify(esCfg)
+  );
+  ok(
+    "GET no devuelve el token completo (solo last4)",
+    connGet.json?.connection?.tokenLast4 === "e2e" &&
+      !JSON.stringify(connGet.json).includes("tok-e2e")
+  );
+
+  console.log("\n== us5: Embedded Signup (API + wa-mock) ==");
+  const esEmpty = await api("/api/settings/whatsapp/embedded-signup", {
+    method: "POST",
+    body: JSON.stringify({}),
+  });
+  ok("ES body inválido → 422", esEmpty.res.status === 422);
+
+  const esNoIds = await api("/api/settings/whatsapp/embedded-signup", {
+    method: "POST",
+    body: JSON.stringify({ code: "code-e2e" }),
+  });
+  ok("ES sin wabaId/phoneNumberId → 422", esNoIds.res.status === 422);
+
+  const esBadCode = await api("/api/settings/whatsapp/embedded-signup", {
+    method: "POST",
+    body: JSON.stringify({
+      code: "code-invalid",
+      wabaId: "WABA-E2E",
+      phoneNumberId: PN,
+    }),
+  });
+  ok(
+    "ES code inválido no conecta",
+    !esBadCode.res.ok && esBadCode.res.status !== 500,
+    JSON.stringify(esBadCode.json)
+  );
+  ok(
+    "respuesta ES de error no incluye token",
+    !JSON.stringify(esBadCode.json).includes("EAAG") &&
+      !JSON.stringify(esBadCode.json).includes("tok-e2e")
+  );
+
+  const esNosub = await api("/api/settings/whatsapp/embedded-signup", {
+    method: "POST",
+    body: JSON.stringify({
+      code: "code-e2e",
+      wabaId: "WABA-NOSUB",
+      phoneNumberId: PN,
+    }),
+  });
+  const nosubCode = esNosub.json?.error?.code;
+  ok(
+    "ES subscribed_apps fallido no deja conectado (o no configurado en env)",
+    nosubCode === "subscribe_failed" || nosubCode === "not_configured" || nosubCode === "oauth_failed",
+    JSON.stringify(esNosub.json)
+  );
+
+  const esOk = await api("/api/settings/whatsapp/embedded-signup", {
+    method: "POST",
+    body: JSON.stringify({
+      code: "code-e2e",
+      wabaId: "WABA-E2E",
+      phoneNumberId: PN,
+    }),
+  });
+  const esOkCode = esOk.json?.error?.code;
+  const esConfigured = esOk.res.ok;
+  ok(
+    "ES camino feliz vía wa-mock (si App ID/Secret están en env)",
+    esConfigured || esOkCode === "not_configured" || esOkCode === "oauth_failed",
+    JSON.stringify(esOk.json)
+  );
+  if (esConfigured) {
+    ok(
+      "ES éxito no devuelve el token, sí last4 y display",
+      esOk.json?.ok === true &&
+        typeof esOk.json?.tokenLast4 === "string" &&
+        esOk.json.tokenLast4.length === 4 &&
+        !JSON.stringify(esOk.json).includes("EAAG-mock-oauth")
+    );
+    const afterEs = await api("/api/settings/whatsapp");
+    ok(
+      "tras ES el GET sigue sin el token completo",
+      afterEs.json?.connection?.status === "connected" &&
+        !JSON.stringify(afterEs.json).includes("EAAG-mock-oauth")
+    );
+  }
+
   await api("/api/dev/wa-mock/outbox", { method: "DELETE" });
 
   console.log("\n== us-bsuid: inbound sin wa_id ==");

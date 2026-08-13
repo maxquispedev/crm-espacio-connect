@@ -18,6 +18,8 @@ Intercepción: `META_GRAPH_BASE_URL` apunta a `http://localhost:3000/api/dev/wa-
 - `POST /api/dev/wa-mock/template-status` — simula `message_template_status_update`:
   `{ name, language, event: 'APPROVED'|'REJECTED', reason? }`.
 - `ANY /api/dev/wa-mock/graph/*` — imita Graph API:
+  - `GET .../oauth/access_token?client_id&code=` → `200 { access_token }` (code con
+    sufijo `-invalid` → `400 OAuthException`). Sin Bearer.
   - `POST .../{phoneNumberId}/messages` → `200 { messages: [{ id: "wamid.mock..." }] }`
     y registra en el **outbox** en memoria. Si el body es plantilla, registra
     componentes.
@@ -25,6 +27,7 @@ Intercepción: `META_GRAPH_BASE_URL` apunta a `http://localhost:3000/api/dev/wa-
     mágico `-invalid` → `401 { error: { code: 190, ... } }` (test camino infeliz del
     wizard); si no → `200 { display_phone_number, verified_name, id }`.
   - `POST .../{wabaId}/message_templates` → `200 { id: "tplmock..." , status: "PENDING" }`.
+  - `POST .../{wabaId}/subscribed_apps` → `200 { success: true }`; `WABA-NOSUB` → `400`.
 - `GET /api/dev/wa-mock/outbox` — lista de envíos capturados (aserciones E2E).
 - `DELETE /api/dev/wa-mock/outbox` — limpia el estado del harness.
 

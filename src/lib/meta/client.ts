@@ -87,6 +87,93 @@ export async function graphRequest<T>(
 }
 
 /**
+ * Canje servidor-a-servidor de un `code` de Embedded Signup por access token.
+ * No usa Bearer: App ID + App Secret van como query params oficiales.
+ * Nunca loguea code, App Secret ni el token resultante.
+ */
+export async function exchangeOAuthCode(code: string): Promise<string> {
+  const env = getEnv();
+  const appId = env.META_APP_ID?.trim();
+  const appSecret = env.META_APP_SECRET?.trim();
+  if (!appId || !appSecret) {
+    throw new MetaApiError(
+      "Falta META_APP_ID o META_APP_SECRET en el servidor",
+      { status: 500, code: null, type: "configuration" }
+    );
+  }
+
+  const url = new URL(
+    `${env.META_GRAPH_BASE_URL}/${env.META_GRAPH_API_VERSION}/oauth/access_token`
+  );
+  url.searchParams.set("client_id", appId);
+  url.searchParams.set("client_secret", appSecret);
+  url.searchParams.set("code", code);
+
+  let res: Response;
+  try {
+    res = await fetch(url, { method: "GET" });
+  } catch (cause) {
+    throw new MetaApiError("No se pudo contactar la API de Meta", {
+      status: 0,
+      details: cause instanceof Error ? cause.name : "network",
+    });
+  }
+
+  const text = await res.text();
+  let json: unknown = null;
+  try {
+    json = text ? JSON.parse(text) : null;
+  } catch {
+    json = null;
+  }
+
+  if (!res.ok) {
+    const err = (
+      json as { error?: { message?: string; code?: number; type?: string } }
+    )?.error;
+    throw new MetaApiError(
+      err?.message ?? `Meta respondió ${res.status} al canjear el código`,
+      {
+        status: res.status,
+        code: err?.code ?? null,
+        type: err?.type ?? null,
+        details: redactOAuthPayload(json) ?? "non-json",
+      }
+    );
+  }
+
+  const token = (json as { access_token?: unknown } | null)?.access_token;
+  if (typeof token !== "string" || token.length === 0) {
+    throw new MetaApiError("Meta no devolvió un access_token", {
+      status: res.status,
+      code: null,
+      type: "invalid_response",
+    });
+  }
+  return token;
+}
+
+/** Quita secretos de payloads de OAuth antes de guardarlos en errores. */
+export function redactOAuthPayload(json: unknown): unknown {
+  if (!json || typeof json !== "object") return json;
+  const src = json as Record<string, unknown>;
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(src)) {
+    if (
+      k === "access_token" ||
+      k === "client_secret" ||
+      k === "code" ||
+      k === "app_secret"
+    ) {
+      out[k] = "[redacted]";
+    } else {
+      out[k] = v;
+    }
+  }
+  return out;
+}
+
+/**
  * Normaliza un número al formato canónico. Números móviles de México llegan
  * de Meta como `521` + 10 dígitos (13 en total); enviar con ese `1` extra
  * produce el error 131030 — se usa `52` + 10 dígitos.

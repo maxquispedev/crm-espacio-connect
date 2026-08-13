@@ -61,13 +61,17 @@ export async function testConnection(
 }
 
 /**
- * Suscribe la app a la WABA tras guardar (necesario para recibir webhooks en
- * modo directo). Best-effort: en modo agencia el override lo configura el
- * backend de la agencia y esta llamada puede no aplicar.
+ * Suscribe la app al webhook de la WABA (POST /{WABA_ID}/subscribed_apps).
+ * Sin override_callback_uri: todas las orgs usan el webhook de la instancia.
+ *
+ * `required: true` (Embedded Signup): el fallo aborta el onboarding.
+ * Por defecto best-effort: el PUT manual histórico no debe romper el guardado
+ * si Meta rechaza la suscripción (modo agencia legado).
  */
 export async function subscribeAppToWaba(
   wabaId: string,
-  token: string
+  token: string,
+  opts?: { required?: boolean }
 ): Promise<void> {
   try {
     await graphRequest(`${wabaId}/subscribed_apps`, {
@@ -75,6 +79,7 @@ export async function subscribeAppToWaba(
       token,
     });
   } catch (err) {
+    if (opts?.required) throw err;
     console.warn(
       "[connect] subscribed_apps falló (esperado en modo agencia):",
       err instanceof Error ? err.message : err

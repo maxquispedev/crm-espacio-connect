@@ -43,6 +43,44 @@ export async function GET(req: Request, ctx: Params) {
   const guard = mockGuard();
   if (guard) return guard;
   const path = normalizePath((await ctx.params).path);
+
+  // GET oauth/access_token?code=... — canje Embedded Signup (sin Bearer).
+  if (path.length === 2 && path[0] === "oauth" && path[1] === "access_token") {
+    const url = new URL(req.url);
+    const code = url.searchParams.get("code") ?? "";
+    const clientId = url.searchParams.get("client_id") ?? "";
+    if (!code || code.endsWith("-invalid")) {
+      return Response.json(
+        {
+          error: {
+            message: "Invalid verification code format",
+            type: "OAuthException",
+            code: 100,
+            fbtrace_id: "mock",
+          },
+        },
+        { status: 400 }
+      );
+    }
+    if (!clientId) {
+      return Response.json(
+        {
+          error: {
+            message: "Missing client_id",
+            type: "OAuthException",
+            code: 101,
+            fbtrace_id: "mock",
+          },
+        },
+        { status: 400 }
+      );
+    }
+    return Response.json({
+      access_token: "EAAG-mock-oauth",
+      token_type: "bearer",
+    });
+  }
+
   const token = bearerToken(req);
   if (token.endsWith("-invalid")) return invalidTokenResponse();
 
@@ -153,8 +191,22 @@ export async function POST(req: Request, ctx: Params) {
     return Response.json({ id: tpl.id, status: "PENDING", category: tpl.category });
   }
 
-  // POST {wabaId}/subscribed_apps → suscripción (con o sin override)
+  // POST {wabaId}/subscribed_apps → suscripción (sin override).
+  // WABA-NOSUB simula rechazo de Meta para el onboarding estricto.
   if (path.length === 2 && path[1] === "subscribed_apps") {
+    if (path[0] === "WABA-NOSUB" || token.includes("nosub")) {
+      return Response.json(
+        {
+          error: {
+            message: "Cannot subscribe app",
+            type: "OAuthException",
+            code: 100,
+            fbtrace_id: "mock",
+          },
+        },
+        { status: 400 }
+      );
+    }
     return Response.json({ success: true });
   }
 
