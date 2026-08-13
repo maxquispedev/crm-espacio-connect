@@ -1,4 +1,4 @@
-import { count, eq, sql } from "drizzle-orm";
+import { and, count, eq, sql } from "drizzle-orm";
 import { getDb, schema } from "@/lib/db";
 import { newId } from "@/lib/db/ids";
 
@@ -65,17 +65,34 @@ export async function resolveActiveOrganizationId(
   return (await resolveMembership(userId))?.organizationId ?? null;
 }
 
+export type Membership = {
+  organizationId: string;
+  role: string;
+};
+
+/**
+ * Membresía del usuario. Si se pasa `organizationId`, exige coincidencia
+ * exacta (userId + org) para revalidar la organización activa de sesión.
+ * Sin `organizationId`, devuelve la primera membresía (fallback histórico).
+ */
 export async function resolveMembership(
-  userId: string
-): Promise<{ organizationId: string; role: string } | null> {
+  userId: string,
+  organizationId?: string | null
+): Promise<Membership | null> {
   const db = getDb();
+  const condition = organizationId
+    ? and(
+        eq(schema.member.userId, userId),
+        eq(schema.member.organizationId, organizationId)
+      )
+    : eq(schema.member.userId, userId);
   const rows = await db
     .select({
       organizationId: schema.member.organizationId,
       role: schema.member.role,
     })
     .from(schema.member)
-    .where(eq(schema.member.userId, userId))
+    .where(condition)
     .limit(1);
   return rows[0] ?? null;
 }

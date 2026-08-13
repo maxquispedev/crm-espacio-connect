@@ -17,20 +17,37 @@ export class UnauthorizedError extends Error {
 
 /**
  * Sesión + organización activa para route handlers y server components.
+ * La org activa es `session.activeOrganizationId` de Better Auth, revalidada
+ * contra `member`. Si falta o no es membership del usuario → primera membership.
  * Lanza UnauthorizedError si no hay sesión u organización.
  */
 export async function requireSession(): Promise<SessionContext> {
   const auth = getAuth();
   const session = await auth.api.getSession({ headers: await headers() });
   if (!session) throw new UnauthorizedError();
-  // La sesión puede crearse antes de que la membresía exista (registro
-  // inicial) — la membresía en BD es la fuente de verdad de org + rol.
-  const membership = await resolveMembership(session.user.id);
+
+  const userId = session.user.id;
+  const activeOrganizationId = session.session.activeOrganizationId ?? null;
+
+  // Revalidar siempre: no confiar solo en que setActive ya comprobó membership.
+  if (activeOrganizationId) {
+    const active = await resolveMembership(userId, activeOrganizationId);
+    if (active) {
+      return {
+        userId,
+        organizationId: active.organizationId,
+        role: active.role,
+      };
+    }
+  }
+
+  // Fallback: primera membership (comportamiento histórico / org inválida o null).
+  const membership = await resolveMembership(userId);
   if (!membership) {
     throw new UnauthorizedError("Sesión sin organización activa");
   }
   return {
-    userId: session.user.id,
+    userId,
     organizationId: membership.organizationId,
     role: membership.role,
   };
