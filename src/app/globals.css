@@ -3,9 +3,11 @@
 @tailwind utilities;
 
 /*
-  Sistema de diseño "Atlas": modo claro sobrio (neutros fríos + un acento).
+  Sistema de diseño "Atlas": modo claro sobrio (neutros fríos + un acento)
+  y modo oscuro por clase `dark` en <html>.
   Los tokens de acento (--accent*) se sobreescriben en runtime por el
-  white-label de la organización (Configuración → Marca).
+  white-label de la organización (Configuración → Marca), con reglas
+  separadas para light/dark.
 */
 @layer base {
   :root {
@@ -38,6 +40,15 @@
     --success: #5f8f74;
     --warning: #b08b5e;
     --danger: #a2504c;
+    --success-soft: #eff7f1;
+    --success-border: #d8e8dd;
+    --success-text: #3f6b52;
+    --warning-soft: #faf7f0;
+    --warning-border: #ece2cf;
+    --warning-text: #8a6d3b;
+    --danger-soft: #faf1f0;
+    --danger-border: #ecd4d2;
+    --danger-text: #a2504c;
 
     /* Radios y sombras */
     --radius-sm: 7px;
@@ -49,6 +60,49 @@
 
     /* Densidad de filas de conversación */
     --row-py: 11px;
+
+    color-scheme: light;
+  }
+
+  html.dark {
+    --bg: #121214;
+    --bg-subtle: #161618;
+    --bg-panel: #1c1c1f;
+    --bg-hover: #252528;
+    --text: #f2f2f4;
+    --text-2: #b4b4bc;
+    --text-3: #8a8a93;
+    --text-4: #6c6c75;
+    --border: #2a2a2f;
+    --border-strong: #3a3a41;
+
+    --chat-bg: #0e0e10;
+    --bubble-out: #1c252e;
+    --bubble-out-text: #d4dde6;
+
+    --accent-soft: #243040;
+    --accent-tint: #1a222b;
+    --accent-text: #c5d4e2;
+    --bg-active: var(--accent-tint);
+
+    --success: #7aaa8e;
+    --warning: #c4a070;
+    --danger: #c46e6a;
+    --success-soft: #1a2b22;
+    --success-border: #2d4a38;
+    --success-text: #9ec9ad;
+    --warning-soft: #2a2418;
+    --warning-border: #4a3d28;
+    --warning-text: #d4b07a;
+    --danger-soft: #2b1a19;
+    --danger-border: #4a2d2c;
+    --danger-text: #d4908c;
+
+    --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.45);
+    --shadow-md: 0 8px 24px -8px rgba(0, 0, 0, 0.55);
+    --shadow-pop: 0 12px 32px -8px rgba(0, 0, 0, 0.7);
+
+    color-scheme: dark;
   }
 }
 

@@ -275,7 +275,7 @@ export function MessageThread({ messages }: { messages: MessageDto[] }) {
                 {out && m.status === "failed" && (
                   // El triángulo solo decía "algo falló". El motivo lo manda
                   // Meta y lo guardábamos sin enseñarlo nunca.
-                  <p className="mt-1.5 flex items-start gap-1.5 rounded-md border border-[#ecd4d2] bg-[#faf1f0] px-2 py-1.5 text-[11.5px] leading-snug text-[#a2504c]">
+                  <p className="mt-1.5 flex items-start gap-1.5 rounded-md border border-danger-border bg-danger-soft px-2 py-1.5 text-[11.5px] leading-snug text-danger-text">
                     <AlertTriangle
                       className="mt-[1px] h-3.5 w-3.5 shrink-0"
                       strokeWidth={1.8}

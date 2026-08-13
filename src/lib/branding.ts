@@ -70,6 +70,8 @@ function mix(color: Rgb, target: Rgb, t: number): Rgb {
 
 const WHITE: Rgb = { r: 255, g: 255, b: 255 };
 const BLACK: Rgb = { r: 0, g: 0, b: 0 };
+/** Superficie oscura Atlas (`html.dark --bg`), para derivar soft/tint. */
+const DARK_BG: Rgb = { r: 18, g: 18, b: 20 };
 
 /** Luminancia relativa (WCAG). */
 function luminance({ r, g, b }: Rgb): number {
@@ -104,10 +106,35 @@ export function resolveAccentSet(accentHex: string): AccentSet {
   };
 }
 
-/** CSS de variables para inyectar en el <head> (SSR, sin flash). */
+/**
+ * Soft/tint/text del acento sobre fondo oscuro. El acento base y el hover
+ * se conservan (botones rellenos con texto blanco).
+ */
+export function resolveAccentSetDark(accentHex: string): AccentSet {
+  const light = resolveAccentSet(accentHex);
+  const base = hexToRgb(light.accent);
+  return {
+    accent: light.accent,
+    hover: light.hover,
+    soft: rgbToHex(mix(base, DARK_BG, 0.72)),
+    tint: rgbToHex(mix(base, DARK_BG, 0.88)),
+    text: rgbToHex(mix(base, WHITE, 0.42)),
+  };
+}
+
+function accentVars(s: AccentSet): string {
+  return `--accent:${s.accent};--accent-hover:${s.hover};--accent-soft:${s.soft};--accent-tint:${s.tint};--accent-text:${s.text};`;
+}
+
+/**
+ * CSS de variables para inyectar en el <head> (SSR, sin flash).
+ * `:root:not(.dark)` / `:root.dark` superan a `:root` y a `html.dark` de
+ * globals.css, así el acento light no pisa el tema oscuro.
+ */
 export function accentCssVariables(accentHex: string): string {
-  const s = resolveAccentSet(accentHex);
-  return `:root{--accent:${s.accent};--accent-hover:${s.hover};--accent-soft:${s.soft};--accent-tint:${s.tint};--accent-text:${s.text};}`;
+  const light = resolveAccentSet(accentHex);
+  const dark = resolveAccentSetDark(accentHex);
+  return `:root:not(.dark){${accentVars(light)}}:root.dark{${accentVars(dark)}}`;
 }
 
 export function normalizeBranding(input: Partial<Branding> | null): Branding {

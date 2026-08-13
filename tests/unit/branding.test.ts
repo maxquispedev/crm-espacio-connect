@@ -1,9 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
   ACCENT_PRESETS,
+  accentCssVariables,
   isValidHex,
   normalizeBranding,
   resolveAccentSet,
+  resolveAccentSetDark,
 } from "@/lib/branding";
 
 describe("white-label: acento", () => {
@@ -43,5 +45,26 @@ describe("white-label: normalización", () => {
   it("acento inválido → default", () => {
     expect(normalizeBranding({ accent: "azul" }).accent).toBe("#3f5972");
     expect(normalizeBranding({ accent: "#3F6B66" }).accent).toBe("#3f6b66");
+  });
+});
+
+describe("white-label: acento en dark", () => {
+  it("conserva el acento base y deriva soft/tint más oscuros", () => {
+    const light = resolveAccentSet("#3f5972");
+    const dark = resolveAccentSetDark("#3f5972");
+    expect(dark.accent).toBe(light.accent);
+    expect(dark.hover).toBe(light.hover);
+    expect(dark.soft).not.toBe(light.soft);
+    expect(dark.tint).not.toBe(light.tint);
+    expect(isValidHex(dark.soft)).toBe(true);
+    expect(isValidHex(dark.text)).toBe(true);
+  });
+
+  it("inyecta reglas :root:not(.dark) y :root.dark, no un :root desnudo", () => {
+    const css = accentCssVariables("#3f5972");
+    expect(css).toContain(":root:not(.dark){");
+    expect(css).toContain(":root.dark{");
+    expect(css).not.toMatch(/(?:^|[^{]):root\{/);
+    expect(css).toContain("--accent-soft:");
   });
 });

@@ -3,10 +3,11 @@ import animate from "tailwindcss-animate";
 
 /**
  * Los nombres semánticos existentes (background, primary, muted…) se remapean
- * a los tokens del sistema Atlas para que toda la app comparta el tema claro;
+ * a los tokens Atlas (claro/oscuro vía variables CSS en `html.dark`);
  * la escala `brand-*` expone el acento white-label.
  */
 const config: Config = {
+  darkMode: "class",
   content: ["./src/**/*.{ts,tsx}"],
   theme: {
     extend: {
@@ -59,8 +60,24 @@ const config: Config = {
         chat: "var(--chat-bg)",
         "bubble-out": "var(--bubble-out)",
         "bubble-out-text": "var(--bubble-out-text)",
-        success: "var(--success)",
-        warning: "var(--warning)",
+        success: {
+          DEFAULT: "var(--success)",
+          soft: "var(--success-soft)",
+          border: "var(--success-border)",
+          text: "var(--success-text)",
+        },
+        warning: {
+          DEFAULT: "var(--warning)",
+          soft: "var(--warning-soft)",
+          border: "var(--warning-border)",
+          text: "var(--warning-text)",
+        },
+        danger: {
+          DEFAULT: "var(--danger)",
+          soft: "var(--danger-soft)",
+          border: "var(--danger-border)",
+          text: "var(--danger-text)",
+        },
       },
       borderRadius: {
         sm: "var(--radius-sm)",

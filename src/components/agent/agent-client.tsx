@@ -249,7 +249,7 @@ function KbSection({
           )}
         </div>
         {kbSize?.warning && (
-          <p className="text-xs text-[#8a6d3b]">
+          <p className="text-xs text-warning-text">
             El conocimiento se acerca al límite del contexto del modelo (v1 lo
             inyecta completo en cada turno). Considera depurar entradas.
           </p>
