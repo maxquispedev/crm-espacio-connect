@@ -60,6 +60,87 @@ function bot(path, opts = {}) {
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const PN = "PN-E2E-1";
+const PN_B = "PN-E2E-2";
+
+function parseSseBlock(block) {
+  let type = "message";
+  let dataLine = "";
+  for (const line of block.split("\n")) {
+    if (line.startsWith("event:")) type = line.slice("event:".length).trim();
+    else if (line.startsWith("data:"))
+      dataLine += line.slice("data:".length).trim();
+  }
+  if (!dataLine) return null;
+  try {
+    return { type, data: JSON.parse(dataLine) };
+  } catch {
+    return { type, data: dataLine };
+  }
+}
+
+function orgListFrom(json) {
+  if (Array.isArray(json)) return json;
+  if (Array.isArray(json?.data)) return json.data;
+  if (Array.isArray(json?.organizations)) return json.organizations;
+  return [];
+}
+
+/**
+ * Abre GET /api/events, espera el comentario de conexión, dispara `trigger`
+ * y resuelve el primer evento que cumpla `predicate`.
+ */
+async function collectSse(predicate, { timeoutMs = 12000, trigger } = {}) {
+  const ac = new AbortController();
+  const timer = setTimeout(() => ac.abort(), timeoutMs);
+  const res = await fetch(`${BASE}/api/events`, {
+    headers: {
+      origin: BASE,
+      accept: "text/event-stream",
+      ...(cookie ? { cookie } : {}),
+    },
+    signal: ac.signal,
+  });
+  if (!res.ok || !res.body) {
+    clearTimeout(timer);
+    return { ok: false, status: res.status, events: [], match: null };
+  }
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buf = "";
+  const events = [];
+  let triggered = false;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buf += decoder.decode(value, { stream: true });
+      const chunks = buf.split("\n\n");
+      buf = chunks.pop() ?? "";
+      for (const block of chunks) {
+        if (!triggered && trigger && /(^|\n): (conectado|ping)/.test(block)) {
+          triggered = true;
+          void trigger();
+        }
+        const ev = parseSseBlock(block);
+        if (!ev) continue;
+        events.push(ev);
+        if (predicate(ev)) {
+          clearTimeout(timer);
+          ac.abort();
+          return { ok: true, status: res.status, events, match: ev };
+        }
+      }
+    }
+  } catch {
+    // abort por timeout o match
+  } finally {
+    clearTimeout(timer);
+    try {
+      await reader.cancel();
+    } catch {}
+  }
+  return { ok: res.ok, status: res.status, events, match: null };
+}
 
 async function main() {
   if (!BOT_KEY || BOT_KEY.length < 16) {
@@ -893,6 +974,196 @@ async function main() {
     "state-sync remove NO borra el contacto",
     contactsAfterRm.some((c) => c.id === agenda?.id || c.name === "Agenda Histórica")
   );
+
+  console.log("\n== us-notificaciones: SSE enriquecido + multi-org ==");
+  const notifText = `notif-e2e-in-${Date.now()}`;
+  const sseIn = await collectSse(
+    (ev) =>
+      ev.type === "message.new" &&
+      ev.data?.direction === "in" &&
+      ev.data?.preview === notifText,
+    {
+      trigger: async () => {
+        await api("/api/dev/wa-mock/inbound", {
+          method: "POST",
+          body: JSON.stringify({
+            phoneNumberId: PN,
+            from: "5215550001111",
+            name: "Cliente Notif",
+            text: notifText,
+            waMessageId: `wamid.notif.in.${Date.now()}`,
+          }),
+        });
+      },
+    }
+  );
+  const inData = sseIn.match?.data;
+  ok("SSE /api/events abre autenticado", sseIn.status === 200);
+  ok(
+    "inbound entrega message.new enriquecido (org, contacto, preview, messageId)",
+    inData?.direction === "in" &&
+      typeof inData?.organizationId === "string" &&
+      inData.organizationId.length > 0 &&
+      typeof inData?.organizationName === "string" &&
+      typeof inData?.contactName === "string" &&
+      inData.contactName.length > 0 &&
+      inData.preview === notifText &&
+      typeof inData?.messageId === "string" &&
+      inData.message?.id === inData.messageId &&
+      inData.message?.direction === "in",
+    JSON.stringify(inData)
+  );
+
+  await sleep(400);
+  const notifConvs = (await api("/api/conversations")).json?.conversations ?? [];
+  const notifConv = notifConvs.find((c) => c.contact?.name === "Cliente Notif");
+  ok("conversación del inbound de notificación existe", Boolean(notifConv));
+
+  const outText = `notif-e2e-out-${Date.now()}`;
+  const sseOut = await collectSse(
+    (ev) =>
+      ev.type === "message.new" &&
+      ev.data?.direction === "out" &&
+      ev.data?.preview === outText,
+    {
+      trigger: async () => {
+        if (!notifConv?.id) return;
+        await api(`/api/conversations/${notifConv.id}/messages`, {
+          method: "POST",
+          body: JSON.stringify({ text: outText }),
+        });
+      },
+    }
+  );
+  ok(
+    "outbound llega por SSE con direction=out (no se notifica en cliente)",
+    sseOut.match?.data?.direction === "out" &&
+      sseOut.match?.data?.preview === outText,
+    JSON.stringify(sseOut.match?.data)
+  );
+
+  const listed = await api("/api/auth/organization/list");
+  let orgs = orgListFrom(listed.json);
+  const orgA = orgs[0];
+  let orgB = orgs.find((o) => o.slug === "espacio-veloz-e2e" || o.name === "Espacio Veloz E2E");
+  if (!orgB) {
+    const created = await api("/api/auth/organization/create", {
+      method: "POST",
+      body: JSON.stringify({
+        name: "Espacio Veloz E2E",
+        slug: "espacio-veloz-e2e",
+      }),
+    });
+    orgB = created.json?.id
+      ? { id: created.json.id, name: created.json.name, slug: created.json.slug }
+      : created.json?.data
+        ? created.json.data
+        : null;
+    if (!orgB?.id) {
+      const listed2 = await api("/api/auth/organization/list");
+      orgs = orgListFrom(listed2.json);
+      orgB = orgs.find((o) => o.slug === "espacio-veloz-e2e");
+    }
+  }
+  ok(
+    "segunda organización disponible o creada",
+    Boolean(orgA?.id && orgB?.id && orgA.id !== orgB.id),
+    JSON.stringify({ orgA, orgB, listed: listed.json })
+  );
+
+  if (orgA?.id && orgB?.id && orgA.id !== orgB.id) {
+    const setB = await api("/api/auth/organization/set-active", {
+      method: "POST",
+      body: JSON.stringify({ organizationId: orgB.id }),
+    });
+    ok("setActive → org B", setB.res.ok, JSON.stringify(setB.json));
+    const connB = await api("/api/settings/whatsapp", {
+      method: "PUT",
+      body: JSON.stringify({
+        wabaId: "WABA-E2E-B",
+        phoneNumberId: PN_B,
+        token: "tok-e2e-b",
+      }),
+    });
+    ok("WhatsApp de org B conectado (mock)", connB.res.ok, JSON.stringify(connB.json));
+    const setA = await api("/api/auth/organization/set-active", {
+      method: "POST",
+      body: JSON.stringify({ organizationId: orgA.id }),
+    });
+    ok("setActive → org A (visible)", setA.res.ok, JSON.stringify(setA.json));
+
+    const crossText = `notif-e2e-cross-${Date.now()}`;
+    const sseCross = await collectSse(
+      (ev) =>
+        ev.type === "message.new" &&
+        ev.data?.direction === "in" &&
+        ev.data?.preview === crossText,
+      {
+        trigger: async () => {
+          await api("/api/dev/wa-mock/inbound", {
+            method: "POST",
+            body: JSON.stringify({
+              phoneNumberId: PN_B,
+              from: "5215550002222",
+              name: "Cliente Org B",
+              text: crossText,
+              waMessageId: `wamid.notif.cross.${Date.now()}`,
+            }),
+          });
+        },
+      }
+    );
+    ok(
+      "viendo org A, inbound de org B llega por SSE",
+      sseCross.match?.data?.direction === "in" &&
+        sseCross.match?.data?.organizationId === orgB.id &&
+        sseCross.match?.data?.preview === crossText &&
+        sseCross.match?.data?.contactName === "Cliente Org B",
+      JSON.stringify(sseCross.match?.data)
+    );
+
+    const crossOut = `notif-e2e-cross-out-${Date.now()}`;
+    const setB2 = await api("/api/auth/organization/set-active", {
+      method: "POST",
+      body: JSON.stringify({ organizationId: orgB.id }),
+    });
+    const convsB = setB2.res.ok
+      ? ((await api("/api/conversations")).json?.conversations ?? [])
+      : [];
+    const convB = convsB.find((c) => c.contact?.name === "Cliente Org B");
+    await api("/api/auth/organization/set-active", {
+      method: "POST",
+      body: JSON.stringify({ organizationId: orgA.id }),
+    });
+    const sseCrossOut = await collectSse(
+      (ev) =>
+        ev.type === "message.new" &&
+        ev.data?.direction === "out" &&
+        ev.data?.preview === crossOut,
+      {
+        trigger: async () => {
+          if (!convB?.id) return;
+          await api("/api/auth/organization/set-active", {
+            method: "POST",
+            body: JSON.stringify({ organizationId: orgB.id }),
+          });
+          await api(`/api/conversations/${convB.id}/messages`, {
+            method: "POST",
+            body: JSON.stringify({ text: crossOut }),
+          });
+          await api("/api/auth/organization/set-active", {
+            method: "POST",
+            body: JSON.stringify({ organizationId: orgA.id }),
+          });
+        },
+      }
+    );
+    ok(
+      "outbound de org B es direction=out (no notificar)",
+      sseCrossOut.match?.data?.direction === "out",
+      JSON.stringify({ convB: convB?.id, data: sseCrossOut.match?.data })
+    );
+  }
 
   console.log(`\n===== ${checks - failures}/${checks} checks OK, ${failures} fallos =====`);
   process.exit(failures > 0 ? 1 : 0);

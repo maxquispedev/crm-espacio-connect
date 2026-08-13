@@ -51,6 +51,22 @@ export type MessageDto = {
   createdAt: string;
 };
 
+/**
+ * Payload SSE `message.new`. El hilo sigue usando `message`; las
+ * notificaciones de escritorio usan los campos planos (org, contacto, preview).
+ */
+export type MessageNewPayload = {
+  organizationId: string;
+  organizationName: string;
+  conversationId: string;
+  contactId: string;
+  contactName: string;
+  direction: "in" | "out";
+  messageId: string;
+  preview: string;
+  message: MessageDto;
+};
+
 export type TemplateDto = {
   id: string;
   name: string;

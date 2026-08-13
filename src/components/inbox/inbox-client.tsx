@@ -81,9 +81,8 @@ export function InboxClient() {
   useEvents({
     onMessageNew: ({ conversationId, message }) => {
       if (selectedIdRef.current === conversationId) {
-        const m = message as MessageDto;
         setMessages((prev) =>
-          prev.some((x) => x.id === m.id) ? prev : [...prev, m]
+          prev.some((x) => x.id === message.id) ? prev : [...prev, message]
         );
         void fetch(`/api/conversations/${conversationId}`, {
           method: "PATCH",

@@ -3,7 +3,7 @@ import { getDb, schema } from "@/lib/db";
 import { newId } from "@/lib/db/ids";
 import { graphRequest, MetaApiError, normalizeRecipient } from "@/lib/meta/client";
 import { scoped } from "@/lib/db/tenant";
-import { publish } from "@/server/events/bus";
+import { publishMessageNew } from "@/server/events/message-new";
 import {
   getCredentialsByOrg,
   getCredentialsByWabaId,
@@ -393,12 +393,10 @@ export async function sendTemplate(input: {
     .set({ lastMessageAt: new Date(), updatedAt: new Date() })
     .where(eq(schema.conversation.id, input.conversationId));
 
-  publish(input.organizationId, {
-    type: "message.new",
-    data: {
-      conversationId: input.conversationId,
-      message: serializeMessage(message),
-    },
+  await publishMessageNew({
+    organizationId: input.organizationId,
+    conversationId: input.conversationId,
+    message: serializeMessage(message),
   });
 
   return { messageId: message.id };

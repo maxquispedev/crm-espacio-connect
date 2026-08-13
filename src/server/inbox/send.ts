@@ -2,7 +2,7 @@ import { eq } from "drizzle-orm";
 import { getDb, schema } from "@/lib/db";
 import { newId } from "@/lib/db/ids";
 import { graphRequest, MetaApiError, normalizeRecipient } from "@/lib/meta/client";
-import { publish } from "@/server/events/bus";
+import { publishMessageNew } from "@/server/events/message-new";
 import {
   getCredentialsByOrg,
   markReconnectRequired,
@@ -149,12 +149,10 @@ async function persistOutbound(input: {
     .set({ lastMessageAt: new Date(), updatedAt: new Date() })
     .where(eq(schema.conversation.id, input.conversationId));
 
-  publish(input.organizationId, {
-    type: "message.new",
-    data: {
-      conversationId: input.conversationId,
-      message: serializeMessage(message, input.media ?? null),
-    },
+  await publishMessageNew({
+    organizationId: input.organizationId,
+    conversationId: input.conversationId,
+    message: serializeMessage(message, input.media ?? null),
   });
 
   return message.id;

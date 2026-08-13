@@ -1,9 +1,10 @@
 "use client";
 
 import { useEffect, useRef } from "react";
+import type { MessageNewPayload } from "@/lib/types";
 
 export type EventHandlers = {
-  onMessageNew?: (data: { conversationId: string; message: unknown }) => void;
+  onMessageNew?: (data: MessageNewPayload) => void;
   onMessageStatus?: (data: {
     conversationId: string;
     messageId: string;
@@ -45,14 +46,20 @@ export function useEvents(handlers: EventHandlers): void {
       });
     };
 
-    listen("message.new", (d) => handlersRef.current.onMessageNew?.(d as never));
-    listen("message.status", (d) =>
-      handlersRef.current.onMessageStatus?.(d as never)
+    listen<MessageNewPayload>("message.new", (d) =>
+      handlersRef.current.onMessageNew?.(d)
     );
-    listen("conversation.updated", (d) =>
-      handlersRef.current.onConversationUpdated?.(d as never)
+    listen<Parameters<NonNullable<EventHandlers["onMessageStatus"]>>[0]>(
+      "message.status",
+      (d) => handlersRef.current.onMessageStatus?.(d)
     );
-    listen("lab.run", (d) => handlersRef.current.onLabRun?.(d as never));
+    listen<{ conversation: unknown }>("conversation.updated", (d) =>
+      handlersRef.current.onConversationUpdated?.(d)
+    );
+    listen<Parameters<NonNullable<EventHandlers["onLabRun"]>>[0]>(
+      "lab.run",
+      (d) => handlersRef.current.onLabRun?.(d)
+    );
 
     source.onerror = () => {
       hadError = true;

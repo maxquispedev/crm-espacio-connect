@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import {
@@ -16,6 +16,17 @@ import type { Branding } from "@/lib/branding";
 import { cn, initials } from "@/lib/utils";
 import { signOut } from "@/lib/auth/client";
 import { OrganizationSwitcher } from "@/components/organization-switcher";
+import { NotifyPermissionControl } from "@/components/notifications/notify-control";
+import {
+  isNotifySoundEnabled,
+  playNotifyBeep,
+  readNotificationPermission,
+  showDesktopNotification,
+} from "@/components/notifications/desktop";
+import {
+  decideInboundNotification,
+  notificationFieldsFromEvent,
+} from "@/lib/notifications/inbound";
 import { useEvents } from "@/components/use-events";
 
 const NAV = [
@@ -41,6 +52,8 @@ export function AppNav({
   const router = useRouter();
   const [unread, setUnread] = useState(0);
 
+  const seenInboundIds = useRef(new Set<string>());
+
   async function refetchUnread() {
     const res = await fetch("/api/conversations").catch(() => null);
     if (!res?.ok) return;
@@ -55,7 +68,37 @@ export function AppNav({
   }, []);
 
   useEvents({
-    onMessageNew: () => void refetchUnread(),
+    onMessageNew: (data) => {
+      if (!data.organizationId || data.organizationId === organizationId) {
+        void refetchUnread();
+      }
+      const fields = notificationFieldsFromEvent(data);
+      const decision = decideInboundNotification({
+        direction: fields.direction,
+        messageId: fields.messageId,
+        seenMessageIds: seenInboundIds.current,
+        permission: readNotificationPermission(),
+        tabVisible: document.visibilityState === "visible",
+        activeOrganizationId: organizationId,
+        eventOrganizationId: fields.organizationId,
+        organizationName: fields.organizationName,
+        contactName: fields.contactName,
+        preview: fields.preview,
+      });
+      if (fields.direction === "in" && fields.messageId) {
+        seenInboundIds.current.add(fields.messageId);
+      }
+      if (decision.action !== "notify") return;
+      showDesktopNotification({
+        title: decision.title,
+        body: decision.body,
+        tag: decision.tag,
+        organizationId: fields.organizationId,
+        contactId: fields.contactId,
+        currentOrganizationId: organizationId,
+      });
+      if (isNotifySoundEnabled()) playNotifyBeep();
+    },
     onConversationUpdated: () => void refetchUnread(),
   });
 
@@ -78,6 +121,7 @@ export function AppNav({
           </span>
         </div>
         <OrganizationSwitcher organizationId={organizationId} />
+        <NotifyPermissionControl />
       </div>
 
       <nav className="flex flex-col gap-0.5">

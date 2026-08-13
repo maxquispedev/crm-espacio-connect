@@ -1,4 +1,5 @@
 import { EventEmitter } from "node:events";
+import type { MessageNewPayload } from "@/lib/types";
 
 /**
  * Bus de eventos in-process por organización (contrato sse.md).
@@ -7,7 +8,7 @@ import { EventEmitter } from "node:events";
  */
 
 export type SseEvent =
-  | { type: "message.new"; data: { conversationId: string; message: unknown } }
+  | { type: "message.new"; data: MessageNewPayload }
   | {
       type: "message.status";
       data: {
@@ -52,4 +53,18 @@ export function subscribe(
   const channel = `org:${organizationId}`;
   bus.on(channel, listener);
   return () => bus.off(channel, listener);
+}
+
+/**
+ * Una suscripción por organización autorizada. El caller debe pasar SOLO
+ * IDs ya filtrados por membership (ver `resolveSseOrganizationIds`).
+ */
+export function subscribeMany(
+  organizationIds: readonly string[],
+  listener: (event: SseEvent) => void
+): () => void {
+  const unsubs = organizationIds.map((id) => subscribe(id, listener));
+  return () => {
+    for (const unsub of unsubs) unsub();
+  };
 }

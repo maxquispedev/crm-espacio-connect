@@ -1,6 +1,6 @@
 # Contrato: Canal SSE de la bandeja
 
-Ruta: `GET /api/events` (autenticada por sesión; scope = organización del usuario).
+Ruta: `GET /api/events` (autenticada por sesión; scope = memberships del usuario).
 `export const dynamic = 'force-dynamic'`.
 
 Headers de respuesta (obligatorios, exactos):
@@ -14,8 +14,11 @@ Connection: keep-alive
 
 - **Heartbeat**: comentario `: ping\n\n` cada ~25s (mantiene vivo el stream detrás de
   Caddy/Traefik y proxies intermedios).
+- **Scope**: organizaciones de las que el usuario autenticado es miembro
+  (tabla `member`, resuelta en servidor). No se aceptan organization IDs del
+  cliente. El bus sigue publicando por `org:{organizationId}`.
 - **Eventos** (`event: <tipo>`, `data: <json>`, `id: <epoch_ms>`):
-  - `message.new` — `{ conversationId, message: {...} }` (nunca de conversaciones `is_test`)
+  - `message.new` — `{ organizationId, organizationName, conversationId, contactId, contactName, direction, messageId, preview, message: {...} }` (nunca de conversaciones `is_test`)
   - `message.status` — `{ conversationId, messageId, status }`
   - `conversation.updated` — `{ conversation: {...} }` (handoff, unread, last_message_at)
   - `lab.run` — `{ runId, status, progress: {done, total}, score? }`

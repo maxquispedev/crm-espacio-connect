@@ -1,8 +1,10 @@
 import { and, eq, sql } from "drizzle-orm";
 import { getDb, schema } from "@/lib/db";
 import { newId } from "@/lib/db/ids";
+import type { MessageDto } from "@/lib/types";
 import { normalizeMx } from "@/lib/meta/client";
 import { publish } from "@/server/events/bus";
+import { publishMessageNew } from "@/server/events/message-new";
 import { getCredentialsByPhoneNumberId } from "@/server/whatsapp/credentials";
 import { ensureAssetAvailable } from "@/server/whatsapp/media";
 import type {
@@ -342,11 +344,14 @@ async function ingestManualEcho(
     );
   }
 
-  publish(organizationId, {
-    type: "message.new",
-    data: {
-      conversationId: conversation.id,
-      message: serializeMessage(message, asset),
+  await publishMessageNew({
+    organizationId,
+    conversationId: conversation.id,
+    message: serializeMessage(message, asset),
+    contact: {
+      id: contact.id,
+      name: contact.name,
+      phone: contact.phone,
     },
   });
   publish(organizationId, {
@@ -413,11 +418,14 @@ export async function ingestInboundMessage(input: {
 
   await onLeadActivity(organizationId, contact.id, waTimestamp);
 
-  publish(organizationId, {
-    type: "message.new",
-    data: {
-      conversationId: conversation.id,
-      message: serializeMessage(message, asset),
+  await publishMessageNew({
+    organizationId,
+    conversationId: conversation.id,
+    message: serializeMessage(message, asset),
+    contact: {
+      id: contact.id,
+      name: contact.name,
+      phone: contact.phone,
     },
   });
   publish(organizationId, {
@@ -437,7 +445,7 @@ function toDate(timestamp: string): Date {
 export function serializeMessage(
   m: typeof schema.message.$inferSelect,
   media: typeof schema.mediaAsset.$inferSelect | null = null
-) {
+): MessageDto {
   return {
     id: m.id,
     conversationId: m.conversationId,
