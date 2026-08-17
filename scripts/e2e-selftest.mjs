@@ -12,6 +12,8 @@
  * a declarar "Hecho").
  */
 
+import { createHmac } from "node:crypto";
+
 const BASE = process.env.APP_BASE_URL ?? "http://localhost:3000";
 const BOT_KEY = process.env.BOT_API_KEY;
 
@@ -1162,6 +1164,200 @@ async function main() {
       "outbound de org B es direction=out (no notificar)",
       sseCrossOut.match?.data?.direction === "out",
       JSON.stringify({ convB: convB?.id, data: sseCrossOut.match?.data })
+    );
+  }
+
+  console.log("\n== WHMCS invoice.created (espacio-veloz) ==");
+  const WHMCS_SECRET = process.env.WHMCS_WEBHOOK_SECRET ?? "";
+  ok(
+    "WHMCS_WEBHOOK_SECRET configurado (≥16)",
+    WHMCS_SECRET.length >= 16
+  );
+
+  const listedWhmcs = await api("/api/auth/organization/list");
+  let orgsWhmcs = orgListFrom(listedWhmcs.json);
+  let orgEv = orgsWhmcs.find((o) => o.slug === "espacio-veloz");
+  if (!orgEv) {
+    const createdEv = await api("/api/auth/organization/create", {
+      method: "POST",
+      body: JSON.stringify({
+        name: "Espacio Veloz",
+        slug: "espacio-veloz",
+      }),
+    });
+    orgEv = createdEv.json?.id
+      ? {
+          id: createdEv.json.id,
+          name: createdEv.json.name,
+          slug: createdEv.json.slug,
+        }
+      : createdEv.json?.data ?? null;
+    if (!orgEv?.id) {
+      const listedEv2 = await api("/api/auth/organization/list");
+      orgEv = orgListFrom(listedEv2.json).find((o) => o.slug === "espacio-veloz");
+    }
+  }
+  ok("organización espacio-veloz disponible", Boolean(orgEv?.id), JSON.stringify(orgEv));
+
+  if (orgEv?.id && WHMCS_SECRET.length >= 16) {
+    const setEv = await api("/api/auth/organization/set-active", {
+      method: "POST",
+      body: JSON.stringify({ organizationId: orgEv.id }),
+    });
+    ok("setActive → espacio-veloz", setEv.res.ok, JSON.stringify(setEv.json));
+
+    const pnEv = "PN-WHMCS-EV";
+    const connEv = await api("/api/settings/whatsapp", {
+      method: "PUT",
+      body: JSON.stringify({
+        wabaId: "WABA-WHMCS-EV",
+        phoneNumberId: pnEv,
+        token: "tok-whmcs-ev",
+      }),
+    });
+    ok("WhatsApp de espacio-veloz conectado (mock)", connEv.res.ok, JSON.stringify(connEv.json));
+
+    const tplBody =
+      "Hola {{1}}, tu factura {{2}} por {{3}} vence el {{4}}. Concepto: {{5}}.";
+    const tplCreate = await api("/api/templates", {
+      method: "POST",
+      body: JSON.stringify({
+        name: "invoice_created",
+        language: "es_MX",
+        category: "UTILITY",
+        body: tplBody,
+      }),
+    });
+    ok(
+      "plantilla invoice_created creada o reenviada a Meta",
+      tplCreate.res.ok || tplCreate.res.status === 409,
+      JSON.stringify(tplCreate.json)
+    );
+
+    await api("/api/dev/wa-mock/template-status", {
+      method: "POST",
+      body: JSON.stringify({
+        wabaId: "WABA-WHMCS-EV",
+        name: "invoice_created",
+        language: "es_MX",
+        event: "APPROVED",
+        category: "UTILITY",
+        body: tplBody,
+        notify: false,
+      }),
+    });
+    const tplSync = await api("/api/templates/sync", { method: "POST" });
+    ok("sync de plantillas", tplSync.res.ok, JSON.stringify(tplSync.json));
+    const tpls = (await api("/api/templates")).json?.templates ?? [];
+    const invoiceTpl = tpls.find(
+      (t) => t.name === "invoice_created" && t.status === "approved"
+    );
+    ok("invoice_created approved en espacio-veloz", Boolean(invoiceTpl), JSON.stringify(invoiceTpl));
+
+    await api("/api/dev/wa-mock/outbox", { method: "DELETE" });
+    const invoiceId = Date.now();
+    const phone = `51${String(invoiceId).slice(-9)}`;
+    const whmcsBody = {
+      event: "invoice.created",
+      invoiceId,
+      client: { id: 123, name: "Mateo WHMCS", phone },
+      invoice: {
+        number: String(invoiceId),
+        currency: "USD",
+        total: "49.99",
+        dueDate: "2026-04-02",
+      },
+      items: [
+        {
+          description:
+            "Espacio Impulsa - mijunapaqollantaytambo.com (02/04/2026 - 01/04/2027)",
+        },
+      ],
+    };
+    const raw = JSON.stringify(whmcsBody);
+    const ts = Math.floor(Date.now() / 1000).toString();
+    const sig = `sha256=${createHmac("sha256", WHMCS_SECRET).update(`${ts}.${raw}`, "utf8").digest("hex")}`;
+
+    const first = await api("/api/integrations/whmcs/events", {
+      method: "POST",
+      headers: {
+        "x-ev-timestamp": ts,
+        "x-ev-signature": sig,
+      },
+      body: raw,
+    });
+    ok("POST firmado invoice.created → 2xx", first.res.ok, JSON.stringify(first.json));
+    ok(
+      "primera ejecución no es duplicate",
+      first.json?.duplicate === false && first.json?.messageId,
+      JSON.stringify(first.json)
+    );
+
+    const convsEv = (await api("/api/conversations")).json?.conversations ?? [];
+    const convEv = convsEv.find((c) => c.contact?.name === "Mateo WHMCS");
+    ok("conversación real creada/reutilizada", Boolean(convEv?.id), JSON.stringify(convEv));
+
+    let outbound = null;
+    if (convEv?.id) {
+      const msgs = (await api(`/api/conversations/${convEv.id}/messages`)).json
+        ?.messages ?? [];
+      outbound = msgs.find((m) => m.id === first.json?.messageId);
+      ok(
+        "mensaje outbound persistido (template)",
+        outbound?.direction === "out" && outbound?.type === "template",
+        JSON.stringify(outbound)
+      );
+      ok(
+        "BODY interpolado con las 5 variables",
+        typeof outbound?.text === "string" &&
+          outbound.text.includes("Mateo WHMCS") &&
+          outbound.text.includes(String(invoiceId)) &&
+          outbound.text.includes("49.99 USD") &&
+          outbound.text.includes("02/04/2026") &&
+          outbound.text.includes("Espacio Impulsa"),
+        outbound?.text
+      );
+    }
+
+    const outbox = (await api("/api/dev/wa-mock/outbox")).json?.outbox ?? [];
+    const tplSends = outbox.filter(
+      (e) => e.type === "template" && e.phoneNumberId === pnEv
+    );
+    ok("un envío template en wa-mock", tplSends.length === 1, String(tplSends.length));
+    const graphTpl = tplSends[0]?.body?.template;
+    const bodyParams = graphTpl?.components?.find((c) => c.type === "body")?.parameters;
+    const urlBtn = graphTpl?.components?.find(
+      (c) => c.type === "button" && c.sub_type === "url"
+    );
+    ok(
+      "Graph recibió 5 parámetros BODY",
+      Array.isArray(bodyParams) && bodyParams.length === 5,
+      JSON.stringify(bodyParams)
+    );
+    ok(
+      "botón URL con invoiceId",
+      urlBtn?.parameters?.[0]?.text === String(invoiceId),
+      JSON.stringify(urlBtn)
+    );
+
+    const dup = await api("/api/integrations/whmcs/events", {
+      method: "POST",
+      headers: {
+        "x-ev-timestamp": ts,
+        "x-ev-signature": sig,
+      },
+      body: raw,
+    });
+    ok("duplicate POST → 2xx", dup.res.ok, JSON.stringify(dup.json));
+    ok("duplicate=true", dup.json?.duplicate === true, JSON.stringify(dup.json));
+    const outbox2 = (await api("/api/dev/wa-mock/outbox")).json?.outbox ?? [];
+    const tplSends2 = outbox2.filter(
+      (e) => e.type === "template" && e.phoneNumberId === pnEv
+    );
+    ok(
+      "sigue existiendo un solo envío WhatsApp",
+      tplSends2.length === 1,
+      String(tplSends2.length)
     );
   }
 

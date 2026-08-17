@@ -35,6 +35,9 @@ const envSchema = z.object({
   // API key de un cerebro externo que conduzca la conversación por /api/bot/*.
   // Sin ella, toda esa superficie responde 401.
   BOT_API_KEY: z.string().optional(),
+  // HMAC del webhook WHMCS (`X-EV-Signature`). Sin ella, el endpoint
+  // /api/integrations/whmcs/events rechaza todo. No reutilizar secretos Meta/Auth.
+  WHMCS_WEBHOOK_SECRET: z.string().min(16).optional(),
   // 008: volumen local de adjuntos (constitución II: sin S3/R2).
   MEDIA_DIR: z.string().default("./.dev-media"),
   NODE_ENV: z.string().default("development"),

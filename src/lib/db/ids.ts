@@ -18,6 +18,7 @@ const prefixes = {
   testRun: "run",
   testCase: "case",
   mediaAsset: "ma",
+  integrationEvent: "iev",
 } as const;
 
 export type IdKind = keyof typeof prefixes;

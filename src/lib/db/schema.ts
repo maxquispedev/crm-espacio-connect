@@ -448,3 +448,39 @@ export const agentTestCase = pgTable(
   },
   (t) => [index("test_case_run_idx").on(t.runId)]
 );
+
+/**
+ * Reserva durable de eventos de integraciones externas (WHMCS, etc.).
+ * Unique (org, source, event_type, external_id) = barrera de envío a Meta.
+ */
+export const integrationEvent = pgTable(
+  "integration_event",
+  {
+    id: text("id").primaryKey(),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organization.id, { onDelete: "cascade" }),
+    source: text("source").notNull(),
+    eventType: text("event_type").notNull(),
+    externalId: text("external_id").notNull(),
+    status: text("status", {
+      enum: ["reserved", "completed", "failed"],
+    })
+      .notNull()
+      .default("reserved"),
+    messageId: text("message_id").references(() => message.id, {
+      onDelete: "set null",
+    }),
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+    updatedAt: timestamp("updated_at").notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex("integration_event_org_src_type_ext_uq").on(
+      t.organizationId,
+      t.source,
+      t.eventType,
+      t.externalId
+    ),
+    index("integration_event_org_idx").on(t.organizationId, t.createdAt),
+  ]
+);

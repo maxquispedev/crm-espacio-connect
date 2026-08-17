@@ -20,6 +20,8 @@ services:
       OPENROUTER_JUDGE_MODEL: ${OPENROUTER_JUDGE_MODEL:-}
       ALLOW_SIGNUP: ${ALLOW_SIGNUP:-}
       AGENT_COALESCE_MS: ${AGENT_COALESCE_MS:-6000}
+      BOT_API_KEY: ${BOT_API_KEY:-}
+      WHMCS_WEBHOOK_SECRET: ${WHMCS_WEBHOOK_SECRET:-}
     depends_on:
       postgres:
         condition: service_healthy
