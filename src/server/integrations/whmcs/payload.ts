@@ -16,10 +16,36 @@ const itemSchema = z.object({
 });
 
 /**
- * Contrato `invoice.created`. Campos de tenant / Meta / IDs internos no
- * están en el schema: Zod los descarta (strip) y jamás se usan.
+ * WHMCS no puede elegir tenant ni IDs internos. Presencia explícita → inválido.
+ * El resto de campos extra se sigue descartando (no usamos `.strict()`).
  */
-export const invoiceCreatedSchema = z.object({
+export const FORBIDDEN_WHMCS_SELECTION_KEYS = [
+  "organizationId",
+  "organization",
+  "organizationSlug",
+  "phoneNumberId",
+  "wabaId",
+  "templateId",
+  "conversationId",
+  "contactId",
+] as const;
+
+function rejectForbiddenSelectionKeys(
+  raw: Record<string, unknown>,
+  ctx: z.RefinementCtx
+): void {
+  for (const key of FORBIDDEN_WHMCS_SELECTION_KEYS) {
+    if (Object.prototype.hasOwnProperty.call(raw, key)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: [key],
+        message: "Campo no permitido",
+      });
+    }
+  }
+}
+
+const invoiceCreatedFields = z.object({
   event: z.literal(INVOICE_CREATED_EVENT),
   invoiceId: z.union([
     z.number().int().positive().max(2_147_483_647),
@@ -47,6 +73,15 @@ export const invoiceCreatedSchema = z.object({
   }),
   items: z.array(itemSchema).min(1).max(20),
 });
+
+/**
+ * Contrato `invoice.created`. Org y credenciales se resuelven en servidor.
+ */
+export const invoiceCreatedSchema = z
+  .object({})
+  .passthrough()
+  .superRefine(rejectForbiddenSelectionKeys)
+  .pipe(invoiceCreatedFields);
 
 export type InvoiceCreatedPayload = z.infer<typeof invoiceCreatedSchema>;
 

@@ -112,4 +112,15 @@ describe("POST /api/integrations/whmcs/events", () => {
     expect(res.status).toBe(200);
     expect(processInvoiceCreated).toHaveBeenCalledTimes(1);
   });
+
+  it("organizationId en el payload no procesa ni llama al sender", async () => {
+    const { POST } = await import(
+      "@/app/api/integrations/whmcs/events/route"
+    );
+    const res = await POST(
+      signedRequest({ ...validBody, organizationId: "otra-organizacion" })
+    );
+    expect(res.status).toBe(400);
+    expect(vi.mocked(processInvoiceCreated)).not.toHaveBeenCalled();
+  });
 });

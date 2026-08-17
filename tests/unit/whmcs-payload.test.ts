@@ -38,14 +38,35 @@ describe("invoiceCreatedSchema", () => {
     expect(invoiceCreatedSchema.safeParse(rest).success).toBe(false);
   });
 
-  it("descarta organizationId y no lo deja usable", () => {
-    const parsed = invoiceCreatedSchema.parse({
+  it("rechaza organizationId y demás campos de selección de tenant", () => {
+    const keys = [
+      "organizationId",
+      "organization",
+      "organizationSlug",
+      "phoneNumberId",
+      "wabaId",
+      "templateId",
+      "conversationId",
+      "contactId",
+    ] as const;
+    for (const key of keys) {
+      const parsed = invoiceCreatedSchema.safeParse({
+        ...valid,
+        [key]: "intruso",
+      });
+      expect(parsed.success).toBe(false);
+    }
+  });
+
+  it("otros campos extra se descartan y el contrato sigue válido", () => {
+    const parsed = invoiceCreatedSchema.safeParse({
       ...valid,
-      organizationId: "org_intruso",
-      organizationSlug: "max-quispe",
+      source: "whmcs",
     });
-    expect(parsed).not.toHaveProperty("organizationId");
-    expect(parsed).not.toHaveProperty("organizationSlug");
+    expect(parsed.success).toBe(true);
+    if (parsed.success) {
+      expect(parsed.data).not.toHaveProperty("source");
+    }
   });
 });
 
