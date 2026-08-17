@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { mockGuard } from "@/lib/dev-guard";
 import { apiError, parseBody } from "@/lib/api";
-import { getWaMockState } from "@/server/dev/wa-mock-state";
+import { getWaMockState, nextN } from "@/server/dev/wa-mock-state";
 import {
   buildTemplateStatusPayload,
   deliverToWebhook,
@@ -24,6 +24,8 @@ const bodySchema = z.object({
    * el pull de `POST /api/templates/sync`.
    */
   notify: z.boolean().optional(),
+  /** Cuerpo BODY si se registra una plantilla que solo existe en Meta. */
+  body: z.string().optional(),
 });
 
 export async function POST(req: Request) {
@@ -35,12 +37,24 @@ export async function POST(req: Request) {
 
   // Mantener coherente el estado del "panel de Meta" simulado (para el sync).
   const state = getWaMockState();
-  const tpl = state.templates.find(
+  let tpl = state.templates.find(
     (t) => t.name === body.data.name && t.language === body.data.language
   );
   if (tpl) {
     tpl.status = body.data.event;
     if (body.data.category) tpl.category = body.data.category;
+    if (body.data.body !== undefined) tpl.body = body.data.body;
+  } else {
+    // Plantilla creada solo en Meta (sin fila local): el pull debe importarla.
+    tpl = {
+      id: `tplmock_${nextN()}`,
+      name: body.data.name,
+      language: body.data.language,
+      category: body.data.category ?? "UTILITY",
+      status: body.data.event,
+      body: body.data.body ?? "",
+    };
+    state.templates.push(tpl);
   }
 
   if (body.data.notify === false) {

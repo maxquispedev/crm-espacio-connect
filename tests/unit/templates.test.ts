@@ -3,6 +3,8 @@ import {
   buildTemplateGraphMessage,
   buildTemplateSendComponents,
   countVariables,
+  extractTemplateBody,
+  planRemoteTemplateSync,
   renderBody,
   resolveBodyValues,
   validateBodyVariables,
@@ -205,5 +207,180 @@ describe("buildTemplateSendComponents / Graph payload", () => {
         parameters: [{ type: "text", text: "1296" }],
       },
     ]);
+  });
+});
+
+const INVOICE_COMPONENTS = [
+  { type: "HEADER", format: "TEXT", text: "Factura nueva" },
+  { type: "BODY", text: INVOICE_BODY },
+  {
+    type: "BUTTONS",
+    buttons: [
+      {
+        type: "URL",
+        text: "Ver factura",
+        url: "https://espacio.connect/invoices/{{1}}",
+      },
+    ],
+  },
+];
+
+function localRow(
+  overrides: Partial<{
+    id: string;
+    name: string;
+    language: string;
+    category: string;
+    status: "draft" | "pending" | "approved" | "rejected";
+    waTemplateId: string | null;
+    body: string;
+  }> = {}
+) {
+  return {
+    id: "tpl_local",
+    name: "seguimiento_cotizacion",
+    language: "es_MX",
+    category: "UTILITY",
+    status: "pending" as const,
+    waTemplateId: "wa_1",
+    body: "Hola {{1}}",
+    ...overrides,
+  };
+}
+
+describe("extractTemplateBody", () => {
+  it("toma el BODY y ignora HEADER/BUTTONS", () => {
+    expect(extractTemplateBody(INVOICE_COMPONENTS)).toBe(INVOICE_BODY);
+  });
+
+  it("acepta type en minúsculas y componentes ausentes", () => {
+    expect(extractTemplateBody([{ type: "body", text: "Hola {{1}}" }])).toBe(
+      "Hola {{1}}"
+    );
+    expect(extractTemplateBody(undefined)).toBe("");
+    expect(extractTemplateBody([{ type: "BUTTONS", buttons: [] }])).toBe("");
+  });
+});
+
+describe("planRemoteTemplateSync", () => {
+  it("remote existente + local existente → update (estado y categoría)", () => {
+    const plan = planRemoteTemplateSync([localRow()], {
+      id: "wa_1",
+      name: "seguimiento_cotizacion",
+      language: "es_MX",
+      status: "APPROVED",
+      category: "MARKETING",
+    });
+    expect(plan).toEqual({
+      kind: "update",
+      localId: "tpl_local",
+      status: "approved",
+      category: "MARKETING",
+      rejectionReason: null,
+      waTemplateId: "wa_1",
+    });
+  });
+
+  it("mismo estado y categoría → ignore (no reescribe)", () => {
+    expect(
+      planRemoteTemplateSync(
+        [localRow({ status: "approved", category: "MARKETING" })],
+        {
+          id: "wa_1",
+          name: "seguimiento_cotizacion",
+          language: "es_MX",
+          status: "APPROVED",
+          category: "MARKETING",
+        }
+      )
+    ).toEqual({ kind: "ignore" });
+  });
+
+  it("remote nueva → insert con BODY y sin botones", () => {
+    const plan = planRemoteTemplateSync([], {
+      id: "wa_inv",
+      name: "invoice_created",
+      language: "es_MX",
+      status: "APPROVED",
+      category: "UTILITY",
+      components: INVOICE_COMPONENTS,
+    });
+    expect(plan).toEqual({
+      kind: "insert",
+      name: "invoice_created",
+      language: "es_MX",
+      category: "UTILITY",
+      body: INVOICE_BODY,
+      status: "approved",
+      waTemplateId: "wa_inv",
+      rejectionReason: null,
+    });
+    expect("organizationId" in plan).toBe(false);
+    if (plan.kind === "insert") {
+      expect(JSON.stringify(plan)).not.toMatch(/BUTTONS|Ver factura/);
+    }
+  });
+
+  it("segundo sync de la misma remota no duplica", () => {
+    const remote = {
+      id: "wa_inv",
+      name: "invoice_created",
+      language: "es_MX",
+      status: "APPROVED",
+      category: "UTILITY",
+      components: INVOICE_COMPONENTS,
+    };
+    const first = planRemoteTemplateSync([], remote);
+    expect(first.kind).toBe("insert");
+    const afterInsert = [
+      localRow({
+        id: "tpl_imported",
+        name: "invoice_created",
+        language: "es_MX",
+        category: "UTILITY",
+        status: "approved",
+        waTemplateId: "wa_inv",
+        body: INVOICE_BODY,
+      }),
+    ];
+    expect(planRemoteTemplateSync(afterInsert, remote)).toEqual({
+      kind: "ignore",
+    });
+  });
+
+  it("mismo name/language de otra organización no entra en el match", () => {
+    // El caller solo pasa filas del tenant del sync (`scoped`): org B no está.
+    const plan = planRemoteTemplateSync([], {
+      id: "wa_inv",
+      name: "invoice_created",
+      language: "es_MX",
+      status: "APPROVED",
+      category: "UTILITY",
+      components: INVOICE_COMPONENTS,
+    });
+    expect(plan.kind).toBe("insert");
+    if (plan.kind === "insert") {
+      expect(plan.name).toBe("invoice_created");
+    }
+  });
+
+  it("BODY + BUTTONS importa solo campos soportados", () => {
+    const plan = planRemoteTemplateSync([], {
+      id: "wa_inv",
+      name: "invoice_created",
+      language: "es_MX",
+      status: "APPROVED",
+      category: "UTILITY",
+      components: INVOICE_COMPONENTS,
+    });
+    expect(plan.kind).toBe("insert");
+    if (plan.kind !== "insert") return;
+    expect(plan.body).toBe(INVOICE_BODY);
+    expect(plan.name).toBe("invoice_created");
+    expect(plan.language).toBe("es_MX");
+    expect(plan.status).toBe("approved");
+    expect(plan.category).toBe("UTILITY");
+    expect(plan.waTemplateId).toBe("wa_inv");
+    expect("buttons" in plan).toBe(false);
   });
 });

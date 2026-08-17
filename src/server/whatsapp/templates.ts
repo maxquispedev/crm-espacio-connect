@@ -188,10 +188,125 @@ function mapMetaStatus(
   return null;
 }
 
+/** Subconjunto de `GET {waba}/message_templates` que usa el sync. */
+export type RemoteMessageTemplate = {
+  id?: string;
+  name?: string;
+  language?: string;
+  status?: string;
+  category?: string;
+  rejected_reason?: string | null;
+  components?: unknown;
+};
+
+type LocalTemplateRef = Pick<
+  TemplateRow,
+  "id" | "name" | "language" | "category" | "status" | "waTemplateId" | "body"
+>;
+
+/**
+ * Extrae el texto BODY de `components` de Graph. HEADER/BUTTONS se ignoran
+ * (el schema local no los guarda). Acepta `BODY` o `body`.
+ */
+export function extractTemplateBody(components: unknown): string {
+  if (!Array.isArray(components)) return "";
+  for (const item of components) {
+    if (!item || typeof item !== "object") continue;
+    const rec = item as { type?: unknown; text?: unknown };
+    if (typeof rec.type === "string" && rec.type.toUpperCase() === "BODY") {
+      return typeof rec.text === "string" ? rec.text : "";
+    }
+  }
+  return "";
+}
+
+export type TemplateSyncPlan =
+  | { kind: "ignore" }
+  | {
+      kind: "update";
+      localId: string;
+      status: TemplateRow["status"];
+      category: string;
+      rejectionReason: string | null;
+      waTemplateId: string | null;
+    }
+  | {
+      kind: "insert";
+      name: string;
+      language: string;
+      category: string;
+      body: string;
+      status: TemplateRow["status"];
+      waTemplateId: string | null;
+      rejectionReason: string | null;
+    };
+
+function findLocalTemplate(
+  local: readonly LocalTemplateRef[],
+  remote: RemoteMessageTemplate
+): LocalTemplateRef | undefined {
+  if (remote.id) {
+    const byWaId = local.find((t) => t.waTemplateId === remote.id);
+    if (byWaId) return byWaId;
+  }
+  if (remote.name && remote.language) {
+    return local.find(
+      (t) => t.name === remote.name && t.language === remote.language
+    );
+  }
+  return undefined;
+}
+
+/**
+ * Decide update/insert/ignore para una plantilla remota contra las filas
+ * YA CARGADAS de una sola organización (el caller aplica `scoped()`).
+ */
+export function planRemoteTemplateSync(
+  local: readonly LocalTemplateRef[],
+  remote: RemoteMessageTemplate
+): TemplateSyncPlan {
+  const status = mapMetaStatus(remote.status);
+  if (!status) return { kind: "ignore" };
+
+  const match = findLocalTemplate(local, remote);
+  if (match) {
+    const category = remote.category ?? match.category;
+    if (match.status === status && match.category === category) {
+      return { kind: "ignore" };
+    }
+    return {
+      kind: "update",
+      localId: match.id,
+      status,
+      category,
+      rejectionReason: remote.rejected_reason ?? null,
+      waTemplateId: match.waTemplateId ?? remote.id ?? null,
+    };
+  }
+
+  const name = remote.name?.trim();
+  const language = remote.language?.trim();
+  if (!name || !language) return { kind: "ignore" };
+
+  return {
+    kind: "insert",
+    name,
+    language,
+    category: remote.category ?? "UTILITY",
+    body: extractTemplateBody(remote.components),
+    status,
+    waTemplateId: remote.id ?? null,
+    rejectionReason: remote.rejected_reason ?? null,
+  };
+}
+
 /**
  * Sincroniza estados desde Graph (`GET {waba}/message_templates`). Cubre el
  * modo agencia: los webhooks de plantillas NO siguen el override de callback,
  * así que el pull es la vía universal (DV-VC-04/DV-VC-15).
+ *
+ * Plantillas remotas sin fila local se importan (identidad
+ * `organization + name + language`). HEADER/BUTTONS de Meta no se persisten.
  */
 export async function syncTemplates(organizationId: string): Promise<number> {
   const creds = await getCredentialsByOrg(organizationId);
@@ -199,13 +314,12 @@ export async function syncTemplates(organizationId: string): Promise<number> {
     throw new TemplateError("not_connected", "Conecta tu número de WhatsApp primero");
   }
 
-  let data: {
-    data?: { id?: string; name?: string; language?: string; status?: string; category?: string; quality_score?: unknown; rejected_reason?: string }[];
-  };
+  let data: { data?: RemoteMessageTemplate[] };
   try {
-    data = await graphRequest(`${creds.wabaId}/message_templates`, {
-      token: creds.token,
-    });
+    data = await graphRequest(
+      `${creds.wabaId}/message_templates?fields=id,name,language,status,category,rejected_reason,components`,
+      { token: creds.token }
+    );
   } catch (err) {
     if (err instanceof MetaApiError) {
       if (err.isAuthError) {
@@ -222,31 +336,58 @@ export async function syncTemplates(organizationId: string): Promise<number> {
     .select()
     .from(schema.template)
     .where(scoped(schema.template.organizationId, organizationId));
+  const known: LocalTemplateRef[] = [...local];
 
   let updated = 0;
   for (const remote of data.data ?? []) {
-    const status = mapMetaStatus(remote.status);
-    if (!status) continue;
-    const match = local.find(
-      (t) =>
-        (remote.id && t.waTemplateId === remote.id) ||
-        (t.name === remote.name && t.language === remote.language)
-    );
-    if (!match) continue;
-    // Meta reclasifica la categoría al aprobar (una UTILITY puede volverse
-    // MARKETING, lo que cambia el costo por conversación): es autoridad.
-    const category = remote.category ?? match.category;
-    if (match.status === status && match.category === category) continue;
-    await db
-      .update(schema.template)
-      .set({
-        status,
-        category,
-        rejectionReason: remote.rejected_reason ?? null,
-        waTemplateId: match.waTemplateId ?? remote.id ?? null,
-        updatedAt: new Date(),
+    const plan = planRemoteTemplateSync(known, remote);
+    if (plan.kind === "ignore") continue;
+
+    if (plan.kind === "update") {
+      await db
+        .update(schema.template)
+        .set({
+          status: plan.status,
+          category: plan.category,
+          rejectionReason: plan.rejectionReason,
+          waTemplateId: plan.waTemplateId,
+          updatedAt: new Date(),
+        })
+        .where(eq(schema.template.id, plan.localId));
+      const row = known.find((t) => t.id === plan.localId);
+      if (row) {
+        row.status = plan.status;
+        row.category = plan.category;
+        row.waTemplateId = plan.waTemplateId;
+      }
+      updated += 1;
+      continue;
+    }
+
+    const inserted = await db
+      .insert(schema.template)
+      .values({
+        id: newId("template"),
+        organizationId,
+        name: plan.name,
+        language: plan.language,
+        category: plan.category,
+        body: plan.body,
+        status: plan.status,
+        rejectionReason: plan.rejectionReason,
+        waTemplateId: plan.waTemplateId,
       })
-      .where(eq(schema.template.id, match.id));
+      .onConflictDoNothing({
+        target: [
+          schema.template.organizationId,
+          schema.template.name,
+          schema.template.language,
+        ],
+      })
+      .returning();
+    const row = inserted[0];
+    if (!row) continue;
+    known.push(row);
     updated += 1;
   }
   return updated;

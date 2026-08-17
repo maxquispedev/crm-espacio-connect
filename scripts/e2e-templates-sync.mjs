@@ -139,6 +139,57 @@ async function main() {
   const again = await api("/api/templates/sync", { method: "POST" });
   ok("segundo sync no reescribe nada", again.json?.updated === 0, JSON.stringify(again.json));
 
+  console.log("\n== us6: importar plantilla que solo existe en Meta ==");
+  const invoiceName = `invoice_created_${stamp}`;
+  const invoiceBody =
+    "Hola {{1}}, tu factura {{2}} por {{3}} vence el {{4}}. Concepto: {{5}}.";
+  const seeded = await api("/api/dev/wa-mock/template-status", {
+    method: "POST",
+    body: JSON.stringify({
+      wabaId: WABA,
+      name: invoiceName,
+      language: "es_MX",
+      event: "APPROVED",
+      category: "UTILITY",
+      body: invoiceBody,
+      notify: false,
+    }),
+  });
+  ok("Meta tiene la plantilla sin webhook", seeded.res.ok, JSON.stringify(seeded.json));
+  ok(
+    "aún no existe fila local",
+    !(await findTemplate(invoiceName)),
+    invoiceName
+  );
+
+  const importedSync = await api("/api/templates/sync", { method: "POST" });
+  ok("sync importa la remota", importedSync.res.ok, JSON.stringify(importedSync.json));
+  ok(
+    "sync reporta al menos 1 cambio (insert)",
+    (importedSync.json?.updated ?? 0) >= 1,
+    JSON.stringify(importedSync.json)
+  );
+
+  const imported = await findTemplate(invoiceName);
+  ok("fila local creada", Boolean(imported), JSON.stringify(imported));
+  ok("status = approved", imported?.status === "approved", imported?.status);
+  ok("categoría = UTILITY", imported?.category === "UTILITY", imported?.category);
+  ok("BODY importado", imported?.body === invoiceBody, imported?.body);
+
+  const { json: listed } = await api("/api/templates");
+  const dupes = (listed?.templates ?? []).filter((t) => t.name === invoiceName);
+  const againImport = await api("/api/templates/sync", { method: "POST" });
+  const { json: listedAgain } = await api("/api/templates");
+  const dupesAgain = (listedAgain?.templates ?? []).filter(
+    (t) => t.name === invoiceName
+  );
+  ok("un solo local tras el primer import", dupes.length === 1, String(dupes.length));
+  ok(
+    "segundo sync no duplica",
+    againImport.json?.updated === 0 && dupesAgain.length === 1,
+    JSON.stringify({ updated: againImport.json?.updated, n: dupesAgain.length })
+  );
+
   console.log("\n== us6: camino infeliz — Meta caído no tumba la pantalla ==");
   const listStillOk = await api("/api/templates");
   ok(
