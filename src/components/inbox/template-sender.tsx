@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import type { TemplateDto } from "@/lib/types";
+import { countVariables } from "@/lib/whatsapp/template-placeholders";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -19,7 +20,7 @@ export function TemplateSender({
 }) {
   const [templates, setTemplates] = useState<TemplateDto[] | null>(null);
   const [selectedId, setSelectedId] = useState<string>("");
-  const [variable, setVariable] = useState("");
+  const [values, setValues] = useState<string[]>([]);
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -59,21 +60,39 @@ export function TemplateSender({
   }
 
   const selected = templates.find((t) => t.id === selectedId) ?? null;
-  const needsVariable = selected ? /\{\{\s*1\s*\}\}/.test(selected.body) : false;
+  const varCount = selected ? countVariables(selected.body) : 0;
+  const filled = Array.from({ length: varCount }, (_, i) => values[i] ?? "");
+  const missingValues = filled.some((v) => !v.trim());
+
+  function setValueAt(index: number, next: string) {
+    setValues((prev) => {
+      const copy = prev.slice();
+      while (copy.length <= index) copy.push("");
+      copy[index] = next;
+      return copy;
+    });
+  }
 
   async function send() {
     if (!selected || sending) return;
     setSending(true);
     setError(null);
+    const payload: {
+      templateId: string;
+      variable?: string;
+      variables?: string[];
+    } = { templateId: selected.id };
+    if (varCount === 1) {
+      payload.variable = filled[0] ?? "";
+    } else if (varCount > 1) {
+      payload.variables = filled;
+    }
     const res = await fetch(
       `/api/conversations/${conversationId}/messages/template`,
       {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          templateId: selected.id,
-          variable: needsVariable ? variable : undefined,
-        }),
+        body: JSON.stringify(payload),
       }
     );
     setSending(false);
@@ -85,7 +104,7 @@ export function TemplateSender({
       return;
     }
     setSelectedId("");
-    setVariable("");
+    setValues([]);
     onSent();
   }
 
@@ -96,7 +115,10 @@ export function TemplateSender({
         <select
           id="template-select"
           value={selectedId}
-          onChange={(e) => setSelectedId(e.target.value)}
+          onChange={(e) => {
+            setSelectedId(e.target.value);
+            setValues([]);
+          }}
           className="flex h-9 w-full rounded-md border border-input bg-card px-3 py-1 text-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
         >
           <option value="">Elige una plantilla…</option>
@@ -112,21 +134,23 @@ export function TemplateSender({
           {selected.body}
         </p>
       )}
-      {needsVariable && (
-        <div className="space-y-1.5">
-          <Label htmlFor="template-variable">Valor de la variable {"{{1}}"}</Label>
+      {filled.map((value, i) => (
+        <div key={i} className="space-y-1.5">
+          <Label htmlFor={`template-variable-${i + 1}`}>
+            Valor de la variable {`{{${i + 1}}}`}
+          </Label>
           <Input
-            id="template-variable"
-            value={variable}
-            onChange={(e) => setVariable(e.target.value)}
-            placeholder="p. ej. el nombre del cliente"
+            id={`template-variable-${i + 1}`}
+            value={value}
+            onChange={(e) => setValueAt(i, e.target.value)}
+            placeholder={i === 0 ? "p. ej. el nombre del cliente" : undefined}
           />
         </div>
-      )}
+      ))}
       {error && <p className="text-xs text-destructive">{error}</p>}
       <Button
         onClick={() => void send()}
-        disabled={!selected || sending || (needsVariable && !variable.trim())}
+        disabled={!selected || sending || missingValues}
       >
         {sending ? "Enviando…" : "Enviar plantilla"}
       </Button>

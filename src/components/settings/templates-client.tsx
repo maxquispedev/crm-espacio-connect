@@ -160,7 +160,8 @@ function CreateForm({ onCreated }: { onCreated: () => void }) {
       <CardHeader>
         <CardTitle>Nueva plantilla</CardTitle>
         <CardDescription>
-          Cuerpo con máximo UNA variable <code>{"{{1}}"}</code> (v1). Se envía a
+          Cuerpo con variables opcionales consecutivas{" "}
+          <code>{"{{1}}"}</code>, <code>{"{{2}}"}</code>, … Se envía a
           aprobación de Meta al crearla.
         </CardDescription>
       </CardHeader>

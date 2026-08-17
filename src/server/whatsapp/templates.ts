@@ -12,6 +12,22 @@ import {
 import { callGraphSend, SendError } from "@/server/inbox/send";
 import { serializeMessage } from "@/server/inbox/ingest";
 import type { WebhookValue } from "@/server/inbox/webhook";
+import {
+  buildTemplateGraphMessage,
+  countVariables,
+  renderBody,
+  resolveBodyValues,
+  validateBodyVariables,
+} from "@/lib/whatsapp/template-placeholders";
+
+export {
+  buildTemplateGraphMessage,
+  buildTemplateSendComponents,
+  countVariables,
+  renderBody,
+  resolveBodyValues,
+  validateBodyVariables,
+} from "@/lib/whatsapp/template-placeholders";
 
 /** Errores tipados del servicio de plantillas → HTTP en la capa de API. */
 export class TemplateError extends Error {
@@ -41,29 +57,6 @@ const TEMPLATE_ERROR_STATUS: Record<TemplateError["code"], number> = {
 
 export function templateErrorStatus(err: TemplateError): number {
   return TEMPLATE_ERROR_STATUS[err.code];
-}
-
-const VARIABLE_REGEX = /\{\{\s*(\d+)\s*\}\}/g;
-
-/** Cuenta variables {{n}} y valida el acotamiento v1: máximo UNA y debe ser {{1}}. */
-export function countVariables(body: string): number {
-  const matches = [...body.matchAll(VARIABLE_REGEX)];
-  return matches.length;
-}
-
-export function validateBodyVariables(body: string): string | null {
-  const matches = [...body.matchAll(VARIABLE_REGEX)];
-  if (matches.length > 1) {
-    return "v1 admite una sola variable {{1}} en el cuerpo";
-  }
-  if (matches.length === 1 && matches[0]![1] !== "1") {
-    return "La variable debe ser {{1}}";
-  }
-  return null;
-}
-
-export function renderBody(body: string, variable?: string): string {
-  return body.replace(VARIABLE_REGEX, variable ?? "");
 }
 
 type TemplateRow = typeof schema.template.$inferSelect;
@@ -102,7 +95,19 @@ export async function createTemplate(
     .replace(/[^a-z0-9_]/g, "");
   if (!name) throw new TemplateError("invalid", "Nombre de plantilla inválido");
 
-  const hasVariable = countVariables(input.body) === 1;
+  const variableCount = countVariables(input.body);
+  const bodyExample =
+    variableCount > 0
+      ? {
+          example: {
+            body_text: [
+              Array.from({ length: variableCount }, (_, i) =>
+                variableCount === 1 ? "ejemplo" : `ejemplo${i + 1}`
+              ),
+            ],
+          },
+        }
+      : {};
   let waTemplateId: string | null = null;
   try {
     const res = await graphRequest<{ id?: string; status?: string }>(
@@ -118,9 +123,7 @@ export async function createTemplate(
             {
               type: "BODY",
               text: input.body,
-              ...(hasVariable
-                ? { example: { body_text: [["ejemplo"]] } }
-                : {}),
+              ...bodyExample,
             },
           ],
         },
@@ -285,7 +288,12 @@ export async function sendTemplate(input: {
   organizationId: string;
   conversationId: string;
   templateId: string;
+  /** Compat: valor de `{{1}}`. Se ignora si `variables` está definido. */
   variable?: string;
+  /** Valores BODY en orden `{{1}}`…`{{n}}`. */
+  variables?: string[];
+  /** Sufijo del botón URL dinámico (componente `button` / `sub_type: url`). */
+  urlButtonSuffix?: string;
 }): Promise<{ messageId: string }> {
   const db = getDb();
 
@@ -305,10 +313,11 @@ export async function sendTemplate(input: {
   if (template.status !== "approved") {
     throw new TemplateError("invalid", "Solo se pueden enviar plantillas aprobadas");
   }
-  const needsVariable = countVariables(template.body) === 1;
-  if (needsVariable && !input.variable?.trim()) {
-    throw new TemplateError("invalid", "La plantilla requiere el valor de {{1}}");
-  }
+  const placeholderError = validateBodyVariables(template.body);
+  if (placeholderError) throw new TemplateError("invalid", placeholderError);
+  const expectedCount = countVariables(template.body);
+  const resolved = resolveBodyValues(expectedCount, input);
+  if (!resolved.ok) throw new TemplateError("invalid", resolved.error);
 
   const rows = await db
     .select({ conversation: schema.conversation, contact: schema.contact })
@@ -356,20 +365,12 @@ export async function sendTemplate(input: {
     messaging_product: "whatsapp",
     to: templateRecipient,
     type: "template",
-    template: {
+    template: buildTemplateGraphMessage({
       name: template.name,
-      language: { code: template.language },
-      ...(needsVariable
-        ? {
-            components: [
-              {
-                type: "body",
-                parameters: [{ type: "text", text: input.variable!.trim() }],
-              },
-            ],
-          }
-        : {}),
-    },
+      language: template.language,
+      bodyValues: resolved.values,
+      urlButtonSuffix: input.urlButtonSuffix,
+    }),
   });
 
   const inserted = await db
@@ -381,7 +382,7 @@ export async function sendTemplate(input: {
       waMessageId,
       direction: "out",
       type: "template",
-      text: renderBody(template.body, input.variable?.trim()),
+      text: renderBody(template.body, resolved.values),
       status: "pending",
       origin: "template",
     })

@@ -13,7 +13,11 @@ type Params = { params: Promise<{ id: string }> };
 
 const bodySchema = z.object({
   templateId: z.string().min(1),
+  /** Compat: valor de {{1}}. */
   variable: z.string().trim().max(500).optional(),
+  /** Valores BODY en orden {{1}}…{{n}}. */
+  variables: z.array(z.string().trim().max(500)).max(10).optional(),
+  urlButtonSuffix: z.string().trim().max(2000).optional(),
 });
 
 export const POST = withAuth(async (session, req: Request, ctx: Params) => {
@@ -27,6 +31,8 @@ export const POST = withAuth(async (session, req: Request, ctx: Params) => {
       conversationId: id,
       templateId: body.data.templateId,
       variable: body.data.variable,
+      variables: body.data.variables,
+      urlButtonSuffix: body.data.urlButtonSuffix,
     });
     return Response.json({ messageId: result.messageId });
   } catch (err) {
