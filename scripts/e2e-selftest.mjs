@@ -1359,6 +1359,129 @@ async function main() {
       tplSends2.length === 1,
       String(tplSends2.length)
     );
+
+    console.log("\n== WHMCS invoice.paid (espacio-veloz) ==");
+    const paidBodyTpl =
+      "Hola {{1}}, confirmamos el pago de tu factura {{2}} por {{3}} el {{4}}.";
+    const paidCreate = await api("/api/templates", {
+      method: "POST",
+      body: JSON.stringify({
+        name: "invoice_paid",
+        language: "es_MX",
+        category: "UTILITY",
+        body: paidBodyTpl,
+      }),
+    });
+    ok(
+      "plantilla invoice_paid creada o reenviada a Meta",
+      paidCreate.res.ok || paidCreate.res.status === 409,
+      JSON.stringify(paidCreate.json)
+    );
+
+    await api("/api/dev/wa-mock/template-status", {
+      method: "POST",
+      body: JSON.stringify({
+        wabaId: "WABA-WHMCS-EV",
+        name: "invoice_paid",
+        language: "es_MX",
+        event: "APPROVED",
+        category: "UTILITY",
+        body: paidBodyTpl,
+        notify: false,
+      }),
+    });
+    const paidSync = await api("/api/templates/sync", { method: "POST" });
+    ok("sync de invoice_paid", paidSync.res.ok, JSON.stringify(paidSync.json));
+    const tplsPaid = (await api("/api/templates")).json?.templates ?? [];
+    const paidTpl = tplsPaid.find(
+      (t) => t.name === "invoice_paid" && t.status === "approved"
+    );
+    ok("invoice_paid approved en espacio-veloz", Boolean(paidTpl), JSON.stringify(paidTpl));
+
+    await api("/api/dev/wa-mock/outbox", { method: "DELETE" });
+    const paidWhmcsBody = {
+      event: "invoice.paid",
+      invoiceId,
+      client: { id: 123, name: "Mateo WHMCS", phone },
+      invoice: {
+        number: String(invoiceId),
+        currency: "USD",
+        total: "54.99",
+        paidAt: "2026-08-19 13:51:00",
+      },
+    };
+    const paidRaw = JSON.stringify(paidWhmcsBody);
+    const paidTs = Math.floor(Date.now() / 1000).toString();
+    const paidSig = `sha256=${createHmac("sha256", WHMCS_SECRET).update(`${paidTs}.${paidRaw}`, "utf8").digest("hex")}`;
+
+    const paidFirst = await api("/api/integrations/whmcs/events", {
+      method: "POST",
+      headers: {
+        "x-ev-timestamp": paidTs,
+        "x-ev-signature": paidSig,
+      },
+      body: paidRaw,
+    });
+    ok(
+      "POST firmado invoice.paid → 2xx",
+      paidFirst.res.ok,
+      JSON.stringify(paidFirst.json)
+    );
+    ok(
+      "invoice.paid primera ejecución no es duplicate",
+      paidFirst.json?.duplicate === false && paidFirst.json?.messageId,
+      JSON.stringify(paidFirst.json)
+    );
+
+    const paidOutbox = (await api("/api/dev/wa-mock/outbox")).json?.outbox ?? [];
+    const paidSends = paidOutbox.filter(
+      (e) => e.type === "template" && e.phoneNumberId === pnEv
+    );
+    ok("un envío template paid en wa-mock", paidSends.length === 1, String(paidSends.length));
+    const paidGraph = paidSends[0]?.body?.template;
+    const paidParams = paidGraph?.components?.find((c) => c.type === "body")?.parameters;
+    const paidBtn = paidGraph?.components?.find(
+      (c) => c.type === "button" && c.sub_type === "url"
+    );
+    ok(
+      "Graph recibió 4 parámetros BODY",
+      Array.isArray(paidParams) && paidParams.length === 4,
+      JSON.stringify(paidParams)
+    );
+    ok(
+      "invoice.paid no envía botón URL",
+      paidBtn === undefined,
+      JSON.stringify(paidBtn)
+    );
+    ok(
+      "variables paid: nombre, número, monto, fecha",
+      Array.isArray(paidParams) &&
+        paidParams[0]?.text === "Mateo WHMCS" &&
+        paidParams[1]?.text === String(invoiceId) &&
+        paidParams[2]?.text === "54.99 USD" &&
+        paidParams[3]?.text === "19/08/2026 13:51",
+      JSON.stringify(paidParams)
+    );
+
+    const paidDup = await api("/api/integrations/whmcs/events", {
+      method: "POST",
+      headers: {
+        "x-ev-timestamp": paidTs,
+        "x-ev-signature": paidSig,
+      },
+      body: paidRaw,
+    });
+    ok("duplicate invoice.paid → 2xx", paidDup.res.ok, JSON.stringify(paidDup.json));
+    ok("duplicate paid=true", paidDup.json?.duplicate === true, JSON.stringify(paidDup.json));
+    const paidOutbox2 = (await api("/api/dev/wa-mock/outbox")).json?.outbox ?? [];
+    const paidSends2 = paidOutbox2.filter(
+      (e) => e.type === "template" && e.phoneNumberId === pnEv
+    );
+    ok(
+      "paid sigue con un solo envío WhatsApp",
+      paidSends2.length === 1,
+      String(paidSends2.length)
+    );
   }
 
   console.log(`\n===== ${checks - failures}/${checks} checks OK, ${failures} fallos =====`);

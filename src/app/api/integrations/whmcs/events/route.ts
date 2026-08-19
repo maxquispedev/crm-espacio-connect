@@ -5,12 +5,15 @@ import { verifyWhmcsHmac } from "@/server/integrations/whmcs/hmac";
 import {
   eventEnvelopeSchema,
   INVOICE_CREATED_EVENT,
+  INVOICE_PAID_EVENT,
   invoiceCreatedSchema,
+  invoicePaidSchema,
 } from "@/server/integrations/whmcs/payload";
 import {
   processInvoiceCreated,
   WhmcsIntegrationError,
 } from "@/server/integrations/whmcs/invoice-created";
+import { processInvoicePaid } from "@/server/integrations/whmcs/invoice-paid";
 
 export const dynamic = "force-dynamic";
 
@@ -49,17 +52,31 @@ export async function POST(req: Request) {
   if (!envelope.success) {
     return apiError(400, "invalid_body", "Payload inválido");
   }
-  if (envelope.data.event !== INVOICE_CREATED_EVENT) {
-    return apiError(422, "unsupported_event", "Evento no soportado");
+
+  if (envelope.data.event === INVOICE_CREATED_EVENT) {
+    const parsed = invoiceCreatedSchema.safeParse(json);
+    if (!parsed.success) {
+      return apiError(400, "invalid_body", "Payload inválido");
+    }
+    return runProcessor(() => processInvoiceCreated(parsed.data));
   }
 
-  const parsed = invoiceCreatedSchema.safeParse(json);
-  if (!parsed.success) {
-    return apiError(400, "invalid_body", "Payload inválido");
+  if (envelope.data.event === INVOICE_PAID_EVENT) {
+    const parsed = invoicePaidSchema.safeParse(json);
+    if (!parsed.success) {
+      return apiError(400, "invalid_body", "Payload inválido");
+    }
+    return runProcessor(() => processInvoicePaid(parsed.data));
   }
 
+  return apiError(422, "unsupported_event", "Evento no soportado");
+}
+
+async function runProcessor(
+  run: () => Promise<{ ok: true; duplicate: boolean; status: string; messageId?: string }>
+): Promise<Response> {
   try {
-    const result = await processInvoiceCreated(parsed.data);
+    const result = await run();
     return Response.json(result);
   } catch (err) {
     if (err instanceof WhmcsIntegrationError) {
