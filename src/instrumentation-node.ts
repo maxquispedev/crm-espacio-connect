@@ -1,5 +1,6 @@
 import { eq } from "drizzle-orm";
 import { getDb, schema } from "@/lib/db";
+import { startSalesFollowUpWorker as startFollowUpWorker } from "@/server/sales/follow-ups/worker";
 
 /**
  * Limpieza al arranque (FR-034): corridas del Laboratorio que quedaron
@@ -25,5 +26,14 @@ export async function cleanupOrphanRuns(): Promise<void> {
   } catch (err) {
     // La BD puede no estar lista aún (migraciones corren antes del server).
     console.error("[boot] limpieza de corridas huérfanas falló:", err);
+  }
+}
+
+/** Interval in-process; no espera el primer tick. Idempotente ante HMR. */
+export function startSalesFollowUpWorker(): void {
+  try {
+    startFollowUpWorker();
+  } catch (err) {
+    console.error("[boot] no se pudo arrancar el worker de follow-ups:", err);
   }
 }

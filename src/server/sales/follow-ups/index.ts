@@ -22,10 +22,17 @@ export {
 export {
   cancelFollowUpsOnManualReply,
   cancelPendingFollowUps,
+  enqueueFollowUpAttempt,
   getCurrentFollowUp,
   markDormant,
+  patchLeadFollowUp,
   resetFollowUpsOnInbound,
   scheduleManualFollowUp,
   scheduleNextFollowUp,
   type ScheduleManualFollowUpResult,
 } from "@/server/sales/follow-ups/store";
+
+export {
+  runDueFollowUps,
+  startSalesFollowUpWorker,
+} from "@/server/sales/follow-ups/worker";

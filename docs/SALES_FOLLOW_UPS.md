@@ -21,9 +21,9 @@ Anclas actuales del CRM (no modificar en este phase):
 - Plantillas: `src/server/whatsapp/templates.ts` (`sendTemplate` exige plantilla de la misma org con `status=approved`; no abre la ventana).
 - Ingesta inbound: `src/server/inbox/ingest.ts` persiste, `onLeadActivity`, `maybeRunAgentTurn`.
 - Echo manual del dueño: `ingestManualEcho` registra `origin=manual` y pausa IA (`handoff_at` + `handoff_reason=manual_reply`).
-- Arranque in-process: `src/instrumentation.ts` → `src/instrumentation-node.ts` (hoy solo limpia corridas huérfanas del Laboratorio).
+- Arranque in-process: `src/instrumentation.ts` → `src/instrumentation-node.ts` (limpia corridas huérfanas del Laboratorio y arranca el worker de follow-ups).
 - Resumen UI ya en `lead`: `next_follow_up_at`, `follow_up_count`, `follow_up_reason`.
-- Cola durable: `sales_follow_up_job` (schema + migración; worker todavía no).
+- Cola durable: `sales_follow_up_job` + worker in-process (`src/server/sales/follow-ups/worker.ts`).
 - Lanes congeladas: `auto` | `auto_close` | `wait` | `human` | `stop`.
 - Opt-in Sales Orchestrator: `agent_profile.sales_orchestrator_enabled` (default false).
 - Opt-in follow-ups: `agent_profile.sales_follow_ups_enabled` (default false) + `sales_follow_up_template_id` nullable.
@@ -418,3 +418,9 @@ No implementar todavía:
 - Store durable: schedule/cancel/reset/dormant sobre `sales_follow_up_job`.
 - Enganchado post-envío del orchestrator, inbound y respuestas manuales.
 - Worker aún no ejecuta jobs.
+
+### 2026-09-20 — phase 19
+
+- Worker durable: claim atómico (`FOR UPDATE SKIP LOCKED`), revalidación, texto o plantilla, retries técnicos.
+- Arranque in-process desde `instrumentation-node.ts` (tick ~60s, guard HMR).
+- UI todavía no.

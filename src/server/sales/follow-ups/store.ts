@@ -257,6 +257,48 @@ async function cancelOpenJobs(
   return updated.length;
 }
 
+/**
+ * Encola el siguiente intento comercial. No cancela el job ya `sent`.
+ */
+export async function enqueueFollowUpAttempt(input: {
+  organizationId: string;
+  leadId: string;
+  conversationId: string;
+  reason: SalesFollowUpReason;
+  attemptNumber: number;
+  anchorAt: Date;
+}): Promise<FollowUpJob | null> {
+  const delayMs = nextFollowUpDelay(input.reason, input.attemptNumber);
+  if (delayMs === null) return null;
+
+  const dueAt = new Date(input.anchorAt.getTime() + delayMs);
+  const job = await insertJob({
+    organizationId: input.organizationId,
+    leadId: input.leadId,
+    conversationId: input.conversationId,
+    reason: input.reason,
+    attemptNumber: input.attemptNumber,
+    dueAt,
+    anchorAt: input.anchorAt,
+  });
+
+  await patchLead(input.organizationId, input.leadId, {
+    nextFollowUpAt: dueAt,
+    followUpReason: input.reason,
+    updatedAt: new Date(),
+  });
+
+  return job;
+}
+
+export async function patchLeadFollowUp(
+  organizationId: string,
+  leadId: string,
+  patch: Record<string, unknown>
+): Promise<void> {
+  await patchLead(organizationId, leadId, patch);
+}
+
 async function insertJob(input: {
   organizationId: string;
   leadId: string;
