@@ -29,7 +29,12 @@ export type ScheduleManualFollowUpResult =
   | { ok: true; job: FollowUpJob }
   | {
       ok: false;
-      error: "due_in_past" | "lead_not_found" | "conversation_not_found";
+      error:
+        | "due_in_past"
+        | "lead_not_found"
+        | "conversation_not_found"
+        | "human_lane"
+        | "handoff_active";
     };
 
 /**
@@ -76,7 +81,7 @@ export async function scheduleNextFollowUp(input: {
 
 /**
  * Programación manual one-shot (`scheduled_wait`). No encadena 3 intentos.
- * Todavía sin endpoint/UI: solo API server-side.
+ * Rechaza HUMAN y handoff; DORMANT (STOP + silencio) sí puede reactivarse.
  */
 export async function scheduleManualFollowUp(input: {
   organizationId: string;
@@ -91,12 +96,19 @@ export async function scheduleManualFollowUp(input: {
 
   const lead = await loadLead(input.organizationId, input.leadId);
   if (!lead) return { ok: false, error: "lead_not_found" };
+  if (lead.automationLane === "human") {
+    return { ok: false, error: "human_lane" };
+  }
 
-  const conversationId = await findRealConversationId(
+  const conversation = await loadRealConversation(
     input.organizationId,
     lead.contactId
   );
-  if (!conversationId) return { ok: false, error: "conversation_not_found" };
+  if (!conversation) return { ok: false, error: "conversation_not_found" };
+  if (conversation.handoffAt) {
+    return { ok: false, error: "handoff_active" };
+  }
+  const conversationId = conversation.id;
 
   await cancelOpenJobs(input.organizationId, input.leadId, "replaced_by_manual_schedule");
 
@@ -391,9 +403,20 @@ async function findRealConversationId(
   organizationId: string,
   contactId: string
 ): Promise<string | null> {
+  const conversation = await loadRealConversation(organizationId, contactId);
+  return conversation?.id ?? null;
+}
+
+async function loadRealConversation(
+  organizationId: string,
+  contactId: string
+): Promise<{ id: string; handoffAt: Date | null } | null> {
   const db = getDb();
   const rows = await db
-    .select({ id: schema.conversation.id })
+    .select({
+      id: schema.conversation.id,
+      handoffAt: schema.conversation.handoffAt,
+    })
     .from(schema.conversation)
     .where(
       scoped(
@@ -404,5 +427,5 @@ async function findRealConversationId(
       )
     )
     .limit(1);
-  return rows[0]?.id ?? null;
+  return rows[0] ?? null;
 }

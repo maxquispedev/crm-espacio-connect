@@ -15,6 +15,13 @@ export type SalesFollowUpReason =
   | "after_price"
   | "scheduled_wait";
 
+/** Razones visibles en el resumen del lead (incluye bloqueos/agotamiento). */
+export type LeadFollowUpReason =
+  | SalesFollowUpReason
+  | "no_reply_exhausted"
+  | "template_required"
+  | "follow_up_failed";
+
 /** Estado durable de `sales_follow_up_job`. */
 export type SalesFollowUpJobStatus =
   | "pending"
@@ -138,6 +145,8 @@ export type ContactSalesDto = {
   demoShownAt: string | null;
   pricePresentedAt: string | null;
   nextFollowUpAt: string | null;
+  followUpCount: number;
+  followUpReason: string | null;
   snapshot: SalesSnapshotDto | null;
 };
 

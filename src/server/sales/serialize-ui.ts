@@ -32,6 +32,8 @@ export function serializeLeadSalesState(lead: LeadRow): ContactSalesDto {
     demoShownAt: lead.demoShownAt?.toISOString() ?? null,
     pricePresentedAt: lead.pricePresentedAt?.toISOString() ?? null,
     nextFollowUpAt: lead.nextFollowUpAt?.toISOString() ?? null,
+    followUpCount: lead.followUpCount,
+    followUpReason: lead.followUpReason,
     snapshot: extractSnapshot(lead.lastJevDecision),
   };
 }

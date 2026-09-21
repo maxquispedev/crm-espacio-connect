@@ -424,3 +424,11 @@ No implementar todavía:
 - Worker durable: claim atómico (`FOR UPDATE SKIP LOCKED`), revalidación, texto o plantilla, retries técnicos.
 - Arranque in-process desde `instrumentation-node.ts` (tick ~60s, guard HMR).
 - UI todavía no.
+
+### 2026-09-20 — phase 20
+
+- `/agent`: toggle `salesFollowUpsEnabled` (default OFF, exige Orchestrator) + selector de plantilla 0-var aprobada (`salesFollowUpTemplateId`).
+- Panel de contacto: estado/count/reason/`nextFollowUpAt`; Dormido ≠ Perdido; programar/cancelar/reactivar con `datetime-local`.
+- `POST`/`DELETE` `/api/pipeline/leads/[id]/follow-up` tenant-safe (`scheduleManualFollowUp` / cancel).
+- Board: etiqueta **Dormido** cuando `STOP` + `no_reply_exhausted`. `template_required` enlaza a `/agent`.
+

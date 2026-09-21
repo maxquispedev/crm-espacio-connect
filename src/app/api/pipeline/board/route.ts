@@ -46,6 +46,7 @@ export const GET = withAuth(async (session) => {
       position: r.lead.position,
       lastActivityAt: r.lead.lastActivityAt?.toISOString() ?? null,
       automationLane: r.lead.automationLane,
+      followUpReason: r.lead.followUpReason,
       contact: {
         id: r.contact.id,
         name: r.contact.name,

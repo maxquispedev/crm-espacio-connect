@@ -7,8 +7,10 @@ import type { ContactSalesDto, ConversationDto, StageDto } from "@/lib/types";
 import { cn, formatPhone } from "@/lib/utils";
 import {
   BUYING_TIMING_LABELS,
-  LANE_LABELS,
+  followUpReasonLabel,
+  isDormantSales,
   NEXT_ACTION_LABELS,
+  operationalLaneLabel,
   labelForNoul,
   labelForScore,
   percentHint,
@@ -16,6 +18,7 @@ import {
 import { ContactAvatar } from "@/components/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { formatTime } from "@/components/inbox/helpers";
 
@@ -296,7 +299,14 @@ export function ContactPanel({
           </section>
         )}
 
-        {sales && <SalesSection sales={sales} />}
+        {sales && leadId && (
+          <SalesSection
+            leadId={leadId}
+            sales={sales}
+            handoffAt={conversation.handoffAt}
+            onChanged={() => void refreshLive()}
+          />
+        )}
 
         {/* Notas */}
         <section className="p-4">
@@ -325,23 +335,39 @@ export function ContactPanel({
   );
 }
 
-function SalesSection({ sales }: { sales: ContactSalesDto }) {
+function SalesSection({
+  leadId,
+  sales,
+  handoffAt,
+  onChanged,
+}: {
+  leadId: string;
+  sales: ContactSalesDto;
+  handoffAt: string | null;
+  onChanged: () => void;
+}) {
   const snap = sales.snapshot;
+  const dormant = isDormantSales(sales);
+  const blockedHuman = sales.lane === "human" || Boolean(handoffAt);
+  const templateBlocked = sales.followUpReason === "template_required";
+  const laneLabel = operationalLaneLabel(sales);
   const laneVariant =
-    sales.lane === "stop"
+    dormant
       ? "secondary"
-      : sales.lane === "wait" || sales.lane === "human"
-        ? "warning"
-        : sales.lane === "auto_close"
-          ? "default"
-          : "secondary";
+      : sales.lane === "stop"
+        ? "secondary"
+        : sales.lane === "wait" || sales.lane === "human"
+          ? "warning"
+          : sales.lane === "auto_close"
+            ? "default"
+            : "secondary";
 
   return (
     <section className="border-b p-4">
       <p className="mb-3 text-[11px] font-semibold uppercase tracking-wide text-text-3">
         Venta
       </p>
-      <Badge variant={laneVariant}>{LANE_LABELS[sales.lane]}</Badge>
+      <Badge variant={laneVariant}>{laneLabel}</Badge>
 
       {snap && (
         <dl className="mt-3 space-y-1.5 text-[13px]">
@@ -397,10 +423,42 @@ function SalesSection({ sales }: { sales: ContactSalesDto }) {
       <ul className="mt-3 space-y-1 text-[12px] text-text-2">
         <li>Demo mostrada: {sales.demoShownAt ? "sí" : "aún no"}</li>
         <li>Precio presentado: {sales.pricePresentedAt ? "sí" : "aún no"}</li>
-        {sales.nextFollowUpAt && (
-          <li>Siguiente seguimiento: {formatFollowUp(sales.nextFollowUpAt)}</li>
-        )}
+        <li>Estado del seguimiento: {followUpStatusLabel(sales)}</li>
+        <li>Intentos: {sales.followUpCount}</li>
+        <li>Motivo: {followUpReasonLabel(sales.followUpReason) ?? "—"}</li>
+        <li>
+          Próximo:{" "}
+          {sales.nextFollowUpAt ? formatFollowUp(sales.nextFollowUpAt) : "—"}
+        </li>
       </ul>
+
+      {templateBlocked && (
+        <div className="mt-3 rounded-md border border-warning-border bg-warning-soft p-2.5">
+          <p className="text-[12px] text-warning-text">
+            Bloqueado: falta una plantilla aprobada sin variables para seguimientos
+            fuera de la ventana de 24 h.
+          </p>
+          <Link
+            href="/agent"
+            className="mt-1 inline-block text-[12px] font-medium text-brand-text underline underline-offset-2 hover:text-brand"
+          >
+            Configurar en Agente →
+          </Link>
+        </div>
+      )}
+
+      {blockedHuman ? (
+        <p className="mt-3 text-[12px] text-text-3">
+          No se puede programar: atención humana activa.
+        </p>
+      ) : (
+        <FollowUpScheduler
+          leadId={leadId}
+          dormant={dormant}
+          hasSchedule={Boolean(sales.nextFollowUpAt)}
+          onChanged={onChanged}
+        />
+      )}
 
       {sales.lastEvaluatedAt && (
         <p className="mt-2 text-[11px] text-text-3">
@@ -409,6 +467,109 @@ function SalesSection({ sales }: { sales: ContactSalesDto }) {
       )}
     </section>
   );
+}
+
+function FollowUpScheduler({
+  leadId,
+  dormant,
+  hasSchedule,
+  onChanged,
+}: {
+  leadId: string;
+  dormant: boolean;
+  hasSchedule: boolean;
+  onChanged: () => void;
+}) {
+  const [dueLocal, setDueLocal] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function schedule() {
+    if (!dueLocal) return;
+    const dueAt = new Date(dueLocal);
+    if (Number.isNaN(dueAt.getTime()) || dueAt.getTime() <= Date.now()) {
+      setError("Elige una fecha y hora futuras.");
+      return;
+    }
+    setBusy(true);
+    setError(null);
+    const res = await fetch(`/api/pipeline/leads/${leadId}/follow-up`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ dueAt: dueAt.toISOString() }),
+    }).catch(() => null);
+    setBusy(false);
+    if (!res?.ok) {
+      const payload = (await res?.json().catch(() => null)) as
+        | { error?: { message?: string } }
+        | null;
+      setError(payload?.error?.message ?? "No se pudo programar el seguimiento.");
+      return;
+    }
+    setDueLocal("");
+    onChanged();
+  }
+
+  async function cancel() {
+    setBusy(true);
+    setError(null);
+    const res = await fetch(`/api/pipeline/leads/${leadId}/follow-up`, {
+      method: "DELETE",
+    }).catch(() => null);
+    setBusy(false);
+    if (!res?.ok) {
+      setError("No se pudo cancelar el seguimiento.");
+      return;
+    }
+    onChanged();
+  }
+
+  return (
+    <div className="mt-3 space-y-2">
+      <p className="text-[11px] font-semibold uppercase tracking-wide text-text-3">
+        {dormant ? "Reactivar seguimiento" : "Programar seguimiento"}
+      </p>
+      <Input
+        type="datetime-local"
+        value={dueLocal}
+        onChange={(e) => setDueLocal(e.target.value)}
+        aria-label="Fecha y hora del seguimiento"
+      />
+      <div className="flex flex-wrap gap-2">
+        <Button
+          size="sm"
+          variant={dormant ? "default" : "secondary"}
+          disabled={busy || !dueLocal}
+          onClick={() => void schedule()}
+        >
+          {dormant ? "Reactivar seguimiento" : "Programar seguimiento"}
+        </Button>
+        {hasSchedule && (
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={busy}
+            onClick={() => void cancel()}
+          >
+            Cancelar seguimiento
+          </Button>
+        )}
+      </div>
+      {error && <p className="text-[11px] text-warning-text">{error}</p>}
+    </div>
+  );
+}
+
+function followUpStatusLabel(sales: ContactSalesDto): string {
+  if (isDormantSales(sales)) return "Dormido";
+  if (sales.followUpReason === "template_required") {
+    return "Bloqueado: falta plantilla";
+  }
+  if (sales.followUpReason === "follow_up_failed") {
+    return "Error de seguimiento";
+  }
+  if (sales.nextFollowUpAt) return "Programado";
+  return followUpReasonLabel(sales.followUpReason) ?? "Sin seguimiento";
 }
 
 function SalesRow({

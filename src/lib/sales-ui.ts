@@ -20,6 +20,47 @@ export const LANE_SHORT_LABELS: Record<
   stop: "Detenido",
 };
 
+export const FOLLOW_UP_REASON_LABELS: Record<string, string> = {
+  awaiting_reply: "Esperando respuesta",
+  after_demo: "Seguimiento de demo",
+  after_price: "Seguimiento de propuesta",
+  scheduled_wait: "Seguimiento programado",
+  no_reply_exhausted: "Dormido por falta de respuesta",
+  template_required: "Bloqueado: falta plantilla",
+  follow_up_failed: "Error de seguimiento",
+};
+
+/** STOP + silencio agotado: no es perdido comercialmente. */
+export function isDormantSales(sales: {
+  lane: AutomationLane;
+  followUpReason: string | null;
+}): boolean {
+  return sales.lane === "stop" && sales.followUpReason === "no_reply_exhausted";
+}
+
+export function followUpReasonLabel(reason: string | null): string | null {
+  if (!reason) return null;
+  return FOLLOW_UP_REASON_LABELS[reason] ?? reason;
+}
+
+/** Lane operativa: DORMANT se pinta como Dormido, no Detenido/Perdido. */
+export function operationalLaneLabel(sales: {
+  lane: AutomationLane;
+  followUpReason: string | null;
+}): string {
+  if (isDormantSales(sales)) return "Dormido";
+  return LANE_LABELS[sales.lane];
+}
+
+export function operationalLaneShortLabel(sales: {
+  lane: AutomationLane;
+  followUpReason: string | null;
+}): string | null {
+  if (isDormantSales(sales)) return "Dormido";
+  if (sales.lane === "auto") return null;
+  return LANE_SHORT_LABELS[sales.lane];
+}
+
 export const NEXT_ACTION_LABELS: Record<string, string> = {
   ask_more_questions: "Preguntar más",
   show_operations_demo: "Mostrar demo operativa",

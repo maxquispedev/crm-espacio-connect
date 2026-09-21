@@ -8,6 +8,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import { countVariables } from "@/lib/whatsapp/template-placeholders";
 
 type Profile = {
   enabled: boolean;
@@ -17,6 +18,16 @@ type Profile = {
   escalationRules: string | null;
   greeting: string | null;
   salesOrchestratorEnabled: boolean;
+  salesFollowUpsEnabled: boolean;
+  salesFollowUpTemplateId: string | null;
+};
+
+type TemplateOption = {
+  id: string;
+  name: string;
+  language: string;
+  body: string;
+  status: string;
 };
 
 type KbEntry = {
@@ -33,24 +44,29 @@ export function AgentClient() {
   const [jevConfigured, setJevConfigured] = useState(false);
   const [entries, setEntries] = useState<KbEntry[]>([]);
   const [kbSize, setKbSize] = useState<{ chars: number; warnAt: number; warning: boolean } | null>(null);
+  const [templates, setTemplates] = useState<TemplateOption[]>([]);
   const [saved, setSaved] = useState(false);
 
   const refetch = useCallback(async () => {
-    const [p, kb, size] = await Promise.all([
+    const [p, kb, size, tpl] = await Promise.all([
       fetch("/api/agent/profile").then((r) => (r.ok ? r.json() : null)),
       fetch("/api/kb").then((r) => (r.ok ? r.json() : null)),
       fetch("/api/kb/size").then((r) => (r.ok ? r.json() : null)),
-    ]).catch(() => [null, null, null]);
+      fetch("/api/templates").then((r) => (r.ok ? r.json() : null)),
+    ]).catch(() => [null, null, null, null]);
     if (p) {
       setProfile({
         ...p.profile,
         salesOrchestratorEnabled: Boolean(p.profile.salesOrchestratorEnabled),
+        salesFollowUpsEnabled: Boolean(p.profile.salesFollowUpsEnabled),
+        salesFollowUpTemplateId: p.profile.salesFollowUpTemplateId ?? null,
       });
       setAiConfigured(p.aiConfigured);
       setJevConfigured(Boolean(p.jevConfigured));
     }
     if (kb) setEntries(kb.entries);
     if (size) setKbSize(size);
+    if (tpl) setTemplates(tpl.templates ?? []);
   }, []);
 
   useEffect(() => {
@@ -121,10 +137,27 @@ export function AgentClient() {
         <SalesOrchestratorCard
           enabled={profile.salesOrchestratorEnabled}
           jevConfigured={jevConfigured}
-          onToggle={() =>
+          onToggle={() => {
+            const next = !profile.salesOrchestratorEnabled;
             void saveProfile({
-              salesOrchestratorEnabled: !profile.salesOrchestratorEnabled,
-            })
+              salesOrchestratorEnabled: next,
+              ...(next ? {} : { salesFollowUpsEnabled: false }),
+            });
+          }}
+        />
+        <SalesFollowUpsCard
+          enabled={profile.salesFollowUpsEnabled}
+          orchestratorEnabled={profile.salesOrchestratorEnabled}
+          templateId={profile.salesFollowUpTemplateId}
+          templates={templates}
+          onToggle={() => {
+            if (!profile.salesOrchestratorEnabled) return;
+            void saveProfile({
+              salesFollowUpsEnabled: !profile.salesFollowUpsEnabled,
+            });
+          }}
+          onTemplateChange={(id) =>
+            void saveProfile({ salesFollowUpTemplateId: id })
           }
         />
         <div className="grid gap-6 lg:grid-cols-2">
@@ -192,6 +225,88 @@ function SalesOrchestratorCard({
           )}
         </CardContent>
       )}
+    </Card>
+  );
+}
+
+function SalesFollowUpsCard({
+  enabled,
+  orchestratorEnabled,
+  templateId,
+  templates,
+  onToggle,
+  onTemplateChange,
+}: {
+  enabled: boolean;
+  orchestratorEnabled: boolean;
+  templateId: string | null;
+  templates: TemplateOption[];
+  onToggle: () => void;
+  onTemplateChange: (id: string | null) => void;
+}) {
+  const eligible = templates.filter(
+    (t) => t.status === "approved" && countVariables(t.body) === 0
+  );
+  const selectedMissing =
+    Boolean(templateId) && !eligible.some((t) => t.id === templateId);
+
+  return (
+    <Card>
+      <CardHeader className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+        <div className="min-w-0 space-y-1">
+          <CardTitle>Seguimientos automáticos</CardTitle>
+          <CardDescription>
+            Retoma automáticamente conversaciones sin respuesta hasta un máximo limitado.
+          </CardDescription>
+        </div>
+        <div className="flex shrink-0 items-center gap-3">
+          <span className="text-sm text-muted-foreground">
+            {!orchestratorEnabled ? "Requiere orquestador" : enabled ? "Encendido" : "Apagado"}
+          </span>
+          <button
+            role="switch"
+            aria-checked={enabled && orchestratorEnabled}
+            aria-label="Seguimientos automáticos"
+            disabled={!orchestratorEnabled}
+            onClick={onToggle}
+            className={`relative h-6 w-11 rounded-full transition-colors disabled:opacity-40 ${
+              enabled && orchestratorEnabled ? "bg-primary" : "bg-secondary"
+            }`}
+          >
+            <span
+              className={`absolute top-0.5 h-5 w-5 rounded-full bg-white transition-transform ${
+                enabled && orchestratorEnabled ? "translate-x-5" : "translate-x-0.5"
+              }`}
+            />
+          </button>
+        </div>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        <div className="space-y-1.5">
+          <Label htmlFor="follow-up-template">Plantilla fuera de 24 h</Label>
+          <select
+            id="follow-up-template"
+            value={templateId ?? ""}
+            onChange={(e) => onTemplateChange(e.target.value || null)}
+            className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+          >
+            <option value="">Sin plantilla</option>
+            {selectedMissing && templateId && (
+              <option value={templateId}>Plantilla actual no válida</option>
+            )}
+            {eligible.map((t) => (
+              <option key={t.id} value={t.id}>
+                {t.name} ({t.language})
+              </option>
+            ))}
+          </select>
+        </div>
+        <p className="text-sm text-muted-foreground">
+          Dentro de 24 h se usa texto normal. Fuera de 24 h WhatsApp exige una
+          plantilla aprobada. Sin plantilla, los seguimientos posteriores a la
+          ventana se bloquearán.
+        </p>
+      </CardContent>
     </Card>
   );
 }
