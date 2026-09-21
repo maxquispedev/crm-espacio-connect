@@ -55,8 +55,9 @@ funciona igual.
 
 Ver [.specify/memory/constitution.md](.specify/memory/constitution.md).
 
-- **Soberanía (II, endurecida)**: dependencias de runtime SOLO WhatsApp Cloud
-  API + proveedor LLM OpenRouter-compatible opcional. PROHIBIDO en v1
+- **Soberanía (II, endurecida)**: dependencias de runtime permitidas:
+  WhatsApp Cloud API; proveedor LLM OpenRouter-compatible opcional; y
+  TypeSafe/Jev opcional para el Sales Orchestrator. PROHIBIDO en v1
   introducir S3/R2, email, Stripe, Google u otros servicios externos. Auth y
   BD self-hosted.
 - **Seguridad (I)**: secretos cifrados en reposo (AES-256-GCM, `lib/crypto`);
