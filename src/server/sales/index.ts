@@ -35,7 +35,8 @@ export type {
 
 export type {
   JevConversationTurn,
-  JevDurableFacts,
+  JevCrmState,
+  JevPersistTarget,
   JevSalesState,
 } from "@/server/sales/state";
 
@@ -65,3 +66,12 @@ export {
   type JevClientSuccess,
   type JevEvaluateInput,
 } from "@/server/sales/client";
+
+export {
+  JEV_STATE_CONTEXT,
+  buildJevSalesState,
+  type BuildJevSalesStateFailure,
+  type BuildJevSalesStateInput,
+  type BuildJevSalesStateResult,
+  type BuildJevSalesStateSuccess,
+} from "@/server/sales/build-state";

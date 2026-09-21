@@ -355,3 +355,9 @@ Ejecución: `src/server/inbox/send.ts` (guard sandbox + ventana 24 h). Conversac
 - Cliente HTTP aislado (`src/server/sales/client.ts`) + `normalizeJevResponse`. Endpoint canónico: `TYPESAFE_JEV_ENDPOINT` (URL completa; no se hardcodea `/v1/systemone`).
 - Env: `TYPESAFE_API_KEY`, `TYPESAFE_JEV_ENDPOINT`, `JEV_MODEL`. Todavía sin wire a WhatsApp ni resolver.
 - TODO inmediato: state builder + resolver de lanes.
+
+### 2026-09-20 — phase 05
+
+- `buildJevSalesState` arma product/policy/offer + `crm_state` durable + hilo cronológico (sin PII). Sin lead: degrada, no lanza.
+- Contexto: fetch 200 recientes, recorte 80 turnos / 24k chars desde lo más reciente. Devuelve `persist` (leadId) sin escribir BD.
+- TODO inmediato: resolver de lanes + wire al turno.
