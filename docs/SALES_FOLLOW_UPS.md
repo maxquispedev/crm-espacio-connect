@@ -412,3 +412,9 @@ No implementar todavía:
 - Política/cadencias centralizadas en `src/server/sales/follow-ups/policy.ts`.
 - Writer text-only creado (`follow-up-writer.ts`); ventana cerrada sigue siendo plantilla, sin LLM.
 - Aún sin persistencia/worker live.
+
+### 2026-09-20 — phase 18
+
+- Store durable: schedule/cancel/reset/dormant sobre `sales_follow_up_job`.
+- Enganchado post-envío del orchestrator, inbound y respuestas manuales.
+- Worker aún no ejecuta jobs.

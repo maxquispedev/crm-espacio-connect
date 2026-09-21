@@ -15,6 +15,7 @@ import {
   uploadGraphMedia,
   validateOutgoing,
 } from "@/server/whatsapp/media";
+import { cancelFollowUpsOnManualReply } from "@/server/sales/follow-ups/store";
 
 /** Error tipado del envío; `code` mapea a HTTP en la capa de API. */
 export class SendError extends Error {
@@ -154,6 +155,13 @@ async function persistOutbound(input: {
     conversationId: input.conversationId,
     message: serializeMessage(message, input.media ?? null),
   });
+
+  if (input.origin === "operator") {
+    await cancelFollowUpsOnManualReply({
+      organizationId: input.organizationId,
+      conversationId: input.conversationId,
+    });
+  }
 
   return message.id;
 }

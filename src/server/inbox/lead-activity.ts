@@ -1,6 +1,7 @@
 import { and, asc, eq, sql } from "drizzle-orm";
 import { getDb, schema } from "@/lib/db";
 import { newId } from "@/lib/db/ids";
+import { resetFollowUpsOnInbound } from "@/server/sales/follow-ups/store";
 
 /**
  * Actividad de lead al recibir un mensaje (US2): si el contacto no tiene lead,
@@ -25,6 +26,10 @@ export async function onLeadActivity(
       .update(schema.lead)
       .set({ lastActivityAt: at, updatedAt: new Date() })
       .where(eq(schema.lead.id, existing[0].id));
+    await resetFollowUpsOnInbound({
+      organizationId,
+      leadId: existing[0].id,
+    });
     return;
   }
 

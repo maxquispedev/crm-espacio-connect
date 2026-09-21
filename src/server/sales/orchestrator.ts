@@ -7,6 +7,7 @@ import { buildJevSalesState } from "@/server/sales/build-state";
 import { evaluateJev } from "@/server/sales/client";
 import type { PipelineSemantic, SalesPlan } from "@/server/sales/resolve-plan";
 import { resolveSalesPlan } from "@/server/sales/resolve-plan";
+import { scheduleNextFollowUp } from "@/server/sales/follow-ups/store";
 import { VENDE_VELOZ_OFFER } from "@/server/sales/vende-veloz";
 import { writeSalesReply } from "@/server/sales/writer";
 
@@ -104,6 +105,13 @@ export async function runSalesOrchestratorTurn(input: {
       sent = await deliverReply(conversation, written.text);
       if (sent) {
         await persistDeliveryFacts(organizationId, leadCtx.lead.id, plan);
+        await scheduleNextFollowUp({
+          organizationId,
+          leadId: leadCtx.lead.id,
+          conversationId,
+          plan,
+          anchorAt: new Date(),
+        });
       }
     } else if (!written.ok) {
       console.error("[sales] writer falló:", written.error);

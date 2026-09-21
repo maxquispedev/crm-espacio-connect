@@ -20,6 +20,7 @@ import {
 import { applyStatusUpdate } from "@/server/inbox/status";
 import { onLeadActivity } from "@/server/inbox/lead-activity";
 import { maybeRunAgentTurn } from "@/server/ai/trigger";
+import { cancelFollowUpsOnManualReply } from "@/server/sales/follow-ups/store";
 
 /** Tipos de contenido soportados; el resto se ignora sin error. */
 const SUPPORTED_TYPES = new Set([
@@ -343,6 +344,11 @@ async function ingestManualEcho(
       `[webhook] respuesta manual del dueño en ${conversation.id} — IA pausada (manual_reply)`
     );
   }
+
+  await cancelFollowUpsOnManualReply({
+    organizationId,
+    conversationId: conversation.id,
+  });
 
   await publishMessageNew({
     organizationId,

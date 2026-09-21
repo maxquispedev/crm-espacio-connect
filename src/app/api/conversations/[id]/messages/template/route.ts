@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { apiError, parseBody, withAuth } from "@/lib/api";
 import { SendError } from "@/server/inbox/send";
+import { cancelFollowUpsOnManualReply } from "@/server/sales/follow-ups/store";
 import {
   sendTemplate,
   TemplateError,
@@ -33,6 +34,10 @@ export const POST = withAuth(async (session, req: Request, ctx: Params) => {
       variable: body.data.variable,
       variables: body.data.variables,
       urlButtonSuffix: body.data.urlButtonSuffix,
+    });
+    await cancelFollowUpsOnManualReply({
+      organizationId: session.organizationId,
+      conversationId: id,
     });
     return Response.json({ messageId: result.messageId });
   } catch (err) {

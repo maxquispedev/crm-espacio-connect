@@ -18,3 +18,14 @@ export {
   type FollowUpWriterSuccess,
   type WriteFollowUpInput,
 } from "@/server/sales/follow-ups/follow-up-writer";
+
+export {
+  cancelFollowUpsOnManualReply,
+  cancelPendingFollowUps,
+  getCurrentFollowUp,
+  markDormant,
+  resetFollowUpsOnInbound,
+  scheduleManualFollowUp,
+  scheduleNextFollowUp,
+  type ScheduleManualFollowUpResult,
+} from "@/server/sales/follow-ups/store";
