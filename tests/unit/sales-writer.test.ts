@@ -104,4 +104,36 @@ describe("writeSalesReply", () => {
     if (result.ok) return;
     expect(result.error).toBe("provider_error");
   });
+
+  it("HUMAN + handoff ignora demo/pregunta/precio y pide transición humana", async () => {
+    const decision = makeDecision({
+      nextAction: "show_operations_demo",
+      needsHumanNoul: 0.82,
+    });
+    const plan = resolveSalesPlan({
+      decision,
+      currentSalesState: BASE_FACTS,
+      currentPipelineStage: "new",
+    });
+    expect(plan.lane).toBe("human");
+    expect(plan.shouldHandoff).toBe(true);
+    expect(plan.nextAction).toBe("show_operations_demo");
+
+    await writeSalesReply({
+      decision,
+      plan,
+      conversation: [{ from: "lead", text: "tenemos 3 sedes y una API" }],
+      kb: [],
+      facts: BASE_FACTS,
+    });
+
+    const messages = chatJson.mock.calls[0]![1] as { role: string; content: string }[];
+    const system = messages.find((m) => m.role === "system")?.content ?? "";
+    expect(system).toMatch(/transición breve a atención humana/i);
+    expect(system).toMatch(/NO lo ejecutes/);
+    expect(system).not.toMatch(/centralizan alumnos/);
+    expect(system).not.toMatch(/UNA pregunta esencial/);
+    expect(system).not.toMatch(/Presenta la oferta vigente/);
+    expect(system).not.toMatch(/Instrucción de este turno \(show_operations_demo\)/);
+  });
 });

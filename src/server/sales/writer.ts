@@ -79,11 +79,19 @@ function buildWriterMessages(input: WriteSalesReplyInput): ChatMessage[] {
   ];
 }
 
+const HUMAN_HANDOFF_INSTRUCTION =
+  "Redacta una transición breve a atención humana. No muestres demo, no hagas preguntas comerciales, no presentes precio ni sigas otra next_action. No inventes una hora si no fue acordada en la conversación.";
+
+function isHumanHandoffPlan(plan: SalesPlan): boolean {
+  return plan.lane === "human" && plan.shouldHandoff;
+}
+
 function buildWriterSystemPrompt(input: WriteSalesReplyInput): string {
   const product = input.product ?? VENDE_VELOZ_PRODUCT;
   const policy = input.policy ?? VENDE_VELOZ_COMMERCIAL_POLICY;
   const offer = input.offer ?? VENDE_VELOZ_OFFER;
   const nextAction = input.plan.nextAction;
+  const humanHandoff = isHumanHandoffPlan(input.plan);
 
   return [
     "Eres redactor de WhatsApp para Vende Veloz 365. NO decides nada comercial.",
@@ -99,14 +107,21 @@ function buildWriterSystemPrompt(input: WriteSalesReplyInput): string {
       "- Precio únicamente desde la oferta de abajo. Sin descuentos inexistentes.",
       "- No inventes enlaces de demo ni funciones que no estén en producto o KB.",
       "- Si falta un dato esencial, redacta de forma conservadora según el plan. No tomes otra decisión.",
-    ].join("\n"),
+      humanHandoff
+        ? "- Este turno es handoff humano: PROHIBIDO demo, precio, preguntas o ejecutar el next_action original de Jev."
+        : "",
+    ]
+      .filter(Boolean)
+      .join("\n"),
     `Producto:\n${JSON.stringify(product)}`,
     `Política comercial:\n${JSON.stringify(policy)}`,
     offerBlock(offer),
     `Conocimiento adicional de la organización (no inventes URLs ni datos que no estén aquí):\n${renderKb(input.kb)}`,
     `Hechos durables del CRM:\n${factsBlock(input.facts)}`,
-    `Decisión ya tomada (no la cambies): next_action=${nextAction}; lane=${input.plan.lane}; ángulo=${input.decision.mainValueProposition.choice}; timing=${input.decision.buyingTiming.choice}.`,
-    `Instrucción de este turno (${nextAction}):\n${nextActionInstruction(nextAction)}`,
+    humanHandoff
+      ? `Decisión ya tomada (no la cambies): lane=human; handoff=true. Jev sugirió next_action=${nextAction} pero NO lo ejecutes en este mensaje; ángulo=${input.decision.mainValueProposition.choice}; timing=${input.decision.buyingTiming.choice}.`
+      : `Decisión ya tomada (no la cambies): next_action=${nextAction}; lane=${input.plan.lane}; ángulo=${input.decision.mainValueProposition.choice}; timing=${input.decision.buyingTiming.choice}.`,
+    `Instrucción de este turno:\n${humanHandoff ? HUMAN_HANDOFF_INSTRUCTION : nextActionInstruction(nextAction)}`,
   ].join("\n\n");
 }
 

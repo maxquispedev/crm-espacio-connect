@@ -326,4 +326,35 @@ describe("runSalesOrchestratorTurn", () => {
     });
     expect(leadPatches.some((p) => "pricePresentedAt" in p)).toBe(false);
   });
+
+  it("HUMAN por needs_human_call no marca demo aunque Jev sugirió demo", async () => {
+    queueHappyPath("show_operations_demo");
+    evaluateJev.mockResolvedValue({
+      ok: true,
+      decision: makeDecision({
+        nextAction: "show_operations_demo",
+        needsHumanNoul: 0.82,
+      }),
+      snapshot: { answers: { next_action: { choice: "show_operations_demo" } } },
+      requestId: "req_1",
+      model: "jev-test",
+    });
+    const { runSalesOrchestratorTurn } = await import(
+      "@/server/sales/orchestrator"
+    );
+    await runSalesOrchestratorTurn({
+      organizationId: "org_1",
+      conversationId: "cv_1",
+      conversation: CONVERSATION as never,
+    });
+    expect(leadPatches[0]?.automationLane).toBe("human");
+    expect(applyHandoff).toHaveBeenCalledWith("cv_1", "org_1", "commercial");
+    expect(leadPatches.some((p) => "demoShownAt" in p)).toBe(false);
+    const snapshot = leadPatches[0]?.lastJevDecision as {
+      decision: { nextAction: { choice: string } };
+      plan: { nextAction: string };
+    };
+    expect(snapshot.decision.nextAction.choice).toBe("show_operations_demo");
+    expect(snapshot.plan.nextAction).toBe("show_operations_demo");
+  });
 });

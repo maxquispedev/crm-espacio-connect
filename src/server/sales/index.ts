@@ -60,6 +60,8 @@ export { normalizeJevResponse } from "@/server/sales/normalize";
 
 export {
   evaluateJev,
+  JEV_MAX_RETRIES,
+  type EvaluateJevOptions,
   type JevClientErrorCode,
   type JevClientFailure,
   type JevClientResult,
@@ -104,4 +106,4 @@ export {
   runSalesOrchestratorTurn,
 } from "@/server/sales/orchestrator";
 
-export { serializeLeadSalesState } from "@/server/sales/serialize-ui";
+export { persistClientHumanRequest } from "@/server/sales/explicit-handoff";

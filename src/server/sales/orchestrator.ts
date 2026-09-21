@@ -153,6 +153,8 @@ async function persistDeliveryFacts(
   leadId: string,
   plan: SalesPlan
 ): Promise<void> {
+  if (plan.lane === "human" || plan.shouldHandoff) return;
+
   const now = new Date();
   const patch: Record<string, unknown> = { updatedAt: now };
   if (plan.nextAction === "present_price") {

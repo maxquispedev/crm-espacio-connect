@@ -160,4 +160,23 @@ describe("opt-in Sales Orchestrator en runAgentTurn", () => {
     expect(chatJson).not.toHaveBeenCalled();
     expect(graphRequest).not.toHaveBeenCalled();
   });
+
+  it("pedido explícito de humano no pasa por Jev y hace handoff cliente", async () => {
+    selectQueue.push(
+      [conversation],
+      [profile(true)],
+      [
+        {
+          id: "msg_1",
+          direction: "in",
+          text: "quiero hablar con un humano",
+          createdAt: new Date(),
+        },
+      ]
+    );
+    const { runAgentTurn } = await import("@/server/ai/pipeline");
+    await runAgentTurn("cv_1");
+    expect(runSalesOrchestratorTurn).not.toHaveBeenCalled();
+    expect(chatJson).not.toHaveBeenCalled();
+  });
 });

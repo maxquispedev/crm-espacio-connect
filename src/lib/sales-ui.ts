@@ -55,7 +55,8 @@ const PURCHASE_INTENT_LABELS = [
 ] as const;
 
 /**
- * Convierte un score TypeSafe (0–1 continuo o índice entero) a etiqueta humana.
+ * Convierte un score Jev V2 (continuo 0..4, 5 criterios) a etiqueta humana.
+ * nearest criterion: round + clamp. No interpreta 0..1.
  */
 export function labelForScore(
   score: number,
@@ -81,8 +82,7 @@ export function percentHint(value: number | undefined | null): string | undefine
 
 function scoreIndex(score: number, n: number): number {
   if (n <= 0) return 0;
-  if (Number.isInteger(score) && score >= 0 && score < n) return score;
-  if (Number.isInteger(score) && score >= 1 && score <= n) return score - 1;
-  const clamped = Math.min(1, Math.max(0, score));
-  return Math.round(clamped * (n - 1));
+  if (!Number.isFinite(score)) return 0;
+  const maxIndex = n - 1;
+  return Math.min(maxIndex, Math.max(0, Math.round(score)));
 }

@@ -449,6 +449,13 @@ Ejecución: `src/server/inbox/send.ts` (guard sandbox + ventana 24 h). Conversac
 - State enviado a Jev: `{ product, commercial_policy, crm_state, conversation }`. Speakers `lead` | `seller`. Sin `commercial_offer`.
 - `VENDE_VELOZ_OFFER` permanece como ayuda determinística del writer/CRM.
 
+### 2026-09-20 — phase 12
+
+- Writer HUMAN: si el plan final es `lane=human` + handoff, redacta solo transición humana (ignora demo/pregunta/precio de Jev).
+- Handoff explícito del cliente (`cliente`) sincroniza `automationLane=human` y `humanRequestedAt`; no pasa por Jev.
+- Scores UI: escala Jev continua 0..4 (round + clamp), no 0..1.
+- Cliente TypeSafe: retries 429/529 + timeout/red transitoria, backoff inyectable; sin loguear API key.
+
 ---
 
 ## V1 status

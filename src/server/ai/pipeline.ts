@@ -8,6 +8,7 @@ import { AgentAction, degradeAction, resolveStage, type AgentActionType } from "
 import { applyHandoff, deliverReply } from "@/server/ai/delivery";
 import { matchesHandoffIntent } from "@/server/ai/handoff";
 import { buildAgentSystemPrompt } from "@/server/ai/prompts";
+import { persistClientHumanRequest } from "@/server/sales/explicit-handoff";
 import { runSalesOrchestratorTurn } from "@/server/sales/orchestrator";
 
 /**
@@ -125,8 +126,12 @@ export async function runAgentTurn(conversationId: string): Promise<void> {
     return;
   }
 
-  // Patrón de respaldo ANTES del LLM (FR-022).
+  // Patrón de respaldo ANTES del LLM (FR-022). No pasa por Jev.
   if (lastInbound.text && matchesHandoffIntent(lastInbound.text)) {
+    await persistClientHumanRequest({
+      organizationId,
+      contactId: conversation.contactId,
+    });
     await applyHandoff(conversationId, organizationId, "cliente");
     return;
   }
