@@ -18,7 +18,8 @@ conducidos con Playwright · Docker multi-stage (standalone, healthcheck
 
 Tiempo real por **SSE** (`/api/events`): heartbeat `: ping` ~25s, headers
 anti-buffering, catch-up por refetch con `since=`. Sin WebSockets, sin colas
-externas: el trabajo en segundo plano (agente, Laboratorio) es in-process.
+externas: el trabajo en segundo plano (agente, Laboratorio, follow-ups) es
+in-process.
 
 ## Mapa del código (fronteras de modificación)
 
@@ -27,6 +28,8 @@ externas: el trabajo en segundo plano (agente, Laboratorio) es in-process.
 | El cerebro/proveedor LLM | `src/lib/ai/` (adaptador OpenRouter-compatible, `chatJson<T>`) |
 | El comportamiento/prompt del agente | `src/server/ai/prompts.ts` |
 | Las acciones que puede tomar el agente | `src/server/ai/actions.ts` + ejecución en `src/server/ai/pipeline.ts` |
+| El Sales Orchestrator (Jev) | `src/server/sales/` (cliente TypeSafe, resolver, writer; opt-in en `agent_profile`) |
+| Follow-ups comerciales automáticos | `src/server/sales/follow-ups/` + worker en `instrumentation-node.ts` |
 | Las personas o el juez del Laboratorio | `src/server/lab/personas.ts` · `src/server/lab/judge.ts` |
 | El canal WhatsApp (Graph API) | `src/lib/meta/` (cliente único) + `src/server/whatsapp/` |
 | Campos/tablas | `src/lib/db/schema.ts` → `pnpm db:generate` → migración nueva en `drizzle/` |
@@ -36,8 +39,9 @@ externas: el trabajo en segundo plano (agente, Laboratorio) es in-process.
 | UI | `src/components/` + `src/app/(app)/` |
 
 Los mocks del entorno de pruebas viven en `src/app/api/dev/` (wa-mock +
-ai-mock) tras un gate único (`src/lib/dev-guard.ts`): 404 incondicional en
-producción.
+ai-mock + jev-mock) tras un gate único (`src/lib/dev-guard.ts`): 404
+incondicional en producción. Con mocks y TypeSafe ausente, `evaluateJev`
+usa el canned AUTO de jev-mock (nunca Graph/TypeSafe reales).
 
 **Identidad de contacto**: Meta está migrando de teléfono a Business-Scoped
 User IDs, así que `from` puede no venir. La llave estable es

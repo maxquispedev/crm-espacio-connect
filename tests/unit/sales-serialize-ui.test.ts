@@ -68,5 +68,25 @@ describe("serializeLeadSalesState", () => {
     expect(dto.demoShownAt).toBeTruthy();
     expect(dto.pricePresentedAt).toBeNull();
     expect(dto.nextFollowUpAt).toBeTruthy();
+    expect(dto.followUpCount).toBe(0);
+    expect(dto.followUpReason).toBeNull();
+  });
+
+  it("expone count/reason y no filtra secretos ni errores técnicos", () => {
+    const dto = serializeLeadSalesState(
+      lead({
+        followUpCount: 2,
+        followUpReason: "template_required",
+        lastJevError: "Bearer sk-secret Graph 500",
+      })
+    );
+    expect(dto.followUpCount).toBe(2);
+    expect(dto.followUpReason).toBe("template_required");
+    const raw = JSON.stringify(dto);
+    expect(raw).not.toContain("sk-secret");
+    expect(raw).not.toContain("Bearer");
+    expect(raw).not.toContain("lastJevError");
+    expect(dto).not.toHaveProperty("lastJevError");
+    expect(dto).not.toHaveProperty("lastJevDecision");
   });
 });

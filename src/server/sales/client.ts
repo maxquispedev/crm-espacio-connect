@@ -1,4 +1,5 @@
-import { getEnv, isJevConfigured } from "@/lib/env";
+import { getEnv, isJevConfigured, isMockEnabled } from "@/lib/env";
+import { evaluateJevMock } from "@/server/dev/jev-mock";
 import type { SalesDecision } from "@/server/sales/decision";
 import { normalizeJevResponse } from "@/server/sales/normalize";
 import {
@@ -65,6 +66,9 @@ export async function evaluateJev(
   opts?: EvaluateJevOptions
 ): Promise<JevClientResult> {
   if (!isJevConfigured()) {
+    if (isMockEnabled()) {
+      return evaluateJevMock();
+    }
     return {
       ok: false,
       error: "not_configured",

@@ -116,6 +116,7 @@ export {
   classifyFollowUpReason,
   hasMoreCommercialAttempts,
   nextFollowUpDelay,
+  shouldReactivateDormant,
   shouldStartFollowUp,
   writeFollowUpText,
   cancelFollowUpsOnManualReply,

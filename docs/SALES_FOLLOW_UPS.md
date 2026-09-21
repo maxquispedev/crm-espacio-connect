@@ -1,7 +1,7 @@
 # Sales Follow-ups — contrato del motor automático
 
-Fuente durable de contexto para los siguientes commits de esta feature.
-No es spec de implementación: congela decisiones. El código funcional aún no cambia.
+Fuente durable de contexto. Congela decisiones. El motor, worker, UI y
+self-test ya están implementados (phases 15–21).
 
 Este documento es independiente de `docs/SALES_ORCHESTRATOR.md`. El Sales
 Orchestrator V1 está **congelado**. Aquí se define el motor que programa,
@@ -192,7 +192,7 @@ Conversaciones `is_test` jamás tocan Graph (guardrail existente; no
 
 ## 7. Plantilla automática
 
-Agregar posteriormente a `agent_profile`:
+Campos en `agent_profile`:
 
 | Campo | Default | Semántica |
 |---|---|---|
@@ -259,7 +259,7 @@ NO:
 - colas externas
 - cron SaaS
 
-Crear posteriormente una tabla `sales_follow_up_job`.
+Tabla `sales_follow_up_job` (migration `0005`).
 
 Concepto:
 
@@ -431,4 +431,59 @@ No implementar todavía:
 - Panel de contacto: estado/count/reason/`nextFollowUpAt`; Dormido ≠ Perdido; programar/cancelar/reactivar con `datetime-local`.
 - `POST`/`DELETE` `/api/pipeline/leads/[id]/follow-up` tenant-safe (`scheduleManualFollowUp` / cancel).
 - Board: etiqueta **Dormido** cuando `STOP` + `no_reply_exhausted`. `template_required` enlaza a `/agent`.
+
+### 2026-09-21 — phase 21
+
+- Auditoría + tests unitarios del contrato (policy, store, writer, worker, UI, serialize, opt-in mock Jev).
+- Bugfix: inbound no reactiva STOP comercial (`pipeline kind=lost`) aunque `follow_up_reason=no_reply_exhausted`.
+- Harness E2E: `POST /api/dev/follow-ups/run` (expire/tick, `mockGuard`) + jev-mock si TypeSafe no está configurado.
+- Guion `tests/e2e/us-sales-follow-ups.md` cubierto en `scripts/e2e-selftest.mjs` (A–E).
+- Gates: `pnpm typecheck` · `pnpm lint` · `pnpm test` (420) · `pnpm build` — verde.
+- E2E live: **no ejecutado**. `GET http://localhost:3000/api/health` no conectó; Docker no está instalado/arrancable en este WSL; `127.0.0.1:5432` rechazó conexión; sin sudo para instalar Postgres. No se inventó resultado.
+
+---
+
+## V1 status
+
+**No READY de punta a punta.** Gates de código verdes; el self-test E2E no se corrió porque no hubo app/Postgres locales.
+
+Gates de esta auditoría:
+
+| Gate | Resultado |
+|---|---|
+| `pnpm typecheck` | verde |
+| `pnpm lint` | verde |
+| `pnpm test` | verde — **420** tests |
+| `pnpm build` | verde |
+| `pnpm test:e2e` | **no corrido** — `/api/health` inalcanzable; Docker ausente; Postgres `:5432` cerrado |
+
+E2E real: no hay transcripción. El arnés A–E quedó cableado para la próxima corrida con `WA_MOCK_ENABLED=true`, wa-mock + ai-mock, y TypeSafe opcional (jev-mock).
+
+Comportamiento implementado:
+
+- Sequencias `awaiting_reply` / `after_demo` / `after_price` (máx. 3) y `scheduled_wait` one-shot.
+- START solo tras reply AUTO/AUTO_CLOSE entregado; HUMAN/STOP/WAIT-sin-fecha/delivery fallida no crean job.
+- Inbound cancela pending, `followUpCount=0`, `nextFollowUpAt=null`; DORMANT open → `auto`; STOP `lost` no se reactiva.
+- Manual/echo cancela y no arranca secuencia nueva.
+- Worker in-process: claim `FOR UPDATE SKIP LOCKED`, lease 10 min, retry técnico ≤3 sin consumir intento comercial.
+- Ventana abierta → writer de follow-up (no Jev) + texto. Ventana cerrada → plantilla approved 0-var o `blocked` / `template_required` sin Graph text.
+- Tercer envío sin respuesta → `stop` + `no_reply_exhausted` + `nextFollowUpAt=null`; pipeline **no** a `lost`.
+- Flags OFF (follow-ups u Orchestrator) → el job no se envía. Orchestrator OFF = agente legacy.
+- UI: toggle + plantilla tenant-safe; Dormido ≠ Perdido; programar/cancelar/reactivar.
+
+Cómo activar:
+
+1. Configurar OpenRouter (writer) y, en producción, TypeSafe/Jev.
+2. En `/agent`, encender **Sales Orchestrator (Jev)** y **Seguimientos automáticos**.
+3. Opcional: **Plantilla fuera de 24 h** (approved, cero variables BODY). Sin ella, los jobs fuera de ventana quedan `template_required`.
+
+Dormant: `automationLane=stop` + pipeline `open` + `followUpReason=no_reply_exhausted`. No es perdido.
+
+Pendientes fuera de alcance (aceptables):
+
+- campañas masivas
+- atribución / analytics
+- parsing automático de fecha futura
+- múltiples templates/contextos
+- tuning de cadencias con datos reales
 

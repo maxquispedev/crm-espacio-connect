@@ -7,6 +7,7 @@ import type { SalesPlan } from "@/server/sales/resolve-plan";
 import {
   classifyFollowUpReason,
   nextFollowUpDelay,
+  shouldReactivateDormant,
   shouldStartFollowUp,
 } from "@/server/sales/follow-ups/policy";
 
@@ -156,8 +157,9 @@ export async function resetFollowUpsOnInbound(input: {
   organizationId: string;
   leadId: string;
 }): Promise<void> {
-  const lead = await loadLead(input.organizationId, input.leadId);
-  if (!lead) return;
+  const loaded = await loadLeadWithStage(input.organizationId, input.leadId);
+  if (!loaded) return;
+  const { lead, pipelineKind } = loaded;
 
   await cancelOpenJobs(input.organizationId, input.leadId, "inbound_message");
 
@@ -173,8 +175,11 @@ export async function resetFollowUpsOnInbound(input: {
   }
 
   if (
-    lead.automationLane === "stop" &&
-    lead.followUpReason === "no_reply_exhausted"
+    shouldReactivateDormant({
+      lane: lead.automationLane,
+      followUpReason: lead.followUpReason,
+      pipelineKind,
+    })
   ) {
     patch.automationLane = "auto";
     patch.followUpReason = null;
@@ -399,12 +404,28 @@ async function findLeadIdForConversation(
   return rows[0]?.leadId ?? null;
 }
 
-async function findRealConversationId(
+async function loadLeadWithStage(
   organizationId: string,
-  contactId: string
-): Promise<string | null> {
-  const conversation = await loadRealConversation(organizationId, contactId);
-  return conversation?.id ?? null;
+  leadId: string
+): Promise<{ lead: Lead; pipelineKind: "open" | "won" | "lost" | null } | null> {
+  const db = getDb();
+  const rows = await db
+    .select({
+      lead: schema.lead,
+      pipelineKind: schema.pipelineStage.kind,
+    })
+    .from(schema.lead)
+    .innerJoin(
+      schema.pipelineStage,
+      eq(schema.lead.stageId, schema.pipelineStage.id)
+    )
+    .where(
+      scoped(schema.lead.organizationId, organizationId, eq(schema.lead.id, leadId))
+    )
+    .limit(1);
+  const row = rows[0];
+  if (!row) return null;
+  return { lead: row.lead, pipelineKind: row.pipelineKind };
 }
 
 async function loadRealConversation(

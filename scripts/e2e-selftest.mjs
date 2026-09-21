@@ -63,6 +63,18 @@ function bot(path, opts = {}) {
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const PN = "PN-E2E-1";
 const PN_B = "PN-E2E-2";
+const FROM_FU = "521555019901";
+const FROM_FU_E = "521555019902";
+
+async function waitFor(fn, timeoutMs = 20000, intervalMs = 400) {
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    const value = await fn();
+    if (value) return value;
+    await sleep(intervalMs);
+  }
+  return null;
+}
 
 function parseSseBlock(block) {
   let type = "message";
@@ -1483,6 +1495,217 @@ async function main() {
       String(paidSends2.length)
     );
   }
+
+  console.log("\n== sales-follow-ups: motor automático (mocks) ==");
+  const fuFlags = await api("/api/agent/profile", {
+    method: "PUT",
+    body: JSON.stringify({
+      enabled: true,
+      salesOrchestratorEnabled: true,
+      salesFollowUpsEnabled: true,
+    }),
+  });
+  ok(
+    "flags Orchestrator + follow-ups ON",
+    fuFlags.res.ok,
+    JSON.stringify(fuFlags.json)
+  );
+  await api("/api/dev/wa-mock/outbox", { method: "DELETE" });
+
+  const inFu = await api("/api/dev/wa-mock/inbound", {
+    method: "POST",
+    body: JSON.stringify({
+      phoneNumberId: PN,
+      from: FROM_FU,
+      name: "Lead Follow-up",
+      text: "hola, quiero información",
+      waMessageId: "wamid.e2e.fu.a1",
+    }),
+  });
+  ok("A inbound entregado", inFu.res.ok, JSON.stringify(inFu.json));
+
+  const fuConv = await waitFor(async () => {
+    const list = (await api("/api/conversations")).json?.conversations ?? [];
+    return list.find((c) => c.contact?.name === "Lead Follow-up") ?? null;
+  });
+  ok("A conversación creada", Boolean(fuConv), JSON.stringify(fuConv));
+
+  const fuAgentOut = await waitFor(async () => {
+    if (!fuConv?.id) return null;
+    const msgs =
+      (await api(`/api/conversations/${fuConv.id}/messages`)).json?.messages ??
+      [];
+    return msgs.find((m) => m.direction === "out") ?? null;
+  }, 25000);
+  ok("A el agente respondió", Boolean(fuAgentOut), JSON.stringify(fuAgentOut));
+
+  const fuContactId = fuConv?.contact?.id;
+  const fuDetail = fuContactId
+    ? await api(`/api/contacts/${fuContactId}`)
+    : { json: null };
+  const fuLeadId = fuDetail.json?.lead?.id;
+  const fuSales = fuDetail.json?.lead?.sales;
+  ok(
+    "A job de follow-up creado (nextFollowUpAt)",
+    Boolean(fuSales?.nextFollowUpAt),
+    JSON.stringify(fuSales)
+  );
+  ok(
+    "A DTO no filtra secretos",
+    !JSON.stringify(fuDetail.json ?? {}).toLowerCase().includes("bearer") &&
+      !JSON.stringify(fuDetail.json ?? {}).includes("sk-"),
+    JSON.stringify(fuDetail.json?.lead)
+  );
+
+  const outBeforeB =
+    ((await api("/api/dev/wa-mock/outbox")).json?.outbox ?? []).length;
+  const runB = await api("/api/dev/follow-ups/run", {
+    method: "POST",
+    body: JSON.stringify({ expire: true, leadId: fuLeadId }),
+  });
+  ok("B tick expire ejecutado", runB.res.ok, JSON.stringify(runB.json));
+  const fuOutB = await waitFor(async () => {
+    if (!fuConv?.id) return null;
+    const msgs =
+      (await api(`/api/conversations/${fuConv.id}/messages`)).json?.messages ??
+      [];
+    const outs = msgs.filter((m) => m.direction === "out");
+    return outs.length >= 2 ? outs : null;
+  }, 15000);
+  ok(
+    "B follow-up observable en el hilo",
+    Boolean(fuOutB),
+    fuOutB ? `outs=${fuOutB.length}` : "sin segundo outbound"
+  );
+  const outAfterB =
+    ((await api("/api/dev/wa-mock/outbox")).json?.outbox ?? []).length;
+  ok(
+    "B Graph mock recibió el follow-up (no Meta real)",
+    outAfterB >= outBeforeB,
+    `${outBeforeB} → ${outAfterB}`
+  );
+
+  await api("/api/dev/wa-mock/inbound", {
+    method: "POST",
+    body: JSON.stringify({
+      phoneNumberId: PN,
+      from: FROM_FU,
+      name: "Lead Follow-up",
+      text: "sigo aquí",
+      waMessageId: "wamid.e2e.fu.c1",
+    }),
+  });
+  await sleep(400);
+  const afterInbound = fuContactId
+    ? await api(`/api/contacts/${fuContactId}`)
+    : { json: null };
+  ok(
+    "C inbound cancela pending (nextFollowUpAt null)",
+    afterInbound.json?.lead?.sales?.nextFollowUpAt === null,
+    JSON.stringify(afterInbound.json?.lead?.sales)
+  );
+
+  const fuAgentOut2 = await waitFor(async () => {
+    if (!fuConv?.id) return null;
+    const detail = await api(`/api/contacts/${fuContactId}`);
+    return detail.json?.lead?.sales?.nextFollowUpAt ? detail.json : null;
+  }, 25000);
+  ok(
+    "D nueva secuencia tras respuesta del agente",
+    Boolean(fuAgentOut2?.lead?.sales?.nextFollowUpAt),
+    JSON.stringify(fuAgentOut2?.lead?.sales)
+  );
+
+  for (let i = 0; i < 3; i++) {
+    const tick = await api("/api/dev/follow-ups/run", {
+      method: "POST",
+      body: JSON.stringify({ expire: true, leadId: fuLeadId }),
+    });
+    ok(`D tick ${i + 1}/3`, tick.res.ok, JSON.stringify(tick.json));
+    await sleep(300);
+  }
+  const afterD = fuContactId
+    ? await api(`/api/contacts/${fuContactId}`)
+    : { json: null };
+  const salesD = afterD.json?.lead?.sales;
+  ok(
+    "D tercer intento → Dormido (stop + no_reply_exhausted)",
+    salesD?.lane === "stop" && salesD?.followUpReason === "no_reply_exhausted",
+    JSON.stringify(salesD)
+  );
+  ok(
+    "D pipeline no pasó a lost",
+    afterD.json?.stage?.kind !== "lost",
+    JSON.stringify(afterD.json?.stage)
+  );
+  const board = await api("/api/pipeline/board");
+  const boardLead = (board.json?.leads ?? []).find((l) => l.id === fuLeadId);
+  ok(
+    "D board no dice Perdido por silencio",
+    boardLead?.automationLane === "stop" &&
+      boardLead?.followUpReason === "no_reply_exhausted",
+    JSON.stringify(boardLead)
+  );
+
+  const inE = await api("/api/dev/wa-mock/inbound", {
+    method: "POST",
+    body: JSON.stringify({
+      phoneNumberId: PN,
+      from: FROM_FU_E,
+      name: "Lead Ventana Cerrada",
+      text: "hola desde otra línea",
+      waMessageId: "wamid.e2e.fu.e1",
+    }),
+  });
+  ok("E inbound ventana-cerrada entregado", inE.res.ok, JSON.stringify(inE.json));
+  const eConv = await waitFor(async () => {
+    const list = (await api("/api/conversations")).json?.conversations ?? [];
+    return list.find((c) => c.contact?.name === "Lead Ventana Cerrada") ?? null;
+  });
+  await waitFor(async () => {
+    if (!eConv?.contact?.id) return null;
+    const d = await api(`/api/contacts/${eConv.contact.id}`);
+    return d.json?.lead?.sales?.nextFollowUpAt ? d.json : null;
+  }, 25000);
+  const eDetail = eConv?.contact?.id
+    ? await api(`/api/contacts/${eConv.contact.id}`)
+    : { json: null };
+  const eLeadId = eDetail.json?.lead?.id;
+  const outBeforeE =
+    ((await api("/api/dev/wa-mock/outbox")).json?.outbox ?? []).length;
+  const runE = await api("/api/dev/follow-ups/run", {
+    method: "POST",
+    body: JSON.stringify({
+      expire: true,
+      closeWindow: true,
+      leadId: eLeadId,
+    }),
+  });
+  ok("E tick con ventana cerrada", runE.res.ok, JSON.stringify(runE.json));
+  await sleep(800);
+  const afterE = eConv?.contact?.id
+    ? await api(`/api/contacts/${eConv.contact.id}`)
+    : { json: null };
+  ok(
+    "E blocked template_required",
+    afterE.json?.lead?.sales?.followUpReason === "template_required",
+    JSON.stringify(afterE.json?.lead?.sales)
+  );
+  const outAfterE =
+    ((await api("/api/dev/wa-mock/outbox")).json?.outbox ?? []).length;
+  ok(
+    "E no envió texto libre por Graph",
+    outAfterE === outBeforeE,
+    `${outBeforeE} → ${outAfterE}`
+  );
+
+  await api("/api/agent/profile", {
+    method: "PUT",
+    body: JSON.stringify({
+      salesFollowUpsEnabled: false,
+      salesOrchestratorEnabled: false,
+    }),
+  });
 
   console.log(`\n===== ${checks - failures}/${checks} checks OK, ${failures} fallos =====`);
   process.exit(failures > 0 ? 1 : 0);

@@ -5,6 +5,7 @@ export {
   classifyFollowUpReason,
   hasMoreCommercialAttempts,
   nextFollowUpDelay,
+  shouldReactivateDormant,
   shouldStartFollowUp,
   type AutomaticFollowUpReason,
 } from "@/server/sales/follow-ups/policy";

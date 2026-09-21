@@ -95,6 +95,22 @@ export function shouldStartFollowUp(plan: FollowUpPlan): boolean {
   return plan.shouldReply;
 }
 
+/**
+ * Reactivar DORMANT (STOP por silencio) solo si el pipeline sigue abierto.
+ * STOP comercial (`lost`) no vuelve a `auto` por un inbound.
+ */
+export function shouldReactivateDormant(input: {
+  lane: string;
+  followUpReason: string | null;
+  pipelineKind: "open" | "won" | "lost" | null;
+}): boolean {
+  return (
+    input.lane === "stop" &&
+    input.followUpReason === "no_reply_exhausted" &&
+    input.pipelineKind === "open"
+  );
+}
+
 function isCommercialAttemptNumber(
   attemptNumber: number
 ): attemptNumber is 1 | 2 | 3 {

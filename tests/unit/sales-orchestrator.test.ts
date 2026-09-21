@@ -54,9 +54,16 @@ vi.mock("@/lib/db", () => ({
       },
     }),
     insert: () => ({
-      values: () => ({
-        then: (resolve: (v: unknown) => void) => Promise.resolve([]).then(resolve),
-      }),
+      values: (values: unknown) => {
+        const row = { id: "sfj_mock", ...(values as object) };
+        const chain = {
+          returning: () => Promise.resolve([row]),
+          onConflictDoNothing: () => chain,
+          then: (resolve: (v: unknown) => void) =>
+            Promise.resolve([row]).then(resolve),
+        };
+        return chain;
+      },
     }),
   }),
   schema: new Proxy(

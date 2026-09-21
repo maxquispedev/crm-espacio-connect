@@ -372,7 +372,7 @@ export const agentProfile = pgTable(
     salesOrchestratorEnabled: boolean("sales_orchestrator_enabled")
       .notNull()
       .default(false),
-    /** Motor de follow-ups. Default OFF; independiente del orchestrator. */
+    /** Motor de follow-ups. Default OFF; el worker exige también el Orchestrator. */
     salesFollowUpsEnabled: boolean("sales_follow_ups_enabled")
       .notNull()
       .default(false),

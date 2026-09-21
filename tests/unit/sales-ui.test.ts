@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { labelForScore } from "@/lib/sales-ui";
+import {
+  followUpReasonLabel,
+  isDormantSales,
+  labelForScore,
+  operationalLaneLabel,
+  operationalLaneShortLabel,
+} from "@/lib/sales-ui";
 
 describe("labelForScore (escala Jev 0..4)", () => {
   it("product_fit 3.86 → Encaje muy fuerte", () => {
@@ -26,5 +32,24 @@ describe("labelForScore (escala Jev 0..4)", () => {
     expect(labelForScore(1.25, "purchase_intent")).toBe("Baja");
     expect(labelForScore(3.97, "product_fit")).toBe("Encaje muy fuerte");
     expect(labelForScore(3.97, "purchase_intent")).toBe("Muy alta");
+  });
+});
+
+describe("Dormant vs perdido en UI", () => {
+  it("STOP + no_reply_exhausted se presenta como Dormido, no Perdido ni Detenido", () => {
+    const sales = { lane: "stop" as const, followUpReason: "no_reply_exhausted" };
+    expect(isDormantSales(sales)).toBe(true);
+    expect(operationalLaneLabel(sales)).toBe("Dormido");
+    expect(operationalLaneShortLabel(sales)).toBe("Dormido");
+    expect(operationalLaneLabel(sales)).not.toMatch(/Perdido/i);
+    expect(followUpReasonLabel("no_reply_exhausted")).toBe(
+      "Dormido por falta de respuesta"
+    );
+  });
+
+  it("STOP comercial no se relabela Dormido", () => {
+    const sales = { lane: "stop" as const, followUpReason: null };
+    expect(isDormantSales(sales)).toBe(false);
+    expect(operationalLaneLabel(sales)).toBe("Detenido");
   });
 });

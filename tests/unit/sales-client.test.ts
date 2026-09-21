@@ -12,6 +12,7 @@ function stubBaseEnv() {
   vi.stubEnv("BETTER_AUTH_SECRET", "secret-de-test-suficiente");
   vi.stubEnv("ENCRYPTION_KEY", Buffer.alloc(32, 3).toString("base64"));
   vi.stubEnv("META_WEBHOOK_VERIFY_TOKEN", "verify-test");
+  vi.stubEnv("WA_MOCK_ENABLED", "");
 }
 
 const EMPTY_STATE: JevEvaluateInput["state"] = {
@@ -58,6 +59,23 @@ describe("evaluateJev (adapter)", () => {
     expect(result.ok).toBe(false);
     if (result.ok) return;
     expect(result.error).toBe("not_configured");
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("mocks encendidos sin TypeSafe → canned AUTO, sin fetch real", async () => {
+    vi.stubEnv("WA_MOCK_ENABLED", "true");
+    vi.stubEnv("NODE_ENV", "development");
+    vi.stubEnv("TYPESAFE_API_KEY", "");
+    vi.stubEnv("TYPESAFE_JEV_ENDPOINT", "");
+    vi.stubEnv("JEV_MODEL", "");
+    resetEnvCache();
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await evaluateJev({ state: EMPTY_STATE });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.decision.nextAction.choice).toBe("ask_more_questions");
     expect(fetchMock).not.toHaveBeenCalled();
   });
 

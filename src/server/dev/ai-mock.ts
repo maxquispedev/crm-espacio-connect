@@ -43,6 +43,10 @@ export function aiMockCompletion(messages: InMessage[]): string {
     return JSON.stringify({ veredicto: "verde", hallazgos: [] });
   }
 
+  if (system.includes("seguimiento por silencio")) {
+    return JSON.stringify({ text: "¿Seguimos en contacto cuando te quede bien?" });
+  }
+
   const text = lastUser.toLowerCase();
 
   // Persona pide_humano (el regex de respaldo captura la frase canónica; esta

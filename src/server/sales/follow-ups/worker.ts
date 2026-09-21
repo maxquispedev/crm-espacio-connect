@@ -30,7 +30,7 @@ type AgentProfile = typeof schema.agentProfile.$inferSelect;
 
 const TICK_MS = 60_000;
 const BATCH_SIZE = 10;
-const CLAIM_LEASE_MS = 10 * 60 * 1000;
+export const CLAIM_LEASE_MS = 10 * 60 * 1000;
 const RETRY_DELAY_MS = 15 * 60 * 1000;
 
 const globalForWorker = globalThis as unknown as {
@@ -151,7 +151,7 @@ async function processClaimedJob(claimed: FollowUpJob): Promise<void> {
     return;
   }
 
-  const { job, lead, conversation, profile } = loaded;
+  const { job, conversation, profile } = loaded;
 
   try {
     const delivered = conversation.isTest

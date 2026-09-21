@@ -429,19 +429,19 @@ Ejecución: `src/server/inbox/send.ts` (guard sandbox + ventana 24 h). Conversac
 - Integrado en `runAgentTurn`: flag OFF = legacy; ON = `runSalesOrchestratorTurn` (una ruta por turno).
 - Jev fail: `last_jev_error`, lane intacta, sin writer decisor ni reply automática. Writer fail: no revierte decisión; HUMAN igual hace handoff `commercial`.
 - Hechos demo/precio solo post-envío. STOP no persigue de nuevo si ya era STOP. WAIT no inventa `next_follow_up_at`. Nunca `kind=won`. Lost por `kind=lost`.
-- TODO inmediato: follow-up worker + UI del flag.
+- TODO inmediato: follow-up worker + UI del flag. → hecho en `docs/SALES_FOLLOW_UPS.md` (phases 15–21).
 
 ### 2026-09-20 — phase 09
 
 - UI mínima: flag `Sales Orchestrator (Jev)` en `/agent` (opt-in org; `jevConfigured` sin secretos). Panel **Venta** en contacto (lane, snapshot operativo, hechos). Señal corta de lane en tarjetas del pipeline si no es `auto`.
 - APIs: profile lee/escribe `salesOrchestratorEnabled`; contact y board devuelven el estado mínimo. Handoff `commercial` reutiliza el banner existente. STOP solo se indica, no se oculta.
-- TODO inmediato: follow-up worker.
+- TODO inmediato: follow-up worker. → hecho en `docs/SALES_FOLLOW_UPS.md`.
 
 ### 2026-09-20 — phase 10
 
 - Auditoría v1 + cobertura unitaria (freeze §5–7, normalizer, resolver, writer, client, builder, orchestrator, opt-in, serialize UI). Sin features nuevas ni worker de follow-up.
 - Gates: `pnpm typecheck` · `pnpm lint` · `pnpm build` · `pnpm test` — verde (360 tests). E2E no corrido: app local no estaba viva (`/api/health` inalcanzable). Live Jev: **pending** (`TYPESAFE_*` / `JEV_MODEL` ausentes en `.env` de este repo).
-- Limitación real restante: WAIT no programa `next_follow_up_at` (no hay motor de follow-ups en V1).
+- Limitación real restante en V1 del Orchestrator: WAIT no inventa fecha; el motor de follow-ups (documento aparte) cubre `scheduled_wait` manual.
 
 ### 2026-09-20 — phase 11
 
@@ -497,10 +497,9 @@ Variables env requeridas para que funcione (además de las del CRM):
 - `JEV_MODEL`
 - `OPENROUTER_API_TOKEN` + `OPENROUTER_MODEL` (writer)
 
-No bloquean V1:
+No bloquean el Orchestrator V1 (ver `docs/SALES_FOLLOW_UPS.md` para el motor ya implementado):
 
-- motor automático de follow-ups
-- analytics / atribución
+- campañas / analytics / atribución
 - payment workflow completo
 - nuevas preguntas Jev
 - lead score global
@@ -509,5 +508,5 @@ No bloquean V1:
 
 - Constitución actualizada para reconocer TypeSafe/Jev como dependencia runtime opcional permitida.
 - Sales Orchestrator V1 queda congelado/cerrado.
-- Próximo bloque independiente: motor de follow-ups.
+- Próximo bloque independiente: motor de follow-ups. → cerrado: `docs/SALES_FOLLOW_UPS.md`.
 
