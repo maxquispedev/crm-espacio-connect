@@ -99,3 +99,5 @@ export {
 } from "@/server/sales/writer";
 
 export { runSalesOrchestratorTurn } from "@/server/sales/orchestrator";
+
+export { serializeLeadSalesState } from "@/server/sales/serialize-ui";

@@ -380,3 +380,9 @@ Ejecución: `src/server/inbox/send.ts` (guard sandbox + ventana 24 h). Conversac
 - Jev fail: `last_jev_error`, lane intacta, sin writer decisor ni reply automática. Writer fail: no revierte decisión; HUMAN igual hace handoff `commercial`.
 - Hechos demo/precio solo post-envío. STOP no persigue de nuevo si ya era STOP. WAIT no inventa `next_follow_up_at`. Nunca `kind=won`. Lost por `kind=lost`.
 - TODO inmediato: follow-up worker + UI del flag.
+
+### 2026-09-20 — phase 09
+
+- UI mínima: flag `Sales Orchestrator (Jev)` en `/agent` (opt-in org; `jevConfigured` sin secretos). Panel **Venta** en contacto (lane, snapshot operativo, hechos). Señal corta de lane en tarjetas del pipeline si no es `auto`.
+- APIs: profile lee/escribe `salesOrchestratorEnabled`; contact y board devuelven el estado mínimo. Handoff `commercial` reutiliza el banner existente. STOP solo se indica, no se oculta.
+- TODO inmediato: follow-up worker.

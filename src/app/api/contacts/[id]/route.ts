@@ -8,6 +8,7 @@ import {
   getContactStage,
   serializeContact,
 } from "@/server/contacts";
+import { serializeLeadSalesState } from "@/server/sales/serialize-ui";
 
 export const dynamic = "force-dynamic";
 
@@ -28,7 +29,12 @@ export const GET = withAuth(async (session, _req: Request, ctx: Params) => {
           kind: stageRow.stage.kind,
         }
       : null,
-    lead: stageRow ? { id: stageRow.lead.id } : null,
+    lead: stageRow
+      ? {
+          id: stageRow.lead.id,
+          sales: serializeLeadSalesState(stageRow.lead),
+        }
+      : null,
   });
 });
 

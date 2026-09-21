@@ -16,6 +16,7 @@ type Profile = {
   instructions: string | null;
   escalationRules: string | null;
   greeting: string | null;
+  salesOrchestratorEnabled: boolean;
 };
 
 type KbEntry = {
@@ -29,6 +30,7 @@ type KbEntry = {
 export function AgentClient() {
   const [profile, setProfile] = useState<Profile | null>(null);
   const [aiConfigured, setAiConfigured] = useState(true);
+  const [jevConfigured, setJevConfigured] = useState(false);
   const [entries, setEntries] = useState<KbEntry[]>([]);
   const [kbSize, setKbSize] = useState<{ chars: number; warnAt: number; warning: boolean } | null>(null);
   const [saved, setSaved] = useState(false);
@@ -40,8 +42,12 @@ export function AgentClient() {
       fetch("/api/kb/size").then((r) => (r.ok ? r.json() : null)),
     ]).catch(() => [null, null, null]);
     if (p) {
-      setProfile(p.profile);
+      setProfile({
+        ...p.profile,
+        salesOrchestratorEnabled: Boolean(p.profile.salesOrchestratorEnabled),
+      });
       setAiConfigured(p.aiConfigured);
+      setJevConfigured(Boolean(p.jevConfigured));
     }
     if (kb) setEntries(kb.entries);
     if (size) setKbSize(size);
@@ -111,11 +117,82 @@ export function AgentClient() {
         </div>
       )}
 
-      <div className="grid gap-6 p-6 lg:grid-cols-2">
-        <ProfileSection profile={profile} onSave={saveProfile} />
-        <KbSection entries={entries} kbSize={kbSize} onChanged={() => void refetch()} />
+      <div className="space-y-6 p-6">
+        <SalesOrchestratorCard
+          enabled={profile.salesOrchestratorEnabled}
+          jevConfigured={jevConfigured}
+          onToggle={() =>
+            void saveProfile({
+              salesOrchestratorEnabled: !profile.salesOrchestratorEnabled,
+            })
+          }
+        />
+        <div className="grid gap-6 lg:grid-cols-2">
+          <ProfileSection profile={profile} onSave={saveProfile} />
+          <KbSection entries={entries} kbSize={kbSize} onChanged={() => void refetch()} />
+        </div>
       </div>
     </div>
+  );
+}
+
+function SalesOrchestratorCard({
+  enabled,
+  jevConfigured,
+  onToggle,
+}: {
+  enabled: boolean;
+  jevConfigured: boolean;
+  onToggle: () => void;
+}) {
+  const working = jevConfigured && enabled;
+  return (
+    <Card>
+      <CardHeader className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+        <div className="min-w-0 space-y-1">
+          <CardTitle>Sales Orchestrator (Jev)</CardTitle>
+          <CardDescription>
+            Jev decide la acción comercial y el agente redacta la respuesta.
+          </CardDescription>
+        </div>
+        <div className="flex shrink-0 items-center gap-3">
+          <span className="text-sm text-muted-foreground">
+            {!jevConfigured ? "No configurado" : working ? "Encendido" : "Apagado"}
+          </span>
+          <button
+            role="switch"
+            aria-checked={working}
+            aria-label="Sales Orchestrator (Jev)"
+            disabled={!jevConfigured}
+            onClick={onToggle}
+            className={`relative h-6 w-11 rounded-full transition-colors disabled:opacity-40 ${
+              working ? "bg-primary" : "bg-secondary"
+            }`}
+          >
+            <span
+              className={`absolute top-0.5 h-5 w-5 rounded-full bg-white transition-transform ${
+                working ? "translate-x-5" : "translate-x-0.5"
+              }`}
+            />
+          </button>
+        </div>
+      </CardHeader>
+      {!jevConfigured && (
+        <CardContent>
+          <p className="text-sm text-muted-foreground">
+            TypeSafe/Jev no está configurado en este servidor. El orquestador no
+            está funcionando. Agrega las variables de entorno de TypeSafe y
+            reinicia la instancia.
+          </p>
+          {enabled && (
+            <p className="mt-2 text-xs text-warning-text">
+              El flag de la organización está activo, pero sin TypeSafe no se
+              ejecuta.
+            </p>
+          )}
+        </CardContent>
+      )}
+    </Card>
   );
 }
 

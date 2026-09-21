@@ -3,11 +3,21 @@
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { Check, ChevronRight, Sparkles, UserRound } from "lucide-react";
-import type { ConversationDto, StageDto } from "@/lib/types";
+import type { ContactSalesDto, ConversationDto, StageDto } from "@/lib/types";
 import { cn, formatPhone } from "@/lib/utils";
+import {
+  BUYING_TIMING_LABELS,
+  LANE_LABELS,
+  NEXT_ACTION_LABELS,
+  labelForNoul,
+  labelForScore,
+  percentHint,
+} from "@/lib/sales-ui";
 import { ContactAvatar } from "@/components/avatar";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
+import { formatTime } from "@/components/inbox/helpers";
 
 const HANDOFF_LABELS: Record<string, string> = {
   cliente: "El cliente pidió un humano",
@@ -15,6 +25,7 @@ const HANDOFF_LABELS: Record<string, string> = {
   error: "Error del proveedor de IA",
   ventana: "Ventana de 24h cerrada",
   manual_reply: "Respondiste desde el teléfono — IA en pausa",
+  commercial: "El orquestador comercial pidió un humano",
 };
 
 export function ContactPanel({
@@ -38,6 +49,7 @@ export function ContactPanel({
   const [stages, setStages] = useState<StageDto[]>([]);
   const [currentStageId, setCurrentStageId] = useState<string | null>(null);
   const [leadId, setLeadId] = useState<string | null>(null);
+  const [sales, setSales] = useState<ContactSalesDto | null>(null);
   // Estado global del agente: sin esto, el toggle "Respondiendo" mentiría
   // cuando el agente aún no se ha configurado/encendido.
   const [agentEnabled, setAgentEnabled] = useState(false);
@@ -62,6 +74,7 @@ export function ContactPanel({
       setNotes(detail.contact?.notes ?? "");
       setCurrentStageId(detail.stage?.id ?? null);
       setLeadId(detail.lead?.id ?? null);
+      setSales(detail.lead?.sales ?? null);
     }
     if (stagesRes) setStages(stagesRes.stages);
     setAgentEnabled(Boolean(agentRes?.profile?.enabled));
@@ -79,6 +92,7 @@ export function ContactPanel({
     if (detail) {
       setCurrentStageId(detail.stage?.id ?? null);
       setLeadId(detail.lead?.id ?? null);
+      setSales(detail.lead?.sales ?? null);
     }
     if (agentRes) {
       setAgentEnabled(Boolean(agentRes.profile?.enabled));
@@ -282,6 +296,8 @@ export function ContactPanel({
           </section>
         )}
 
+        {sales && <SalesSection sales={sales} />}
+
         {/* Notas */}
         <section className="p-4">
           <p className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-text-3">
@@ -307,4 +323,124 @@ export function ContactPanel({
       </div>
     </div>
   );
+}
+
+function SalesSection({ sales }: { sales: ContactSalesDto }) {
+  const snap = sales.snapshot;
+  const laneVariant =
+    sales.lane === "stop"
+      ? "secondary"
+      : sales.lane === "wait" || sales.lane === "human"
+        ? "warning"
+        : sales.lane === "auto_close"
+          ? "default"
+          : "secondary";
+
+  return (
+    <section className="border-b p-4">
+      <p className="mb-3 text-[11px] font-semibold uppercase tracking-wide text-text-3">
+        Venta
+      </p>
+      <Badge variant={laneVariant}>{LANE_LABELS[sales.lane]}</Badge>
+
+      {snap && (
+        <dl className="mt-3 space-y-1.5 text-[13px]">
+          <SalesRow
+            label="Acción"
+            value={
+              snap.nextAction
+                ? (NEXT_ACTION_LABELS[snap.nextAction] ?? snap.nextAction)
+                : null
+            }
+            hint={percentHint(snap.nextActionConfidence)}
+          />
+          <SalesRow
+            label="Momento de compra"
+            value={
+              snap.buyingTiming
+                ? (BUYING_TIMING_LABELS[snap.buyingTiming] ?? snap.buyingTiming)
+                : null
+            }
+            hint={percentHint(snap.buyingTimingConfidence)}
+          />
+          <SalesRow
+            label="Necesidad operativa"
+            value={
+              snap.realOperationalNeed !== null
+                ? labelForNoul(snap.realOperationalNeed)
+                : null
+            }
+            hint={percentHint(snap.realOperationalNeed)}
+            showHint
+          />
+          <SalesRow
+            label="Encaje"
+            value={
+              snap.productFit !== null
+                ? labelForScore(snap.productFit, "product_fit")
+                : null
+            }
+            hint={percentHint(snap.productFitConfidence)}
+          />
+          <SalesRow
+            label="Intención de compra"
+            value={
+              snap.purchaseIntent !== null
+                ? labelForScore(snap.purchaseIntent, "purchase_intent")
+                : null
+            }
+            hint={percentHint(snap.purchaseIntentConfidence)}
+          />
+        </dl>
+      )}
+
+      <ul className="mt-3 space-y-1 text-[12px] text-text-2">
+        <li>Demo mostrada: {sales.demoShownAt ? "sí" : "aún no"}</li>
+        <li>Precio presentado: {sales.pricePresentedAt ? "sí" : "aún no"}</li>
+        {sales.nextFollowUpAt && (
+          <li>Siguiente seguimiento: {formatFollowUp(sales.nextFollowUpAt)}</li>
+        )}
+      </ul>
+
+      {sales.lastEvaluatedAt && (
+        <p className="mt-2 text-[11px] text-text-3">
+          Última evaluación: {formatTime(sales.lastEvaluatedAt)}
+        </p>
+      )}
+    </section>
+  );
+}
+
+function SalesRow({
+  label,
+  value,
+  hint,
+  showHint = false,
+}: {
+  label: string;
+  value: string | null;
+  hint?: string;
+  showHint?: boolean;
+}) {
+  if (!value) return null;
+  return (
+    <div className="flex items-baseline justify-between gap-3">
+      <dt className="text-[11px] text-text-3">{label}</dt>
+      <dd className="text-right font-medium" title={hint}>
+        {value}
+        {showHint && hint && (
+          <span className="ml-1 font-normal text-text-3">{hint}</span>
+        )}
+      </dd>
+    </div>
+  );
+}
+
+function formatFollowUp(iso: string): string {
+  return new Date(iso).toLocaleString("es-MX", {
+    day: "numeric",
+    month: "short",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
 }

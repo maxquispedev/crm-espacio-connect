@@ -101,6 +101,30 @@ export type StageDto = {
   kind: "open" | "won" | "lost";
 };
 
+/** Snapshot operativo de Jev (sin probabilities crudas). */
+export type SalesSnapshotDto = {
+  nextAction: string | null;
+  buyingTiming: string | null;
+  realOperationalNeed: number | null;
+  productFit: number | null;
+  purchaseIntent: number | null;
+  nextActionConfidence?: number;
+  buyingTimingConfidence?: number;
+  realOperationalNeedConfidence?: number;
+  productFitConfidence?: number;
+  purchaseIntentConfidence?: number;
+};
+
+/** Estado comercial del lead para el panel de contacto. */
+export type ContactSalesDto = {
+  lane: AutomationLane;
+  lastEvaluatedAt: string | null;
+  demoShownAt: string | null;
+  pricePresentedAt: string | null;
+  nextFollowUpAt: string | null;
+  snapshot: SalesSnapshotDto | null;
+};
+
 export type ContactDto = {
   id: string;
   name: string;

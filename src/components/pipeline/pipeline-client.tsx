@@ -14,8 +14,9 @@ import {
   type DragStartEvent,
 } from "@dnd-kit/core";
 import { MessageSquareText, Settings2, Trophy, XCircle } from "lucide-react";
-import type { StageDto } from "@/lib/types";
+import type { AutomationLane, StageDto } from "@/lib/types";
 import { cn } from "@/lib/utils";
+import { LANE_SHORT_LABELS } from "@/lib/sales-ui";
 import { ContactAvatar } from "@/components/avatar";
 import { Button } from "@/components/ui/button";
 import { formatTime } from "@/components/inbox/helpers";
@@ -26,6 +27,7 @@ export type BoardLead = {
   stageId: string;
   position: number;
   lastActivityAt: string | null;
+  automationLane: AutomationLane;
   contact: { id: string; name: string; phone: string | null };
   conversationId: string | null;
 };
@@ -169,6 +171,11 @@ function DraggableLead({ lead }: { lead: BoardLead }) {
 }
 
 function LeadCard({ lead, overlay = false }: { lead: BoardLead; overlay?: boolean }) {
+  const laneHint =
+    lead.automationLane !== "auto"
+      ? LANE_SHORT_LABELS[lead.automationLane]
+      : null;
+
   return (
     <div
       className={cn(
@@ -197,6 +204,11 @@ function LeadCard({ lead, overlay = false }: { lead: BoardLead; overlay?: boolea
           </Link>
         )}
       </div>
+      {laneHint && (
+        <p className="mt-2 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+          {laneHint}
+        </p>
+      )}
     </div>
   );
 }

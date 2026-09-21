@@ -2,7 +2,7 @@ import { z } from "zod";
 import { apiError, parseBody, withAuth } from "@/lib/api";
 import { getDb, schema } from "@/lib/db";
 import { scoped } from "@/lib/db/tenant";
-import { isAiConfigured } from "@/lib/env";
+import { isAiConfigured, isJevConfigured } from "@/lib/env";
 
 export const dynamic = "force-dynamic";
 
@@ -23,13 +23,16 @@ export const GET = withAuth(async (session) => {
       instructions: p.instructions,
       escalationRules: p.escalationRules,
       greeting: p.greeting,
+      salesOrchestratorEnabled: p.salesOrchestratorEnabled,
     },
     aiConfigured: isAiConfigured(),
+    jevConfigured: isJevConfigured(),
   });
 });
 
 const putSchema = z.object({
   enabled: z.boolean().optional(),
+  salesOrchestratorEnabled: z.boolean().optional(),
   name: z.string().trim().min(1).max(60).optional(),
   tone: z.string().max(500).nullable().optional(),
   instructions: z.string().max(8000).nullable().optional(),
