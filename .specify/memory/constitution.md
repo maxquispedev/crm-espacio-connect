@@ -1,31 +1,31 @@
 <!--
 SYNC IMPACT REPORT
 ==================
-Versión: 1.1.0 (plantilla starter) → 1.2.0
+Versión: 1.2.0 → 1.3.0
 
 Cambios:
-  - Título y descripción del producto: Vocero CRM (CRM de WhatsApp con agente de
-    IA, open source MIT, self-hosted, gratuito; una instancia = un negocio).
-  - Principio II "Soberanía / Self-Hosted" → ENDURECIDO: se elimina la excepción
-    de almacenamiento de objetos S3-compatible; lista cerrada de dependencias
-    externas en runtime (WhatsApp Cloud API + proveedor LLM opcional vía
-    adaptador OpenRouter-compatible); prohibición explícita v1 de S3/R2, email,
-    Stripe y Google; requisitos mínimos del instalador fijados.
-  - Principio VIII "Foco Vertical" → definido: CRM de conversaciones y leads de
-    WhatsApp que las agencias despliegan para negocios.
-  - Principios I, III, IV, V, VI, VII y IX: íntegros (sin cambio semántico).
-  - Governance: Ratified / Last Amended = 2026-07-09.
+  - Principio II "Soberanía / Self-Hosted": la lista cerrada de dependencias
+    externas en runtime se amplia para incluir TypeSafe/Jev como proveedor
+    opcional y aislado del Sales Orchestrator (decisión probabilística).
+    WhatsApp Cloud API sigue siendo el canal; el LLM OpenRouter-compatible
+    sigue siendo generación/redacción. TypeSafe no sustituye al LLM.
+  - No cambia el principio de soberanía: PostgreSQL, Better Auth y el
+    almacenamiento principal siguen self-hosted; secretos jamás al navegador
+    ni a logs; el dominio no se acopla al proveedor.
+  - No se autoriza ninguna otra dependencia externa (S3/R2, email, Stripe/
+    billing, Google u otros siguen PROHIBIDOS en v1). Añadir una nueva exige
+    enmendar esta constitución.
+  - Referencia mínima de aislamiento de integraciones: el cliente Jev queda
+    junto a Graph y el adaptador LLM.
+  - `docs/SALES_ORCHESTRATOR.md` queda compatible con esta constitución.
 
-Bump: MINOR (1.1.0 → 1.2.0) — expansión material del Principio II y definición
-del Principio VIII; sin eliminaciones ni redefiniciones incompatibles.
+Bump: MINOR (1.2.0 → 1.3.0) — expansión material de la lista cerrada del
+Principio II; sin eliminaciones ni redefiniciones incompatibles.
 
 Plantillas dependientes:
-  - .specify/templates/plan-template.md — ✅ compatible (Constitution Check
-    genérico; los gates se evalúan contra esta versión).
-  - .specify/templates/spec-template.md — ✅ compatible (sin secciones nuevas).
+  - .specify/templates/plan-template.md — ✅ compatible.
+  - .specify/templates/spec-template.md — ✅ compatible.
   - .specify/templates/tasks-template.md — ✅ compatible.
-  - CLAUDE.md — ⚠ se personaliza para el usuario final del repo en la fase de
-    implementación (tarea planificada de la feature 001).
 
 TODOs diferidos: ninguno.
 -->
@@ -60,27 +60,45 @@ fallo catastrófico e irreversible; prevenirlo siempre cuesta menos que remediar
 ### II. Soberanía / Self-Hosted (ENDURECIDO)
 
 Vocero CRM opera completo sobre la infraestructura del operador. La lista de
-dependencias externas en runtime es CERRADA:
+dependencias externas en runtime es CERRADA. Toda dependencia externa MUST
+aislarse detrás de un adaptador; el código de dominio no se acopla al proveedor.
+Los secretos NUNCA llegan al navegador ni a logs.
 
 - Dependencias externas permitidas en runtime, ÚNICAMENTE:
-  1. **WhatsApp Cloud API** (Meta Graph API) — el canal es la razón de ser del
-     producto.
-  2. **El proveedor LLM**, opcional, accedido EXCLUSIVAMENTE a través del adaptador
-     OpenRouter-compatible (`OPENROUTER_BASE_URL` / `OPENROUTER_MODEL`). Sin token
-     configurado, el producto funciona como CRM sin agente de IA.
+  1. **WhatsApp Cloud API** (Meta Graph API) — canal de comunicación; la razón
+     de ser del producto.
+  2. **Proveedor LLM**, opcional, accedido EXCLUSIVAMENTE a través del adaptador
+     OpenRouter-compatible (`OPENROUTER_BASE_URL` / `OPENROUTER_MODEL`). Se usa
+     para generación/redacción de texto. No es el motor de decisión comercial.
+     Sin token configurado, las funcionalidades dependientes del agente no
+     operan, pero el CRM base continúa funcionando.
+  3. **TypeSafe/Jev**, opcional — motor probabilístico de decisión del Sales
+     Orchestrator. Aislado detrás de un cliente dedicado
+     (`src/server/sales/client.ts`). No sustituye al LLM: Jev decide/interpreta
+     comercialmente; el LLM redacta; el CRM mantiene estado y ejecuta efectos.
+     Jev no tiene acceso directo a la base de datos ni ejecuta efectos del CRM.
+     Recibe únicamente el State comercial sanitizado que construye el CRM; no
+     debe recibir secretos ni PII innecesario. Sin configuración, Sales
+     Orchestrator no puede activarse/operar; la ruta legacy y el CRM base
+     siguen disponibles según configuración.
 - **PROHIBIDO en v1**: almacenamiento de objetos externo (S3/R2), servicios de
   email, Stripe u otro billing, y servicios de Google. Cualquier feature que los
-  requiera queda fuera del alcance de v1.
-- El instalador solo necesita: un VPS con Coolify o Docker, un dominio, credenciales
-  de Meta y (opcional) un token de OpenRouter. Nada más.
-- Las funciones core —autenticación y base de datos— corren self-hosted (Better
-  Auth + PostgreSQL propios de la instancia).
+  requiera queda fuera del alcance de v1. Añadir una dependencia externa nueva
+  en el futuro exige enmendar explícitamente esta constitución.
+- El instalador solo necesita: un VPS con Coolify o Docker, un dominio,
+  credenciales de Meta y, opcionales, un token de OpenRouter y las credenciales
+  TypeSafe/Jev del Sales Orchestrator. Nada más.
+- Las funciones core —autenticación, base de datos y almacenamiento principal—
+  corren self-hosted (Better Auth + PostgreSQL propios de la instancia).
 - Las integraciones externas permitidas se aíslan tras adaptadores dedicados
-  (cliente Graph API propio; adaptador LLM) para no acoplar el dominio a ellas.
+  (cliente Graph API propio; adaptador LLM; cliente TypeSafe/Jev) para no
+  acoplar el dominio a ellas.
 
 **Rationale**: El producto se regala para que agencias lo desplieguen en VPS de
 clientes; cada dependencia externa adicional es un costo, un punto de fallo y una
-fuga de soberanía que rompe la promesa "gratis y tuyo".
+fuga de soberanía que rompe la promesa "gratis y tuyo". TypeSafe/Jev entra en la
+lista cerrada porque el Sales Orchestrator ya lo usa como decisor opcional y
+aislado; no abre la puerta a otros proveedores.
 
 ### III. Multi-Tenancy Real
 
@@ -219,7 +237,8 @@ Estas restricciones derivan de los Principios I y II y son verificables en revis
   de tenant; cualquier acceso que pueda omitirlo requiere justificación explícita.
 - **Aislamiento de integraciones**: las dependencias de APIs externas se acceden a
   través de adaptadores dedicados (cliente Graph API propio, adaptador LLM
-  OpenRouter-compatible), no dispersas por el dominio.
+  OpenRouter-compatible, cliente TypeSafe/Jev del Sales Orchestrator), no
+  dispersas por el dominio.
 - **Instancia pública endurecida**: las rutas de mock/desarrollo devuelven 404
   incondicional en producción; el registro se cierra tras la primera organización
   (salvo habilitación explícita); los entornos de prueba internos JAMÁS alcanzan la
@@ -260,4 +279,4 @@ práctica, convención o preferencia; ante un conflicto, gana la constitución.
 - **Propagación**: al enmendar la constitución se revisan y, si procede, se actualizan
   las plantillas dependientes (plan, spec, tasks).
 
-**Version**: 1.2.0 | **Ratified**: 2026-07-09 | **Last Amended**: 2026-07-09
+**Version**: 1.3.0 | **Ratified**: 2026-07-09 | **Last Amended**: 2026-09-20

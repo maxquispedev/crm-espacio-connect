@@ -505,3 +505,9 @@ No bloquean V1:
 - nuevas preguntas Jev
 - lead score global
 
+### 2026-09-20 — phase 14
+
+- Constitución actualizada para reconocer TypeSafe/Jev como dependencia runtime opcional permitida.
+- Sales Orchestrator V1 queda congelado/cerrado.
+- Próximo bloque independiente: motor de follow-ups.
+
