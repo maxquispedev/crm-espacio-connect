@@ -361,3 +361,9 @@ Ejecución: `src/server/inbox/send.ts` (guard sandbox + ventana 24 h). Conversac
 - `buildJevSalesState` arma product/policy/offer + `crm_state` durable + hilo cronológico (sin PII). Sin lead: degrada, no lanza.
 - Contexto: fetch 200 recientes, recorte 80 turnos / 24k chars desde lo más reciente. Devuelve `persist` (leadId) sin escribir BD.
 - TODO inmediato: resolver de lanes + wire al turno.
+
+### 2026-09-20 — phase 06
+
+- `resolveSalesPlan` puro: prioridad disqualify→STOP, schedule_call→HUMAN, noul≥`NEEDS_HUMAN_CALL_THRESHOLD` (0.70)→HUMAN, follow-up→WAIT, precio/cierre→AUTO_CLOSE, demos/preguntas→AUTO. Sin IDs de etapa; nunca `won`.
+- No marca demo/precio/pago (post-entrega). No infiere `humanRequestedAt`. Caso desconocido: mantiene lane, no transiciona.
+- TODO inmediato: efectos CRM + writer + wire al turno.

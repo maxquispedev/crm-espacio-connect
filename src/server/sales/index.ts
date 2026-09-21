@@ -75,3 +75,15 @@ export {
   type BuildJevSalesStateResult,
   type BuildJevSalesStateSuccess,
 } from "@/server/sales/build-state";
+
+export {
+  NEEDS_HUMAN_CALL_THRESHOLD,
+  isClearlyPositiveHumanCall,
+  resolveSalesPlan,
+  type DurableSalesFacts,
+  type FollowUpDirective,
+  type PipelineSemantic,
+  type ResolveSalesPlanInput,
+  type SalesFactUpdates,
+  type SalesPlan,
+} from "@/server/sales/resolve-plan";
