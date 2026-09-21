@@ -441,6 +441,15 @@ No implementar todavía:
 - Gates: `pnpm typecheck` · `pnpm lint` · `pnpm test` (420) · `pnpm build` — verde.
 - E2E live: **no ejecutado**. `GET http://localhost:3000/api/health` no conectó; Docker no está instalado/arrancable en este WSL; `127.0.0.1:5432` rechazó conexión; sin sudo para instalar Postgres. No se inventó resultado.
 
+### 2026-09-21 — phase 22
+
+- technical retry mantiene job/lead dueAt sincronizados
+- opt-in impide crear jobs cuando follow-ups están OFF
+- global agent OFF bloquea worker
+- revalidación pre-send evita follow-up después de inbound durante writer
+- cancelaciones manuales corregidas (failed operator / template ruta)
+- lead activity tenant-safe
+
 ---
 
 ## V1 status

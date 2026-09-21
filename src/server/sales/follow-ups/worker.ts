@@ -141,26 +141,27 @@ async function processClaimedJob(claimed: FollowUpJob): Promise<void> {
 
   const gate = await revalidate(loaded);
   if (gate) {
-    await finishJob(loaded.job, {
-      status: gate.kind === "blocked" ? "blocked" : "cancelled",
-      error: gate.error,
-    });
-    if (gate.error !== "due_mismatch" && gate.error !== "job_not_processing") {
-      await clearLeadSchedule(loaded.job);
-    }
+    await applyGateFailure(loaded.job, gate);
     return;
   }
 
-  const { job, conversation, profile } = loaded;
+  const { job, conversation } = loaded;
 
   try {
     const delivered = conversation.isTest
       ? await sendSandboxFollowUp(loaded)
       : isWindowOpen(conversation.lastInboundAt)
         ? await sendOpenWindowFollowUp(loaded)
-        : await sendClosedWindowFollowUp(profile, job);
+        : await sendClosedWindowFollowUp(loaded);
 
     if (!delivered.ok) {
+      if (delivered.aborted) {
+        await applyGateFailure(job, {
+          kind: delivered.blocked ? "blocked" : "cancelled",
+          error: delivered.error,
+        });
+        return;
+      }
       if (delivered.retry) {
         await requeueTechnicalRetry(job, delivered.error);
       } else {
@@ -243,6 +244,9 @@ async function revalidate(ctx: LoadedContext): Promise<GateFailure | null> {
   if (job.organizationId !== conversation.organizationId) {
     return { kind: "cancelled", error: "org_mismatch" };
   }
+  if (!profile.enabled) {
+    return { kind: "cancelled", error: "agent_disabled" };
+  }
   if (!profile.salesFollowUpsEnabled || !profile.salesOrchestratorEnabled) {
     return { kind: "cancelled", error: "follow_ups_disabled" };
   }
@@ -277,6 +281,46 @@ async function revalidate(ctx: LoadedContext): Promise<GateFailure | null> {
   return null;
 }
 
+/**
+ * Revalidación justo antes de side effects externos (Graph / sandbox persist).
+ * Cierra la ventana de carrera del writer LLM frente a inbound/cancel.
+ */
+async function ensureEligibleToSend(
+  claimed: FollowUpJob
+): Promise<GateFailure | null> {
+  const loaded = await loadContext(claimed);
+  if (!loaded) {
+    return { kind: "cancelled", error: "context_missing" };
+  }
+  if (!claimMatches(claimed, loaded.job)) {
+    return { kind: "cancelled", error: "claim_lost" };
+  }
+  return revalidate(loaded);
+}
+
+function claimMatches(claimed: FollowUpJob, current: FollowUpJob): boolean {
+  if (current.status !== "processing") return false;
+  if (!claimed.claimedAt || !current.claimedAt) return false;
+  return claimed.claimedAt.getTime() === current.claimedAt.getTime();
+}
+
+async function applyGateFailure(
+  job: FollowUpJob,
+  gate: GateFailure
+): Promise<void> {
+  // Cancelación/lease ajeno: no sobrescribir error ni estado existentes.
+  if (gate.error === "job_not_processing" || gate.error === "claim_lost") {
+    return;
+  }
+  const applied = await finishJob(job, {
+    status: gate.kind === "blocked" ? "blocked" : "cancelled",
+    error: gate.error,
+  });
+  if (applied && gate.error !== "due_mismatch") {
+    await clearLeadSchedule(job);
+  }
+}
+
 async function sendOpenWindowFollowUp(
   ctx: LoadedContext
 ): Promise<DeliverResult> {
@@ -298,6 +342,17 @@ async function sendOpenWindowFollowUp(
     };
   }
 
+  const preSend = await ensureEligibleToSend(ctx.job);
+  if (preSend) {
+    return {
+      ok: false,
+      retry: false,
+      aborted: true,
+      blocked: preSend.kind === "blocked",
+      error: preSend.error,
+    };
+  }
+
   try {
     const sent = await sendText({
       conversationId: ctx.conversation.id,
@@ -308,7 +363,7 @@ async function sendOpenWindowFollowUp(
     return { ok: true, messageId: sent.messageId };
   } catch (err) {
     if (err instanceof SendError && err.code === "window_closed") {
-      return sendClosedWindowFollowUp(ctx.profile, ctx.job);
+      return sendClosedWindowFollowUp(ctx);
     }
     if (err instanceof SendError && err.code === "sandbox_violation") {
       return sendSandboxFollowUp(ctx);
@@ -318,26 +373,36 @@ async function sendOpenWindowFollowUp(
 }
 
 async function sendClosedWindowFollowUp(
-  profile: AgentProfile,
-  job: FollowUpJob
+  ctx: LoadedContext
 ): Promise<DeliverResult> {
-  const templateId = profile.salesFollowUpTemplateId;
+  const templateId = ctx.profile.salesFollowUpTemplateId;
   if (!templateId) {
     return { ok: false, retry: false, blocked: true, error: "template_required" };
   }
 
   const template = await loadApprovedZeroVarTemplate(
-    job.organizationId,
+    ctx.job.organizationId,
     templateId
   );
   if (!template) {
     return { ok: false, retry: false, blocked: true, error: "template_required" };
   }
 
+  const preSend = await ensureEligibleToSend(ctx.job);
+  if (preSend) {
+    return {
+      ok: false,
+      retry: false,
+      aborted: true,
+      blocked: preSend.kind === "blocked",
+      error: preSend.error,
+    };
+  }
+
   try {
     const sent = await sendTemplate({
-      organizationId: job.organizationId,
-      conversationId: job.conversationId,
+      organizationId: ctx.job.organizationId,
+      conversationId: ctx.job.conversationId,
       templateId: template.id,
     });
     return { ok: true, messageId: sent.messageId };
@@ -382,6 +447,16 @@ async function sendSandboxFollowUp(ctx: LoadedContext): Promise<DeliverResult> {
         error: "template_required",
       };
     }
+    const preSend = await ensureEligibleToSend(ctx.job);
+    if (preSend) {
+      return {
+        ok: false,
+        retry: false,
+        aborted: true,
+        blocked: preSend.kind === "blocked",
+        error: preSend.error,
+      };
+    }
     const messageId = await persistSandboxOutbound(
       ctx.conversation,
       template.body
@@ -406,6 +481,16 @@ async function sendSandboxFollowUp(ctx: LoadedContext): Promise<DeliverResult> {
       error: written.error,
     };
   }
+  const preSend = await ensureEligibleToSend(ctx.job);
+  if (preSend) {
+    return {
+      ok: false,
+      retry: false,
+      aborted: true,
+      blocked: preSend.kind === "blocked",
+      error: preSend.error,
+    };
+  }
   const messageId = await persistSandboxOutbound(ctx.conversation, written.text);
   return { ok: true, messageId };
 }
@@ -415,11 +500,14 @@ async function onSendSuccess(
   messageId: string
 ): Promise<void> {
   const now = new Date();
-  await finishJob(job, {
+  const applied = await finishJob(job, {
     status: "sent",
     messageId,
     error: null,
   });
+  // Cancelado durante el envío: no encadenar ni marcar dormido.
+  if (!applied) return;
+
   await patchLeadFollowUp(job.organizationId, job.leadId, {
     followUpCount: job.attemptNumber,
     updatedAt: now,
@@ -465,24 +553,28 @@ async function requeueTechnicalRetry(
     await failJob(job, error, false, nextAttempts);
     return;
   }
+  const retryDueAt = new Date(now.getTime() + RETRY_DELAY_MS);
   const db = getDb();
-  await db
+  const updated = await db
     .update(schema.salesFollowUpJob)
     .set({
       status: "pending",
       runAttempts: nextAttempts,
       claimedAt: null,
       error,
-      dueAt: new Date(now.getTime() + RETRY_DELAY_MS),
+      dueAt: retryDueAt,
       updatedAt: now,
     })
-    .where(
-      scoped(
-        schema.salesFollowUpJob.organizationId,
-        job.organizationId,
-        eq(schema.salesFollowUpJob.id, job.id)
-      )
-    );
+    .where(stillOwnedWhere(job))
+    .returning({ id: schema.salesFollowUpJob.id });
+
+  if (updated.length === 0) return;
+
+  // Mismo intento comercial: sincronizar resumen UI con la nueva dueAt.
+  await patchLeadFollowUp(job.organizationId, job.leadId, {
+    nextFollowUpAt: retryDueAt,
+    updatedAt: now,
+  });
 }
 
 async function failJob(
@@ -491,11 +583,12 @@ async function failJob(
   blocked = false,
   runAttempts = job.runAttempts + 1
 ): Promise<void> {
-  await finishJob(job, {
+  const applied = await finishJob(job, {
     status: blocked ? "blocked" : "failed",
     error,
     runAttempts,
   });
+  if (!applied) return;
   await patchLeadFollowUp(job.organizationId, job.leadId, {
     nextFollowUpAt: null,
     followUpReason: blocked ? error : "follow_up_failed",
@@ -518,6 +611,11 @@ async function recoverUnexpectedError(
   }
 }
 
+/**
+ * Transición final solo si el job sigue `processing` con el mismo lease.
+ * Evita sobrescribir una cancelación por inbound/manual durante el writer.
+ * @returns true si se aplicó el update
+ */
 async function finishJob(
   job: FollowUpJob,
   patch: {
@@ -526,9 +624,9 @@ async function finishJob(
     messageId?: string | null;
     runAttempts?: number;
   }
-): Promise<void> {
+): Promise<boolean> {
   const db = getDb();
-  await db
+  const updated = await db
     .update(schema.salesFollowUpJob)
     .set({
       status: patch.status,
@@ -538,13 +636,22 @@ async function finishJob(
       claimedAt: null,
       updatedAt: new Date(),
     })
-    .where(
-      scoped(
-        schema.salesFollowUpJob.organizationId,
-        job.organizationId,
-        eq(schema.salesFollowUpJob.id, job.id)
-      )
-    );
+    .where(stillOwnedWhere(job))
+    .returning({ id: schema.salesFollowUpJob.id });
+  return updated.length > 0;
+}
+
+/** WHERE: mismo job, aún processing, mismo claimedAt si lo tenemos. */
+function stillOwnedWhere(job: FollowUpJob) {
+  return scoped(
+    schema.salesFollowUpJob.organizationId,
+    job.organizationId,
+    eq(schema.salesFollowUpJob.id, job.id),
+    eq(schema.salesFollowUpJob.status, "processing"),
+    job.claimedAt
+      ? eq(schema.salesFollowUpJob.claimedAt, job.claimedAt)
+      : undefined
+  );
 }
 
 async function clearLeadSchedule(job: FollowUpJob): Promise<void> {
@@ -739,4 +846,11 @@ function publishConversation(
 
 type DeliverResult =
   | { ok: true; messageId: string }
-  | { ok: false; retry: boolean; error: string; blocked?: boolean };
+  | {
+      ok: false;
+      retry: boolean;
+      error: string;
+      blocked?: boolean;
+      /** Gate pre-send: no reintentar ni fallar; respetar cancelación. */
+      aborted?: boolean;
+    };

@@ -92,6 +92,7 @@ vi.mock("@/server/whatsapp/templates", async (importOriginal) => {
 vi.mock("@/server/events/bus", () => ({ publish: vi.fn() }));
 
 const due = new Date("2026-09-20T12:00:00Z");
+const claimedAt = new Date("2026-09-20T12:00:01Z");
 
 function rawJob(over: Record<string, unknown> = {}) {
   return {
@@ -105,7 +106,7 @@ function rawJob(over: Record<string, unknown> = {}) {
     anchor_at: new Date("2026-09-20T06:00:00Z"),
     status: "processing",
     run_attempts: 0,
-    claimed_at: new Date(),
+    claimed_at: claimedAt,
     message_id: null,
     error: null,
     created_at: due,
@@ -114,7 +115,7 @@ function rawJob(over: Record<string, unknown> = {}) {
   };
 }
 
-function mappedJob() {
+function mappedJob(over: Record<string, unknown> = {}) {
   return {
     id: "sfj_1",
     organizationId: "org_1",
@@ -126,11 +127,12 @@ function mappedJob() {
     anchorAt: new Date("2026-09-20T06:00:00Z"),
     status: "processing" as const,
     runAttempts: 0,
-    claimedAt: new Date(),
+    claimedAt,
     messageId: null,
     error: null,
     createdAt: due,
     updatedAt: due,
+    ...over,
   };
 }
 
@@ -167,6 +169,7 @@ function profile(over: Record<string, unknown> = {}) {
   return {
     id: "agp_1",
     organizationId: "org_1",
+    enabled: true,
     salesOrchestratorEnabled: true,
     salesFollowUpsEnabled: true,
     salesFollowUpTemplateId: null,
@@ -179,14 +182,32 @@ function queueContext(opts?: {
   conversation?: Record<string, unknown>;
   profile?: Record<string, unknown>;
   afterAnchor?: boolean;
+  job?: Record<string, unknown>;
 }) {
   selectQueue.push(
-    [mappedJob()],
+    [mappedJob(opts?.job)],
     [lead(opts?.lead)],
     [conversation(opts?.conversation)],
     [profile(opts?.profile)]
   );
   selectQueue.push(opts?.afterAnchor ? [{ id: "msg_later" }] : []);
+}
+
+/** loadTurns + loadKb + ensureEligibleToSend (reload + anchor). */
+function queueOpenWindowSelects(opts?: {
+  lead?: Record<string, unknown>;
+  conversation?: Record<string, unknown>;
+  profile?: Record<string, unknown>;
+  job?: Record<string, unknown>;
+}) {
+  selectQueue.push([], []); // turns, kb
+  selectQueue.push(
+    [mappedJob(opts?.job)],
+    [lead(opts?.lead)],
+    [conversation(opts?.conversation)],
+    [profile(opts?.profile)],
+    [] // no message after anchor
+  );
 }
 
 describe("worker de follow-ups", () => {
@@ -216,7 +237,8 @@ describe("worker de follow-ups", () => {
   });
 
   it("el claim usa SKIP LOCKED y recupera processing abandonado", async () => {
-    selectQueue.push([mappedJob()], [lead()], [conversation()], [profile()], [], [], []);
+    queueContext();
+    queueOpenWindowSelects();
     const { runDueFollowUps, CLAIM_LEASE_MS } = await import(
       "@/server/sales/follow-ups/worker"
     );
@@ -229,7 +251,7 @@ describe("worker de follow-ups", () => {
 
   it("dos ticks concurrentes: solo un envío", async () => {
     queueContext();
-    selectQueue.push([], []);
+    queueOpenWindowSelects();
     const { runDueFollowUps } = await import("@/server/sales/follow-ups/worker");
     await Promise.all([runDueFollowUps(), runDueFollowUps()]);
     expect(sendText).toHaveBeenCalledTimes(1);
@@ -238,7 +260,7 @@ describe("worker de follow-ups", () => {
 
   it("ventana abierta: writer + sender, job sent, programa intento 2; no Jev", async () => {
     queueContext();
-    selectQueue.push([], []);
+    queueOpenWindowSelects();
     const { runDueFollowUps } = await import("@/server/sales/follow-ups/worker");
     await runDueFollowUps();
     expect(writeFollowUpText).toHaveBeenCalledOnce();
@@ -279,15 +301,8 @@ describe("worker de follow-ups", () => {
 
   it("tercer intento enviado → Dormant sin stageId lost", async () => {
     claimRows = [rawJob({ attempt_number: 3 })];
-    selectQueue.push(
-      [{ ...mappedJob(), attemptNumber: 3 }],
-      [lead()],
-      [conversation()],
-      [profile()],
-      [],
-      [],
-      []
-    );
+    queueContext({ job: { attemptNumber: 3 } });
+    queueOpenWindowSelects({ job: { attemptNumber: 3 } });
     const { runDueFollowUps } = await import("@/server/sales/follow-ups/worker");
     await runDueFollowUps();
     expect(sendText).toHaveBeenCalledOnce();
@@ -305,15 +320,14 @@ describe("worker de follow-ups", () => {
 
   it("scheduled_wait envía uno y no crea intento 2", async () => {
     claimRows = [rawJob({ reason: "scheduled_wait", attempt_number: 1 })];
-    selectQueue.push(
-      [{ ...mappedJob(), reason: "scheduled_wait" }],
-      [lead({ automationLane: "wait", followUpReason: "scheduled_wait" })],
-      [conversation()],
-      [profile()],
-      [],
-      [],
-      []
-    );
+    queueContext({
+      job: { reason: "scheduled_wait" },
+      lead: { automationLane: "wait", followUpReason: "scheduled_wait" },
+    });
+    queueOpenWindowSelects({
+      job: { reason: "scheduled_wait" },
+      lead: { automationLane: "wait", followUpReason: "scheduled_wait" },
+    });
     const { runDueFollowUps } = await import("@/server/sales/follow-ups/worker");
     await runDueFollowUps();
     expect(sendText).toHaveBeenCalledOnce();
@@ -362,22 +376,135 @@ describe("worker de follow-ups", () => {
     await runDueFollowUps();
     expect(sendText).not.toHaveBeenCalled();
     expect(updates.some((u) => u.followUpCount !== undefined)).toBe(false);
-    expect(updates.some((u) => u.status === "pending" && u.runAttempts === 1)).toBe(
-      true
+    const retry = updates.find((u) => u.status === "pending" && u.runAttempts === 1);
+    expect(retry).toBeTruthy();
+    expect(retry?.dueAt).toBeInstanceOf(Date);
+    expect(updates.some((u) => u.nextFollowUpAt instanceof Date)).toBe(true);
+    const leadDue = updates.find((u) => u.nextFollowUpAt instanceof Date);
+    expect(leadDue?.nextFollowUpAt).toEqual(retry?.dueAt);
+  });
+
+  it("retry técnico: segundo tick no due_mismatch y reintenta el mismo attempt", async () => {
+    queueContext();
+    writeFollowUpText.mockResolvedValueOnce({
+      ok: false,
+      error: "provider_error",
+      detail: "timeout",
+    });
+    const { runDueFollowUps } = await import("@/server/sales/follow-ups/worker");
+    await runDueFollowUps();
+
+    const retry = updates.find((u) => u.status === "pending" && u.runAttempts === 1);
+    expect(retry?.dueAt).toBeInstanceOf(Date);
+    const retryDueAt = retry!.dueAt as Date;
+
+    // Segundo tick real del mismo job.
+    updates.length = 0;
+    inserts.length = 0;
+    claimLocked = false;
+    claimRows = [
+      rawJob({
+        due_at: retryDueAt,
+        run_attempts: 1,
+        status: "processing",
+        claimed_at: claimedAt,
+      }),
+    ];
+    writeFollowUpText.mockResolvedValue({ ok: true, text: "te retomo" });
+    queueContext({
+      job: {
+        dueAt: retryDueAt,
+        runAttempts: 1,
+        attemptNumber: 1,
+        claimedAt,
+      },
+      lead: { nextFollowUpAt: retryDueAt },
+    });
+    queueOpenWindowSelects({
+      job: {
+        dueAt: retryDueAt,
+        runAttempts: 1,
+        attemptNumber: 1,
+        claimedAt,
+      },
+      lead: { nextFollowUpAt: retryDueAt },
+    });
+
+    await runDueFollowUps();
+    expect(updates.some((u) => u.error === "due_mismatch")).toBe(false);
+    expect(sendText).toHaveBeenCalledOnce();
+    expect(updates.some((u) => u.status === "sent")).toBe(true);
+    expect(updates.some((u) => u.followUpCount === 1)).toBe(true);
+  });
+
+  it("agent profile.enabled=false no envía aunque orchestrator/follow-ups ON", async () => {
+    queueContext({
+      profile: {
+        enabled: false,
+        salesOrchestratorEnabled: true,
+        salesFollowUpsEnabled: true,
+      },
+    });
+    const { runDueFollowUps } = await import("@/server/sales/follow-ups/worker");
+    await runDueFollowUps();
+    expect(sendText).not.toHaveBeenCalled();
+    expect(writeFollowUpText).not.toHaveBeenCalled();
+    expect(updates.some((u) => u.error === "agent_disabled")).toBe(true);
+  });
+
+  it("carrera: inbound cancela durante writer → no sendText ni sent", async () => {
+    queueContext();
+    selectQueue.push([], []); // turns, kb
+
+    let resolveWriter!: (v: { ok: true; text: string }) => void;
+    writeFollowUpText.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolveWriter = resolve;
+        })
     );
+
+    const { runDueFollowUps } = await import("@/server/sales/follow-ups/worker");
+    const tick = runDueFollowUps();
+
+    // Esperar a que el writer quede pendiente.
+    await vi.waitFor(() => {
+      expect(writeFollowUpText).toHaveBeenCalled();
+    });
+
+    // Simular cancel por inbound mientras el writer espera.
+    selectQueue.push(
+      [
+        mappedJob({
+          status: "cancelled",
+          claimedAt: null,
+          error: "inbound_message",
+        }),
+      ],
+      [lead({ nextFollowUpAt: null })],
+      [conversation()],
+      [profile()],
+      []
+    );
+    // Por si applyGateFailure intentara algo: marcar updates de cancelación existente.
+    updates.push({ status: "cancelled", error: "inbound_message" });
+
+    resolveWriter({ ok: true, text: "te retomo" });
+    await tick;
+
+    expect(sendText).not.toHaveBeenCalled();
+    expect(updates.some((u) => u.status === "sent")).toBe(false);
+    expect(
+      updates.filter((u) => u.status === "cancelled").every(
+        (u) => u.error === "inbound_message" || u.error === "job_not_processing"
+      )
+    ).toBe(true);
   });
 
   it("tras 3 run attempts falla y no reintenta infinito", async () => {
     claimRows = [rawJob({ run_attempts: 2 })];
-    selectQueue.push(
-      [{ ...mappedJob(), runAttempts: 2 }],
-      [lead()],
-      [conversation()],
-      [profile()],
-      [],
-      [],
-      []
-    );
+    queueContext({ job: { runAttempts: 2 } });
+    queueOpenWindowSelects({ job: { runAttempts: 2 } });
     sendText.mockRejectedValue(
       new SendError("meta_unavailable", "Graph 503")
     );
@@ -390,7 +517,7 @@ describe("worker de follow-ups", () => {
 
   it("sandbox is_test no llama sendText ni sendTemplate", async () => {
     queueContext({ conversation: { isTest: true } });
-    selectQueue.push([], []);
+    queueOpenWindowSelects({ conversation: { isTest: true } });
     const { runDueFollowUps } = await import("@/server/sales/follow-ups/worker");
     await runDueFollowUps();
     expect(sendText).not.toHaveBeenCalled();

@@ -72,6 +72,8 @@ function scheduleErrorResponse(
     | "conversation_not_found"
     | "human_lane"
     | "handoff_active"
+    | "orchestrator_disabled"
+    | "follow_ups_disabled"
 ): Response {
   if (error === "lead_not_found") {
     return apiError(404, "not_found", "Lead no encontrado");
@@ -84,6 +86,20 @@ function scheduleErrorResponse(
   }
   if (error === "human_lane") {
     return apiError(409, "human_lane", "No se puede programar: atención humana activa");
+  }
+  if (error === "orchestrator_disabled") {
+    return apiError(
+      409,
+      "orchestrator_disabled",
+      "Sales Orchestrator está desactivado"
+    );
+  }
+  if (error === "follow_ups_disabled") {
+    return apiError(
+      409,
+      "follow_ups_disabled",
+      "Los seguimientos automáticos están desactivados"
+    );
   }
   return apiError(
     409,

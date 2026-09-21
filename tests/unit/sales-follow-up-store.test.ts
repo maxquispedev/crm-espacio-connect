@@ -69,6 +69,11 @@ const PLAN_AUTO = {
   shouldReply: true,
 };
 
+const PROFILE_ON = {
+  salesOrchestratorEnabled: true,
+  salesFollowUpsEnabled: true,
+};
+
 describe("store de follow-ups", () => {
   beforeEach(() => {
     selectQueue.length = 0;
@@ -78,6 +83,7 @@ describe("store de follow-ups", () => {
   });
 
   it("AUTO con reply crea job pending intento 1", async () => {
+    selectQueue.push([PROFILE_ON]);
     const { scheduleNextFollowUp } = await import(
       "@/server/sales/follow-ups/store"
     );
@@ -104,6 +110,7 @@ describe("store de follow-ups", () => {
   });
 
   it("AUTO_CLOSE present_price → after_price", async () => {
+    selectQueue.push([PROFILE_ON]);
     const { scheduleNextFollowUp } = await import(
       "@/server/sales/follow-ups/store"
     );
@@ -119,6 +126,25 @@ describe("store de follow-ups", () => {
       anchorAt: new Date("2026-09-20T00:00:00Z"),
     });
     expect(inserts[0]).toMatchObject({ reason: "after_price", attemptNumber: 1 });
+  });
+
+  it("salesFollowUpsEnabled=false no crea job aunque orchestrator ON", async () => {
+    selectQueue.push([
+      { salesOrchestratorEnabled: true, salesFollowUpsEnabled: false },
+    ]);
+    const { scheduleNextFollowUp } = await import(
+      "@/server/sales/follow-ups/store"
+    );
+    const job = await scheduleNextFollowUp({
+      organizationId: "org_1",
+      leadId: "ld_1",
+      conversationId: "cv_1",
+      plan: PLAN_AUTO,
+      anchorAt: new Date("2026-09-20T00:00:00Z"),
+    });
+    expect(job).toBeNull();
+    expect(inserts).toHaveLength(0);
+    expect(leadPatches.some((p) => p.nextFollowUpAt != null)).toBe(false);
   });
 
   it("HUMAN / STOP / WAIT / shouldReply false no crean job", async () => {
@@ -219,6 +245,7 @@ describe("store de follow-ups", () => {
 
   it("programación manual futura es WAIT one-shot tenant-bound", async () => {
     selectQueue.push(
+      [PROFILE_ON],
       [{ id: "ld_1", contactId: "ct_1", automationLane: "auto" }],
       [{ id: "cv_1", handoffAt: null }]
     );
@@ -254,7 +281,10 @@ describe("store de follow-ups", () => {
     });
     expect(past).toEqual({ ok: false, error: "due_in_past" });
 
-    selectQueue.push([{ id: "ld_1", contactId: "ct_1", automationLane: "human" }]);
+    selectQueue.push(
+      [PROFILE_ON],
+      [{ id: "ld_1", contactId: "ct_1", automationLane: "human" }]
+    );
     const human = await scheduleManualFollowUp({
       organizationId: "org_1",
       leadId: "ld_1",
@@ -263,6 +293,7 @@ describe("store de follow-ups", () => {
     expect(human).toEqual({ ok: false, error: "human_lane" });
 
     selectQueue.push(
+      [PROFILE_ON],
       [{ id: "ld_1", contactId: "ct_1", automationLane: "auto" }],
       [{ id: "cv_1", handoffAt: new Date() }]
     );
@@ -272,6 +303,34 @@ describe("store de follow-ups", () => {
       dueAt: new Date(Date.now() + 60_000),
     });
     expect(handoff).toEqual({ ok: false, error: "handoff_active" });
+    expect(inserts).toHaveLength(0);
+  });
+
+  it("manual rechaza si orchestrator u follow-ups OFF", async () => {
+    const { scheduleManualFollowUp } = await import(
+      "@/server/sales/follow-ups/store"
+    );
+    const dueAt = new Date(Date.now() + 60_000);
+
+    selectQueue.push([
+      { salesOrchestratorEnabled: false, salesFollowUpsEnabled: true },
+    ]);
+    const orchOff = await scheduleManualFollowUp({
+      organizationId: "org_1",
+      leadId: "ld_1",
+      dueAt,
+    });
+    expect(orchOff).toEqual({ ok: false, error: "orchestrator_disabled" });
+
+    selectQueue.push([
+      { salesOrchestratorEnabled: true, salesFollowUpsEnabled: false },
+    ]);
+    const fuOff = await scheduleManualFollowUp({
+      organizationId: "org_1",
+      leadId: "ld_1",
+      dueAt,
+    });
+    expect(fuOff).toEqual({ ok: false, error: "follow_ups_disabled" });
     expect(inserts).toHaveLength(0);
   });
 });

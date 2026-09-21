@@ -156,7 +156,9 @@ async function persistOutbound(input: {
     message: serializeMessage(message, input.media ?? null),
   });
 
-  if (input.origin === "operator") {
+  // Solo invalida la secuencia si el operador envío se aceptó; un failed
+  // (p. ej. media upload/Graph) no debe tumbar follow-ups automáticos.
+  if (input.origin === "operator" && input.status !== "failed") {
     await cancelFollowUpsOnManualReply({
       organizationId: input.organizationId,
       conversationId: input.conversationId,

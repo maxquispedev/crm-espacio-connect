@@ -35,12 +35,14 @@ export type ScheduleManualFollowUpResult =
         | "lead_not_found"
         | "conversation_not_found"
         | "human_lane"
-        | "handoff_active";
+        | "handoff_active"
+        | "orchestrator_disabled"
+        | "follow_ups_disabled";
     };
 
 /**
  * Tras un envío comercial exitoso: cancela la secuencia anterior y programa
- * el intento 1. No-op si el plan no admite seguimiento.
+ * el intento 1. No-op si el plan no admite seguimiento o follow-ups están OFF.
  */
 export async function scheduleNextFollowUp(input: {
   organizationId: string;
@@ -56,6 +58,9 @@ export async function scheduleNextFollowUp(input: {
 
   const delayMs = nextFollowUpDelay(reason, 1);
   if (delayMs === null) return null;
+
+  const profile = await loadAgentProfile(input.organizationId);
+  if (!profile?.salesFollowUpsEnabled) return null;
 
   await cancelOpenJobs(input.organizationId, input.leadId, "replaced_by_new_sequence");
 
@@ -93,6 +98,14 @@ export async function scheduleManualFollowUp(input: {
   const now = input.now ?? new Date();
   if (!(input.dueAt.getTime() > now.getTime())) {
     return { ok: false, error: "due_in_past" };
+  }
+
+  const profile = await loadAgentProfile(input.organizationId);
+  if (!profile?.salesOrchestratorEnabled) {
+    return { ok: false, error: "orchestrator_disabled" };
+  }
+  if (!profile.salesFollowUpsEnabled) {
+    return { ok: false, error: "follow_ups_disabled" };
   }
 
   const lead = await loadLead(input.organizationId, input.leadId);
@@ -347,6 +360,24 @@ async function insertJob(input: {
   const job = inserted[0];
   if (!job) throw new Error("sales_follow_up_job: insert sin fila");
   return job;
+}
+
+async function loadAgentProfile(
+  organizationId: string
+): Promise<{
+  salesOrchestratorEnabled: boolean;
+  salesFollowUpsEnabled: boolean;
+} | null> {
+  const db = getDb();
+  const rows = await db
+    .select({
+      salesOrchestratorEnabled: schema.agentProfile.salesOrchestratorEnabled,
+      salesFollowUpsEnabled: schema.agentProfile.salesFollowUpsEnabled,
+    })
+    .from(schema.agentProfile)
+    .where(scoped(schema.agentProfile.organizationId, organizationId))
+    .limit(1);
+  return rows[0] ?? null;
 }
 
 async function loadLead(

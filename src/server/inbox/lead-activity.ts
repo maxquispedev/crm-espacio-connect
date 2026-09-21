@@ -1,6 +1,7 @@
 import { and, asc, eq, sql } from "drizzle-orm";
 import { getDb, schema } from "@/lib/db";
 import { newId } from "@/lib/db/ids";
+import { scoped } from "@/lib/db/tenant";
 import { resetFollowUpsOnInbound } from "@/server/sales/follow-ups/store";
 
 /**
@@ -18,14 +19,26 @@ export async function onLeadActivity(
   const existing = await db
     .select({ id: schema.lead.id })
     .from(schema.lead)
-    .where(eq(schema.lead.contactId, contactId))
+    .where(
+      scoped(
+        schema.lead.organizationId,
+        organizationId,
+        eq(schema.lead.contactId, contactId)
+      )
+    )
     .limit(1);
 
   if (existing[0]) {
     await db
       .update(schema.lead)
       .set({ lastActivityAt: at, updatedAt: new Date() })
-      .where(eq(schema.lead.id, existing[0].id));
+      .where(
+        scoped(
+          schema.lead.organizationId,
+          organizationId,
+          eq(schema.lead.id, existing[0].id)
+        )
+      );
     await resetFollowUpsOnInbound({
       organizationId,
       leadId: existing[0].id,
