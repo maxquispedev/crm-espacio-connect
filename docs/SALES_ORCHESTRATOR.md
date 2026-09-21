@@ -343,3 +343,9 @@ Ejecución: `src/server/inbox/send.ts` (guard sandbox + ventana 24 h). Conversac
 - Flag opt-in `sales_orchestrator_enabled` en `agent_profile` (default false).
 - Migración `drizzle/0004_graceful_puma.sql`. Motivo de handoff `commercial` tipado. Todavía sin Jev runtime.
 - TODO inmediato: adaptador TypeSafe + env del endpoint.
+
+### 2026-09-20 — phase 03
+
+- Contrato tipado en `src/server/sales/`: `JEV_SALES_QUESTIONS_V2`, producto, política, oferta, `SalesDecision`, state Jev.
+- Frontera: raw TypeSafe → normalizer → `SalesDecision`. Todavía sin HTTP, resolver ni writer.
+- TODO inmediato: adaptador TypeSafe (endpoint por env) + normalizer.
