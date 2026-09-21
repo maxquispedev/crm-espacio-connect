@@ -70,6 +70,7 @@ export {
 export {
   JEV_STATE_CONTEXT,
   buildJevSalesState,
+  trimConversation,
   type BuildJevSalesStateFailure,
   type BuildJevSalesStateInput,
   type BuildJevSalesStateResult,
@@ -98,6 +99,9 @@ export {
   type WriteSalesReplyInput,
 } from "@/server/sales/writer";
 
-export { runSalesOrchestratorTurn } from "@/server/sales/orchestrator";
+export {
+  matchSemanticStage,
+  runSalesOrchestratorTurn,
+} from "@/server/sales/orchestrator";
 
 export { serializeLeadSalesState } from "@/server/sales/serialize-ui";

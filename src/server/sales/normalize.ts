@@ -93,7 +93,7 @@ function parseNoul(value: unknown, key: string): NormalizedNoul | string {
   if (typeof value.noul !== "number" || !Number.isFinite(value.noul)) {
     return `answers.${key} noul ausente o no numérico`;
   }
-  return withSignals({ type: "noul", noul: value.noul }, value);
+  return withSignals({ type: "noul" as const, noul: value.noul }, value);
 }
 
 function parseScore(value: unknown, key: string): NormalizedScore | string {
@@ -104,7 +104,7 @@ function parseScore(value: unknown, key: string): NormalizedScore | string {
   if (typeof value.score !== "number" || !Number.isFinite(value.score)) {
     return `answers.${key} score ausente o no numérico`;
   }
-  return withSignals({ type: "score", score: value.score }, value);
+  return withSignals({ type: "score" as const, score: value.score }, value);
 }
 
 function parseChoice<T extends string>(
@@ -119,10 +119,10 @@ function parseChoice<T extends string>(
   if (typeof value.choice !== "string" || !isAllowed(value.choice)) {
     return `answers.${key} choice inválido`;
   }
-  return withSignals({ type: "choice", choice: value.choice }, value);
+  return withSignals({ type: "choice" as const, choice: value.choice }, value);
 }
 
-function withSignals<T extends { type: string }>(
+function withSignals<T extends object>(
   base: T,
   raw: Record<string, unknown>
 ): T & { confidence?: number; probabilities?: Record<string, number> } {

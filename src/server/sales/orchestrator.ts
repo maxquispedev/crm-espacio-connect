@@ -197,7 +197,8 @@ async function resolveStageId(
   return match.id;
 }
 
-function matchSemanticStage(
+/** Resuelve etapa por semántica. Nunca elige `kind=won`. */
+export function matchSemanticStage(
   semantic: PipelineSemantic,
   stages: Stage[]
 ): Stage | undefined {

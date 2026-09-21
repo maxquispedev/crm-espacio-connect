@@ -237,7 +237,8 @@ function mediaPlaceholder(kind: string): string | null {
   }
 }
 
-function trimConversation(turns: JevConversationTurn[]): JevConversationTurn[] {
+/** Recorte puro del hilo. Exportado para tests; el builder es el único caller de producto. */
+export function trimConversation(turns: JevConversationTurn[]): JevConversationTurn[] {
   const clipped = turns.map(clipTurn);
   const selected: JevConversationTurn[] = [];
   let chars = 0;

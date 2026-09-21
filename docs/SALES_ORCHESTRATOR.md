@@ -386,3 +386,41 @@ Ejecución: `src/server/inbox/send.ts` (guard sandbox + ventana 24 h). Conversac
 - UI mínima: flag `Sales Orchestrator (Jev)` en `/agent` (opt-in org; `jevConfigured` sin secretos). Panel **Venta** en contacto (lane, snapshot operativo, hechos). Señal corta de lane en tarjetas del pipeline si no es `auto`.
 - APIs: profile lee/escribe `salesOrchestratorEnabled`; contact y board devuelven el estado mínimo. Handoff `commercial` reutiliza el banner existente. STOP solo se indica, no se oculta.
 - TODO inmediato: follow-up worker.
+
+### 2026-09-20 — phase 10
+
+- Auditoría v1 + cobertura unitaria (freeze §5–7, normalizer, resolver, writer, client, builder, orchestrator, opt-in, serialize UI). Sin features nuevas ni worker de follow-up.
+- Gates: `pnpm typecheck` · `pnpm lint` · `pnpm build` · `pnpm test` — verde (360 tests). E2E no corrido: app local no estaba viva (`/api/health` inalcanzable). Live Jev: **pending** (`TYPESAFE_*` / `JEV_MODEL` ausentes en `.env` de este repo).
+- Limitación real restante: WAIT no programa `next_follow_up_at` (no hay motor de follow-ups en V1).
+
+---
+
+## V1 status
+
+Implementado:
+
+- Opt-in por organización (`agent_profile.sales_orchestrator_enabled`, default OFF). OFF = agente legacy.
+- State builder tenant-safe → cliente TypeSafe (URL completa por env) → resolver de lanes → writer GPT → efectos CRM (lane, pipeline lost-only, handoff `commercial`, demo/precio post-entrega).
+- UI: flag en `/agent`, panel Venta en contacto, señal de lane en pipeline.
+- Sandbox `is_test` no llama a Meta. Fallo Jev no inventa decisión. GPT no decide pipeline/handoff cuando el orchestrator está ON.
+
+Cómo activar:
+
+1. Configurar env de TypeSafe/Jev y OpenRouter; reiniciar.
+2. En `/agent`, encender **Sales Orchestrator (Jev)** para esa organización.
+3. El agente global (`enabled`) sigue siendo necesario en conversaciones reales.
+
+Variables env requeridas para que funcione (además de las del CRM):
+
+- `TYPESAFE_API_KEY`
+- `TYPESAFE_JEV_ENDPOINT` (URL completa del POST; no hay path hardcodeado)
+- `JEV_MODEL`
+- `OPENROUTER_API_TOKEN` + `OPENROUTER_MODEL` (writer)
+
+Fuera de V1, expresamente:
+
+- motor automático de follow-ups
+- analytics / atribución
+- nuevas preguntas Jev
+- lead score global
+
