@@ -166,6 +166,26 @@ export const lead = pgTable(
       .references(() => pipelineStage.id),
     position: integer("position").notNull().default(0),
     lastActivityAt: timestamp("last_activity_at"),
+    /**
+     * Lane del Sales Orchestrator (quién atiende). Independiente del pipeline.
+     * Default `auto`; el opt-in de la org vive en agent_profile.
+     */
+    automationLane: text("automation_lane", {
+      enum: ["auto", "auto_close", "wait", "human", "stop"],
+    })
+      .notNull()
+      .default("auto"),
+    demoShownAt: timestamp("demo_shown_at"),
+    pricePresentedAt: timestamp("price_presented_at"),
+    paymentInstructionsSentAt: timestamp("payment_instructions_sent_at"),
+    humanRequestedAt: timestamp("human_requested_at"),
+    nextFollowUpAt: timestamp("next_follow_up_at"),
+    followUpCount: integer("follow_up_count").notNull().default(0),
+    followUpReason: text("follow_up_reason"),
+    lastJevEvaluatedAt: timestamp("last_jev_evaluated_at"),
+    /** Snapshot crudo de la última evaluación Jev (respuesta + decisión). */
+    lastJevDecision: jsonb("last_jev_decision"),
+    lastJevError: text("last_jev_error"),
     createdAt: timestamp("created_at").notNull().defaultNow(),
     updatedAt: timestamp("updated_at").notNull().defaultNow(),
   },
@@ -191,7 +211,15 @@ export const conversation = pgTable(
     handoffAt: timestamp("handoff_at"),
     handoffReason: text("handoff_reason", {
       // 008: manual_reply = el dueño respondió desde la app del teléfono.
-      enum: ["cliente", "modelo", "error", "ventana", "manual_reply"],
+      // commercial = Sales Orchestrator escaló a humano.
+      enum: [
+        "cliente",
+        "modelo",
+        "error",
+        "ventana",
+        "manual_reply",
+        "commercial",
+      ],
     }),
     lastInboundAt: timestamp("last_inbound_at"),
     lastMessageAt: timestamp("last_message_at"),
@@ -340,6 +368,10 @@ export const agentProfile = pgTable(
       .notNull()
       .references(() => organization.id, { onDelete: "cascade" }),
     enabled: boolean("enabled").notNull().default(false),
+    /** Sales Orchestrator opt-in por organización. Default OFF: ruta legacy. */
+    salesOrchestratorEnabled: boolean("sales_orchestrator_enabled")
+      .notNull()
+      .default(false),
     name: text("name").notNull().default("Asistente"),
     tone: text("tone"),
     instructions: text("instructions"),

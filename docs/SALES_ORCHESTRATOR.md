@@ -336,3 +336,10 @@ Ejecución: `src/server/inbox/send.ts` (guard sandbox + ventana 24 h). Conversac
 - Documento/contrato creado. Código funcional todavía sin modificar.
 - Decisiones: lanes ≠ pipeline; Jev V2 congelado; resolver puro; TypeSafe vía env de endpoint completo; default OFF por org.
 - TODO inmediato: schema del estado durable + flag opt-in en `agent_profile`.
+
+### 2026-09-20 — phase 02
+
+- Estado durable añadido en `lead` (`automation_lane`, timestamps comerciales, follow-up, snapshot/error Jev).
+- Flag opt-in `sales_orchestrator_enabled` en `agent_profile` (default false).
+- Migración `drizzle/0004_graceful_puma.sql`. Motivo de handoff `commercial` tipado. Todavía sin Jev runtime.
+- TODO inmediato: adaptador TypeSafe + env del endpoint.

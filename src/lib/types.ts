@@ -1,12 +1,29 @@
 /** DTOs que viajan por la API interna (lado cliente). */
 
+/** Lane del Sales Orchestrator: quién/qué atiende al lead (no es el pipeline). */
+export type AutomationLane =
+  | "auto"
+  | "auto_close"
+  | "wait"
+  | "human"
+  | "stop";
+
+/** Motivos de handoff persistidos en conversation.handoff_reason. */
+export type HandoffReason =
+  | "cliente"
+  | "modelo"
+  | "error"
+  | "ventana"
+  | "manual_reply"
+  | "commercial";
+
 export type ConversationDto = {
   id: string;
   contact: { id: string; name: string; phone: string | null };
   stageName: string | null;
   aiEnabled: boolean;
   handoffAt: string | null;
-  handoffReason: string | null;
+  handoffReason: HandoffReason | null;
   lastInboundAt: string | null;
   lastMessageAt: string | null;
   unreadCount: number;
