@@ -7,6 +7,7 @@ import { buildJevSalesState } from "@/server/sales/build-state";
 import { evaluateJev } from "@/server/sales/client";
 import type { PipelineSemantic, SalesPlan } from "@/server/sales/resolve-plan";
 import { resolveSalesPlan } from "@/server/sales/resolve-plan";
+import { VENDE_VELOZ_OFFER } from "@/server/sales/vende-veloz";
 import { writeSalesReply } from "@/server/sales/writer";
 
 type Conversation = typeof schema.conversation.$inferSelect;
@@ -96,7 +97,7 @@ export async function runSalesOrchestratorTurn(input: {
       },
       product: built.state.product,
       policy: built.state.commercial_policy,
-      offer: built.state.commercial_offer,
+      offer: VENDE_VELOZ_OFFER,
     });
 
     if (written.ok && written.text) {

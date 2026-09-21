@@ -1,5 +1,6 @@
 /**
- * Jev V2 congelado. Fuente: docs/SALES_ORCHESTRATOR.md §7.
+ * Jev V2 congelado. Freeze local: docs/SALES_ORCHESTRATOR.md §7.
+ * Origen validado: jevveloz/config/questions-v2.json.
  * No reescribir. No añadir preguntas. No añadir pause_and_wait.
  */
 
@@ -60,7 +61,7 @@ export const JEV_SALES_QUESTIONS_V2 = {
       "Baja: solicita información, pero no muestra señales claras de considerar una implementación.",
       "Media: está evaluando activamente cómo funcionaría para su academia.",
       "Alta: muestra señales concretas como preguntar precio, pedir una demostración, proponer horarios, involucrar a un decisor o expresar que quiere implementar.",
-      "Muy alta: expresa claramente intención de contratar, pagar, comenzar o coordinar inmediatamente la implementación.",
+      "Muy alta: expresa claramente intención de contratar, pagar, comenzar o coordinar la implementación.",
     ],
   },
   buying_timing: {
@@ -107,7 +108,7 @@ export const JEV_SALES_QUESTIONS_V2 = {
       show_online_enrollment_demo:
         "El prospecto ha expresado específicamente una necesidad relacionada con matrícula online, inscripciones o automatización de ese proceso.",
       present_price:
-        "El prospecto entiende el valor relevante, existe suficiente contexto y muestra interés concreto para presentar la propuesta económica.",
+        "El prospecto ya entiende el valor relevante, existe suficiente contexto y muestra interés concreto para presentar la propuesta económica.",
       schedule_call:
         "Existe interés real, pero la complejidad de la operación, múltiples sedes, múltiples decisores, integraciones, API, necesidades especiales o una solicitud explícita hacen recomendable una conversación humana.",
       schedule_follow_up:

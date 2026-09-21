@@ -37,7 +37,6 @@ describe("evaluateJev (adapter)", () => {
       state: {
         product: {} as never,
         commercial_policy: {} as never,
-        commercial_offer: {} as never,
         crm_state: {
           pipeline_stage: null,
           automation_lane: "auto",
@@ -78,7 +77,6 @@ describe("evaluateJev (adapter)", () => {
       state: {
         product: {} as never,
         commercial_policy: {} as never,
-        commercial_offer: {} as never,
         crm_state: {
           pipeline_stage: "Nuevo",
           automation_lane: "auto",

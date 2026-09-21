@@ -156,7 +156,7 @@ function buildWriterUserPrompt(conversation: JevConversationTurn[]): string {
     conversation.length === 0
       ? "(sin mensajes aún)"
       : conversation
-          .map((turn) => `${turn.from === "lead" ? "LEAD" : "NEGOCIO"}: ${turn.text}`)
+          .map((turn) => `${turn.from === "lead" ? "LEAD" : "VENDEDOR"}: ${turn.text}`)
           .join("\n");
 
   return [

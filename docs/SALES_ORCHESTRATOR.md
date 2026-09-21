@@ -103,51 +103,86 @@ Siguen vigentes: `conversation.ai_enabled`, `handoff_at`, sandbox `is_test`, ven
 
 ## 5. Producto — Vende Veloz 365
 
-Congelado. Jamás prometer generación de alumnos, demanda o ventas.
+Congelado. Sincronizado desde `jevveloz/config/product.json` (referencia validada). Freeze local testeable: este bloque. Jamás prometer generación de alumnos, demanda o ventas.
 
 ```json
 {
   "name": "Vende Veloz 365",
-  "purpose": "centralizar la operación diaria de una academia deportiva",
-  "positioning": "Vende Veloz ayuda a organizar alumnos, matrículas, pagos, ventas, horarios y asistencia desde un solo sistema. Puede comenzar con procesos manuales y activar automatizaciones posteriormente. No genera demanda ni nuevos alumnos por sí solo.",
-  "capabilities": [
-    "alumnos y apoderados",
-    "matrículas",
-    "pagos",
-    "ventas",
-    "saldos pendientes",
-    "horarios",
-    "cupos",
-    "asistencia",
-    "renovaciones",
-    "caja",
-    "matrícula online opcional",
-    "pagos online opcionales"
-  ]
+  "one_liner": "Sistema web para academias deportivas en Perú. Centraliza la operación diaria; no es un CRM de ventas ni una agencia de marketing.",
+  "who_it_is_for": [
+    "Academias y escuelas de natación, karate, running, fútbol, baile, artes marciales y disciplinas similares",
+    "Negocios que trabajan con alumnos, apoderados, planes, horarios, cupos y cobros recurrentes"
+  ],
+  "core_jobs": [
+    "Alumnos y apoderados",
+    "Matrículas",
+    "Disciplinas y actividades",
+    "Horarios y cupos",
+    "Pagos, ventas, saldos y caja",
+    "Asistencia y sesiones",
+    "Renovaciones",
+    "Promociones, cupones, productos e inventario",
+    "Matrícula online opcional"
+  ],
+  "not_the_product": [
+    "No genera alumnos por sí solo ni gestiona pauta publicitaria",
+    "No es un CRM genérico de pipeline de ventas",
+    "No es una app de socios de gimnasio ni un ERP contable",
+    "No retiene fondos ni cobra comisión por venta"
+  ],
+  "how_it_starts": "El equipo puede registrar alumnos, matrículas y cobros desde el primer día. La web de matrícula y los pagos automáticos son opcionales.",
+  "implementation": {
+    "price": "S/497",
+    "kind": "pago único",
+    "includes": [
+      "Entender cómo trabaja la academia",
+      "Definir el uso del sistema",
+      "Configuración con funciones existentes",
+      "Carga inicial acordada",
+      "Usuarios y capacitación",
+      "30 días de acompañamiento del uso real",
+      "Dominio el primer año"
+    ],
+    "does_not_include": [
+      "Digitación o migración ilimitada",
+      "Desarrollos personalizados",
+      "Gestión de publicidad o consultoría continua de marketing"
+    ]
+  },
+  "subscription": {
+    "price": "S/197 al mes",
+    "includes_active_students": 50,
+    "extra_active_student": "S/1 por alumno activo adicional desde el 51",
+    "active_student_means": "Alumno con matrícula vigente. El historial no aumenta la mensualidad."
+  }
 }
 ```
 
-Oferta comercial actual:
+`VENDE_VELOZ_OFFER` sigue existiendo como ayuda determinística del writer/CRM (no va en el State de Jev):
 
+- moneda: PEN
 - implementación: S/497 una sola vez
 - mensualidad: S/197 hasta 50 alumnos activos
 - desde el alumno activo 51: +S/1 por alumno activo
-- la implementación busca adopción real e incluye configuración del flujo acordado, carga de datos acordada, usuarios, capacitación, primeras operaciones reales y acompañamiento inicial
 - jamás prometer generación de alumnos, demanda o ventas
 
 ---
 
 ## 6. Política comercial
 
-Congelada.
+Congelada. Sincronizada desde `jevveloz/config/commercial-policy.json` (referencia validada). Freeze local testeable: este bloque.
 
 ```json
 {
   "default_channel": "WhatsApp",
-  "goal": "avanzar comercialmente sin convertir el chat en una encuesta",
-  "human_call": "solo cuando exista complejidad, múltiples decisores, integraciones, varias sedes, necesidades especiales o solicitud explícita",
-  "future_interest": "si el prospecto tiene interés real pero indicó una temporada o fecha futura, no presionar el cierre inmediato; programar seguimiento",
-  "disqualification": "si está satisfecho con su solución actual y no existe necesidad ni motivación concreta de cambio, no seguir preguntando solo para encontrar un problema"
+  "goal": "Avanzar comercialmente de forma automática todo lo posible y reservar la intervención humana para los casos donde aporte valor real.",
+  "automation_first": "El agente puede obtener contexto, explicar el producto, mostrar demos o videos, presentar precio, resolver preguntas estándar, hacer seguimiento e intentar cerrar sin intervención humana.",
+  "auto_close": "Si el prospecto quiere avanzar y el caso es estándar, sin complejidad especial, el agente puede continuar hasta instrucciones de pago e implementación.",
+  "human_handoff": "Escalar a humano cuando exista complejidad, integraciones o API, múltiples sedes o decisores, negociación u objeciones importantes, necesidades especiales o una solicitud explícita de conversación humana.",
+  "future_interest": "Si existe interés real pero la implementación corresponde a una temporada o fecha futura, programar seguimiento automático cerca de ese momento.",
+  "no_response": "Los leads que no responden deben recibir una secuencia limitada de seguimientos automáticos. Si no reaccionan, dejar de perseguirlos sin intervención humana.",
+  "disqualification": "Si no existe encaje, necesidad relevante o el prospecto busca algo que Vende Veloz no ofrece, cerrar el flujo sin intervención humana.",
+  "evidence_rule": "Las afirmaciones del vendedor sobre posibles problemas o beneficios no prueban que el prospecto tenga esa necesidad. Priorizar lo expresado por el prospecto y los datos objetivos de su operación."
 }
 ```
 
@@ -155,7 +190,7 @@ Congelada.
 
 ## 7. Jev V2 — contrato de preguntas
 
-Validado. **No reescribir. No “mejorar”. No añadir preguntas. No añadir `pause_and_wait`. No convertir en un lead score único.**
+Validado. Sincronizado desde `jevveloz/config/questions-v2.json` (referencia validada). Freeze local testeable: este bloque. **No reescribir. No “mejorar”. No añadir preguntas. No añadir `pause_and_wait`. No convertir en un lead score único.**
 
 ```json
 {
@@ -197,7 +232,7 @@ Validado. **No reescribir. No “mejorar”. No añadir preguntas. No añadir `p
       "Baja: solicita información, pero no muestra señales claras de considerar una implementación.",
       "Media: está evaluando activamente cómo funcionaría para su academia.",
       "Alta: muestra señales concretas como preguntar precio, pedir una demostración, proponer horarios, involucrar a un decisor o expresar que quiere implementar.",
-      "Muy alta: expresa claramente intención de contratar, pagar, comenzar o coordinar inmediatamente la implementación."
+      "Muy alta: expresa claramente intención de contratar, pagar, comenzar o coordinar la implementación."
     ]
   },
   "buying_timing": {
@@ -229,7 +264,7 @@ Validado. **No reescribir. No “mejorar”. No añadir preguntas. No añadir `p
       "ask_more_questions": "Existe una señal concreta de necesidad o interés, pero falta una información esencial para saber qué mostrar o cómo encaja Vende Veloz.",
       "show_operations_demo": "Existe una necesidad operativa identificada y conviene mostrar brevemente cómo Vende Veloz centraliza alumnos, pagos, ventas y operación diaria.",
       "show_online_enrollment_demo": "El prospecto ha expresado específicamente una necesidad relacionada con matrícula online, inscripciones o automatización de ese proceso.",
-      "present_price": "El prospecto entiende el valor relevante, existe suficiente contexto y muestra interés concreto para presentar la propuesta económica.",
+      "present_price": "El prospecto ya entiende el valor relevante, existe suficiente contexto y muestra interés concreto para presentar la propuesta económica.",
       "schedule_call": "Existe interés real, pero la complejidad de la operación, múltiples sedes, múltiples decisores, integraciones, API, necesidades especiales o una solicitud explícita hacen recomendable una conversación humana.",
       "schedule_follow_up": "Existe buen encaje e interés, pero el prospecto ha indicado que la necesidad corresponde a una temporada, apertura o fecha futura. Registrar el interés y retomar cerca del momento adecuado.",
       "disqualify": "El prospecto no presenta una necesidad relevante, está satisfecho con su solución actual, no muestra motivación de cambio o no existe un motivo comercial concreto para continuar."
@@ -252,15 +287,30 @@ Validado. **No reescribir. No “mejorar”. No añadir preguntas. No añadir `p
 
 El CRM construye el state. No hay resumen LLM previo.
 
+Shape productivo (filosofía del harness validado; `jevveloz/config/*` es la referencia):
+
+```json
+{
+  "product": {},
+  "commercial_policy": {},
+  "crm_state": {},
+  "conversation": [
+    { "from": "lead", "text": "..." },
+    { "from": "seller", "text": "..." }
+  ]
+}
+```
+
 Incluye:
 
-1. producto (§5)
-2. política comercial (§6)
-3. hechos durables del CRM (§3) — solo los ya conocidos
-4. conversación real, cronológica (`direction` in → lead, out → seller; texto; sin duplicar la misma evidencia en muchos campos)
+1. `product` — §5 (`VENDE_VELOZ_PRODUCT`)
+2. `commercial_policy` — §6 (`VENDE_VELOZ_COMMERCIAL_POLICY`)
+3. `crm_state` — hechos durables del CRM (§3), solo los ya conocidos
+4. `conversation` — hilo real, cronológico. Speakers: `lead` | `seller` (`direction` in → `lead`, out → `seller`). Texto; sin duplicar la misma evidencia en muchos campos.
 
 No incluir:
 
+- `commercial_offer` (`VENDE_VELOZ_OFFER` es ayuda del writer/CRM; el precio canónico ya vive en `product`)
 - teléfono, email u otro PII innecesario (`phone` es opcional en este CRM; `wa_identity` no va al state)
 - `metadata` / `actual_outcome` / resultados futuros
 - decisiones del writer o del resolver como si fueran hechos del lead
@@ -392,6 +442,12 @@ Ejecución: `src/server/inbox/send.ts` (guard sandbox + ventana 24 h). Conversac
 - Auditoría v1 + cobertura unitaria (freeze §5–7, normalizer, resolver, writer, client, builder, orchestrator, opt-in, serialize UI). Sin features nuevas ni worker de follow-up.
 - Gates: `pnpm typecheck` · `pnpm lint` · `pnpm build` · `pnpm test` — verde (360 tests). E2E no corrido: app local no estaba viva (`/api/health` inalcanzable). Live Jev: **pending** (`TYPESAFE_*` / `JEV_MODEL` ausentes en `.env` de este repo).
 - Limitación real restante: WAIT no programa `next_follow_up_at` (no hay motor de follow-ups en V1).
+
+### 2026-09-20 — phase 11
+
+- Contrato Jev alineado con `jevveloz/config/*` (questions-v2, product, commercial-policy). Freeze local: este documento.
+- State enviado a Jev: `{ product, commercial_policy, crm_state, conversation }`. Speakers `lead` | `seller`. Sin `commercial_offer`.
+- `VENDE_VELOZ_OFFER` permanece como ayuda determinística del writer/CRM.
 
 ---
 

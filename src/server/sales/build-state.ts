@@ -9,7 +9,6 @@ import type {
 } from "@/server/sales/state";
 import {
   VENDE_VELOZ_COMMERCIAL_POLICY,
-  VENDE_VELOZ_OFFER,
   VENDE_VELOZ_PRODUCT,
 } from "@/server/sales/vende-veloz";
 
@@ -142,7 +141,6 @@ export async function buildJevSalesState(
   const state: JevSalesState = {
     product: VENDE_VELOZ_PRODUCT,
     commercial_policy: VENDE_VELOZ_COMMERCIAL_POLICY,
-    commercial_offer: VENDE_VELOZ_OFFER,
     crm_state: toCrmState(leadRow),
     conversation,
   };
@@ -198,7 +196,7 @@ function toTurn(
   const text = turnText(message, media);
   if (!text) return null;
   return {
-    from: message.direction === "in" ? "lead" : "business",
+    from: message.direction === "in" ? "lead" : "seller",
     text,
   };
 }

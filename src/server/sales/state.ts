@@ -1,12 +1,13 @@
 import type { AutomationLane } from "@/server/sales/lanes";
 import type {
   VendeVelozCommercialPolicy,
-  VendeVelozOffer,
   VendeVelozProduct,
 } from "@/server/sales/vende-veloz";
 
+export type JevConversationSpeaker = "lead" | "seller";
+
 export type JevConversationTurn = {
-  from: "lead" | "business";
+  from: JevConversationSpeaker;
   text: string;
 };
 
@@ -25,13 +26,13 @@ export type JevCrmState = {
 };
 
 /**
- * State que el CRM enviará a Jev. Lo construye el CRM; sin resumen LLM.
+ * State que el CRM envía a Jev. Lo construye el CRM; sin resumen LLM.
  * No incluir teléfono, email, wa_identity, IDs Meta, notas ni secrets.
+ * No incluir `commercial_offer`: esa oferta es ayuda del writer/CRM.
  */
 export type JevSalesState = {
   product: VendeVelozProduct;
   commercial_policy: VendeVelozCommercialPolicy;
-  commercial_offer: VendeVelozOffer;
   crm_state: JevCrmState;
   conversation: JevConversationTurn[];
 };

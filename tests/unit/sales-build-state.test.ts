@@ -35,7 +35,7 @@ vi.mock("@/lib/db", () => ({
 describe("trimConversation", () => {
   it("conserva lo más reciente y recorta turnos antiguos", () => {
     const turns = Array.from({ length: 100 }, (_, i) => ({
-      from: i % 2 === 0 ? ("lead" as const) : ("business" as const),
+      from: i % 2 === 0 ? ("lead" as const) : ("seller" as const),
       text: `turno-${i}`,
     }));
     const trimmed = trimConversation(turns);
@@ -113,7 +113,49 @@ describe("buildJevSalesState", () => {
     expect(result.state.conversation).toEqual([
       { from: "lead", text: "Hola, busco control de alumnos" },
     ]);
+    expect(Object.keys(result.state)).toEqual([
+      "product",
+      "commercial_policy",
+      "crm_state",
+      "conversation",
+    ]);
+    expect(result.state).not.toHaveProperty("commercial_offer");
     expect(result.persist.leadId).toBe("ld_1");
+  });
+
+  it("mapea outbound a seller y no incluye commercial_offer", async () => {
+    selectQueue.push(
+      [
+        {
+          conversation: { id: "cv_1", organizationId: "org_1", contactId: "ct_1" },
+          contact: { id: "ct_1" },
+        },
+      ],
+      [],
+      [
+        {
+          message: { direction: "out", text: "te ayudo", type: "text" },
+          media: null,
+        },
+        {
+          message: { direction: "in", text: "hola", type: "text" },
+          media: null,
+        },
+      ]
+    );
+
+    const { buildJevSalesState } = await import("@/server/sales/build-state");
+    const result = await buildJevSalesState({
+      organizationId: "org_1",
+      conversationId: "cv_1",
+    });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.state.conversation).toEqual([
+      { from: "lead", text: "hola" },
+      { from: "seller", text: "te ayudo" },
+    ]);
+    expect(result.state).not.toHaveProperty("commercial_offer");
   });
 
   it("sin conversación del tenant → not_found, no lanza", async () => {

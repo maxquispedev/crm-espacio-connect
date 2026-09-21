@@ -128,7 +128,6 @@ function queueHappyPath(nextAction: string, laneWas = "auto") {
       conversation: [{ from: "lead", text: "hola" }],
       product: { name: "Vende Veloz 365" },
       commercial_policy: {},
-      commercial_offer: {},
     },
   });
 }
