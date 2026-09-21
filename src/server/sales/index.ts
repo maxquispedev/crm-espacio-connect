@@ -1,7 +1,7 @@
 /**
  * Contrato tipado del Sales Orchestrator.
- * Frontera: raw provider → normalizer → SalesDecision → CRM.
- * Este módulo no hace HTTP ni ejecuta el pipeline de IA.
+ * Frontera: raw provider → normalizeJevResponse → SalesDecision → CRM.
+ * El cliente HTTP vive en `client.ts` y no está cableado al inbox.
  */
 
 export { AUTOMATION_LANES, type AutomationLane } from "@/server/sales/lanes";
@@ -54,3 +54,14 @@ export {
   type VendeVelozOffer,
   type VendeVelozProduct,
 } from "@/server/sales/vende-veloz";
+
+export { normalizeJevResponse } from "@/server/sales/normalize";
+
+export {
+  evaluateJev,
+  type JevClientErrorCode,
+  type JevClientFailure,
+  type JevClientResult,
+  type JevClientSuccess,
+  type JevEvaluateInput,
+} from "@/server/sales/client";

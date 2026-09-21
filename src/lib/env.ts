@@ -41,6 +41,10 @@ const envSchema = z.object({
   // 008: volumen local de adjuntos (constitución II: sin S3/R2).
   MEDIA_DIR: z.string().default("./.dev-media"),
   NODE_ENV: z.string().default("development"),
+  // Jev / TypeSafe (Sales Orchestrator). Canónico: URL completa, no un path.
+  TYPESAFE_API_KEY: z.string().optional(),
+  TYPESAFE_JEV_ENDPOINT: z.string().url().optional(),
+  JEV_MODEL: z.string().optional(),
 });
 
 export type Env = z.infer<typeof envSchema>;
@@ -102,4 +106,17 @@ export function isMockEnabled(): boolean {
 export function isAiConfigured(): boolean {
   const token = process.env.OPENROUTER_API_TOKEN;
   return typeof token === "string" && token.trim().length > 0;
+}
+
+/** true si el cliente Jev tiene key, endpoint completo y modelo. */
+export function isJevConfigured(): boolean {
+  return (
+    isPresent(process.env.TYPESAFE_API_KEY) &&
+    isPresent(process.env.TYPESAFE_JEV_ENDPOINT) &&
+    isPresent(process.env.JEV_MODEL)
+  );
+}
+
+function isPresent(value: string | undefined): boolean {
+  return typeof value === "string" && value.trim().length > 0;
 }

@@ -7,18 +7,22 @@ export type NormalizedNoul = {
   type: "noul";
   /** Probabilidad TypeSafe; el umbral de “claramente positivo” lo fija el resolver. */
   noul: number;
+  confidence?: number;
+  probabilities?: Record<string, number>;
 };
 
 export type NormalizedScore = {
   type: "score";
   score: number;
-  confidence: number;
+  confidence?: number;
+  probabilities?: Record<string, number>;
 };
 
 export type NormalizedChoice<T extends string> = {
   type: "choice";
   choice: T;
-  confidence: number;
+  confidence?: number;
+  probabilities?: Record<string, number>;
 };
 
 export type BuyingTimingChoice =

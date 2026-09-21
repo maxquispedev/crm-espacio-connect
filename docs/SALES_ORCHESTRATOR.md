@@ -349,3 +349,9 @@ Ejecución: `src/server/inbox/send.ts` (guard sandbox + ventana 24 h). Conversac
 - Contrato tipado en `src/server/sales/`: `JEV_SALES_QUESTIONS_V2`, producto, política, oferta, `SalesDecision`, state Jev.
 - Frontera: raw TypeSafe → normalizer → `SalesDecision`. Todavía sin HTTP, resolver ni writer.
 - TODO inmediato: adaptador TypeSafe (endpoint por env) + normalizer.
+
+### 2026-09-20 — phase 04
+
+- Cliente HTTP aislado (`src/server/sales/client.ts`) + `normalizeJevResponse`. Endpoint canónico: `TYPESAFE_JEV_ENDPOINT` (URL completa; no se hardcodea `/v1/systemone`).
+- Env: `TYPESAFE_API_KEY`, `TYPESAFE_JEV_ENDPOINT`, `JEV_MODEL`. Todavía sin wire a WhatsApp ni resolver.
+- TODO inmediato: state builder + resolver de lanes.

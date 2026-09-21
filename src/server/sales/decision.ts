@@ -35,19 +35,19 @@ export type JevRawProviderResponse = unknown;
  * validado; no usar fuera del normalizer.
  */
 export type JevProviderAnswer =
-  | { type: "noul"; noul: number }
+  | { type: "noul"; noul: number; confidence?: number; probabilities?: Record<string, number> }
   | {
       type: "choice";
       choice: string;
-      probabilities: Record<string, number>;
-      confidence: number;
+      probabilities?: Record<string, number>;
+      confidence?: number;
     }
   | {
       type: "score";
       score: number;
-      legend: Record<string, string>;
-      probabilities: Record<string, number>;
-      confidence: number;
+      legend?: Record<string, string>;
+      probabilities?: Record<string, number>;
+      confidence?: number;
     };
 
 export type JevNormalizeSuccess = {
@@ -63,8 +63,8 @@ export type JevNormalizeFailure = {
 export type JevNormalizeResult = JevNormalizeSuccess | JevNormalizeFailure;
 
 /**
- * Frontera: raw provider response → normalizer → SalesDecision → resto del CRM.
- * La implementación llega en un commit posterior (sin HTTP aquí).
+ * Frontera: raw provider response → normalizeJevResponse → SalesDecision.
+ * El cliente HTTP es el único que habla con TypeSafe.
  */
 export type NormalizeJevResponse = (
   raw: JevRawProviderResponse
