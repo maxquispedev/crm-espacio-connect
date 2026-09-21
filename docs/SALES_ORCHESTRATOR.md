@@ -373,3 +373,10 @@ Ejecución: `src/server/inbox/send.ts` (guard sandbox + ventana 24 h). Conversac
 - Writer `writeSalesReply`: `chatJson` + Zod `{ text }`. Sin move_stage/handoff/lane. Precio solo de `VENDE_VELOZ_OFFER`. Sin URLs inventadas.
 - Si el plan no pide reply → `text: null` sin LLM. Fallo del proveedor: error tipado, sin fallback comercial.
 - TODO inmediato: efectos CRM + wire al turno.
+
+### 2026-09-20 — phase 08
+
+- Integrado en `runAgentTurn`: flag OFF = legacy; ON = `runSalesOrchestratorTurn` (una ruta por turno).
+- Jev fail: `last_jev_error`, lane intacta, sin writer decisor ni reply automática. Writer fail: no revierte decisión; HUMAN igual hace handoff `commercial`.
+- Hechos demo/precio solo post-envío. STOP no persigue de nuevo si ya era STOP. WAIT no inventa `next_follow_up_at`. Nunca `kind=won`. Lost por `kind=lost`.
+- TODO inmediato: follow-up worker + UI del flag.
