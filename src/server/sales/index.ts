@@ -107,3 +107,21 @@ export {
 } from "@/server/sales/orchestrator";
 
 export { persistClientHumanRequest } from "@/server/sales/explicit-handoff";
+
+export {
+  FOLLOW_UP_DELAY_MS,
+  FollowUpWriterOutput,
+  MAX_FOLLOW_UP_ATTEMPTS,
+  MAX_RUN_ATTEMPTS,
+  classifyFollowUpReason,
+  hasMoreCommercialAttempts,
+  nextFollowUpDelay,
+  shouldStartFollowUp,
+  writeFollowUpText,
+  type AutomaticFollowUpReason,
+  type FollowUpWriterFailure,
+  type FollowUpWriterOutputType,
+  type FollowUpWriterResult,
+  type FollowUpWriterSuccess,
+  type WriteFollowUpInput,
+} from "@/server/sales/follow-ups";

@@ -406,3 +406,9 @@ No implementar todavía:
 - Tabla durable `sales_follow_up_job` creada.
 - Flags de organización `salesFollowUpsEnabled` / `salesFollowUpTemplateId` creados.
 - Worker aún no existe.
+
+### 2026-09-20 — phase 17
+
+- Política/cadencias centralizadas en `src/server/sales/follow-ups/policy.ts`.
+- Writer text-only creado (`follow-up-writer.ts`); ventana cerrada sigue siendo plantilla, sin LLM.
+- Aún sin persistencia/worker live.
