@@ -166,6 +166,7 @@ describe("runSalesOrchestratorTurn", () => {
 
     const decisionPatch = leadPatches[0];
     expect(decisionPatch?.automationLane).toBe("auto_close");
+    expect(decisionPatch?.stageId).not.toBe("st_won");
     expect(decisionPatch).not.toHaveProperty("pricePresentedAt");
     expect(leadPatches[1]?.pricePresentedAt).toBeInstanceOf(Date);
     expect(graphRequest).not.toHaveBeenCalled();

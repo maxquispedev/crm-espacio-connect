@@ -456,15 +456,32 @@ Ejecución: `src/server/inbox/send.ts` (guard sandbox + ventana 24 h). Conversac
 - Scores UI: escala Jev continua 0..4 (round + clamp), no 0..1.
 - Cliente TypeSafe: retries 429/529 + timeout/red transitoria, backoff inyectable; sin loguear API key.
 
+### 2026-09-20 — phase 13
+
+- Auditoría final: contrato questions/product/policy alineado con `jevveloz/config/*`. State `{ product, commercial_policy, crm_state, conversation }` con speakers `lead` | `seller`; sin PII, outcomes ni `commercial_offer`.
+- Flujos AUTO / AUTO_CLOSE (≠ won) / WAIT (sin fecha inventada) / HUMAN (transición + handoff) / STOP (no persigue, nunca won) y pedido explícito de persona cubiertos en unitarios. Scores UI 0..4. Cliente: retries 429/529/transient, no retry 400/401, `invalid_response` seguro.
+- Gates: `pnpm typecheck` · `pnpm lint` · `pnpm test` (382) · `pnpm build` — verde.
+- E2E: no corrido — `GET http://localhost:3000/api/health` connection refused; Docker daemon no disponible (no se levantó Postgres/app; nada en `:3000` ni `:5432`).
+- Live Jev smoke: **pending** (`TYPESAFE_API_KEY` / `TYPESAFE_JEV_ENDPOINT` / `JEV_MODEL` ausentes en `.env` de este repo).
+
 ---
 
 ## V1 status
 
+**READY** para congelar antes de follow-ups.
+
+Gates de esta auditoría: typecheck / lint / test / build — verde (382 tests).
+
+E2E del repo (`pnpm test:e2e`) no se ejecutó: la app local no estaba viva y no hubo Docker para levantarla. No bloquea el freeze de código V1.
+
+Live Jev: **pending** hasta configurar `TYPESAFE_*` y `JEV_MODEL` en el `.env` de este CRM.
+
 Implementado:
 
 - Opt-in por organización (`agent_profile.sales_orchestrator_enabled`, default OFF). OFF = agente legacy.
-- State builder tenant-safe → cliente TypeSafe (URL completa por env) → resolver de lanes → writer GPT → efectos CRM (lane, pipeline lost-only, handoff `commercial`, demo/precio post-entrega).
-- UI: flag en `/agent`, panel Venta en contacto, señal de lane en pipeline.
+- State builder tenant-safe → cliente TypeSafe (URL completa por env, retries 429/529/timeout) → resolver de lanes → writer GPT → efectos CRM (lane, pipeline lost-only, handoff `commercial`, demo/precio post-entrega).
+- HUMAN: el writer redacta solo transición humana; pedido explícito de persona → handoff `cliente` + `automationLane=human` + `humanRequestedAt`, sin Jev.
+- UI: flag en `/agent`, panel Venta en contacto, scores en escala Jev 0..4, señal de lane en pipeline.
 - Sandbox `is_test` no llama a Meta. Fallo Jev no inventa decisión. GPT no decide pipeline/handoff cuando el orchestrator está ON.
 
 Cómo activar:
@@ -480,10 +497,11 @@ Variables env requeridas para que funcione (además de las del CRM):
 - `JEV_MODEL`
 - `OPENROUTER_API_TOKEN` + `OPENROUTER_MODEL` (writer)
 
-Fuera de V1, expresamente:
+No bloquean V1:
 
 - motor automático de follow-ups
 - analytics / atribución
+- payment workflow completo
 - nuevas preguntas Jev
 - lead score global
 

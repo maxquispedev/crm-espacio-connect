@@ -7,6 +7,7 @@ describe("patrón de respaldo de handoff (FR-022 / SC-006)", () => {
     "¿puedo hablar con un asesor?",
     "necesito comunicarme con alguien",
     "quiero contactar a una persona real",
+    "quiero hablar con una persona",
     "quiero hablar con alguien por favor",
     "me pasas a un asesor",
     "prefiero atención humana",

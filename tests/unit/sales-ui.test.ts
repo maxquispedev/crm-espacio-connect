@@ -20,4 +20,11 @@ describe("labelForScore (escala Jev 0..4)", () => {
     expect(labelForScore(0.8, "product_fit")).not.toBe("Encaje muy fuerte");
     expect(labelForScore(0.8, "purchase_intent")).toBe("Baja");
   });
+
+  it("1.25 / 3.97 usan nearest 0..4", () => {
+    expect(labelForScore(1.25, "product_fit")).toBe("Encaje débil");
+    expect(labelForScore(1.25, "purchase_intent")).toBe("Baja");
+    expect(labelForScore(3.97, "product_fit")).toBe("Encaje muy fuerte");
+    expect(labelForScore(3.97, "purchase_intent")).toBe("Muy alta");
+  });
 });

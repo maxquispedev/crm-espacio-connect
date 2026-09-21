@@ -180,6 +180,47 @@ describe("evaluateJev (adapter)", () => {
     expect(sleep).not.toHaveBeenCalled();
   });
 
+  it("401 → no retry", async () => {
+    vi.stubEnv("TYPESAFE_API_KEY", "k");
+    vi.stubEnv("TYPESAFE_JEV_ENDPOINT", "https://jev.test.example/evaluate");
+    vi.stubEnv("JEV_MODEL", "jev-v2");
+    resetEnvCache();
+
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response("unauthorized", { status: 401 })
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const sleep = vi.fn().mockResolvedValue(undefined);
+
+    const result = await evaluateJev({ state: EMPTY_STATE }, { sleep });
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error).toBe("provider_error");
+    expect(result.detail).toContain("401");
+    expect(fetchMock).toHaveBeenCalledOnce();
+    expect(sleep).not.toHaveBeenCalled();
+  });
+
+  it("HTTP 200 con body inválido → invalid_response sin retry", async () => {
+    vi.stubEnv("TYPESAFE_API_KEY", "k");
+    vi.stubEnv("TYPESAFE_JEV_ENDPOINT", "https://jev.test.example/evaluate");
+    vi.stubEnv("JEV_MODEL", "jev-v2");
+    resetEnvCache();
+
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ model: "x" }), { status: 200 })
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const sleep = vi.fn().mockResolvedValue(undefined);
+
+    const result = await evaluateJev({ state: EMPTY_STATE }, { sleep });
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error).toBe("invalid_response");
+    expect(fetchMock).toHaveBeenCalledOnce();
+    expect(sleep).not.toHaveBeenCalled();
+  });
+
   it("timeout/transient → retry según política", async () => {
     vi.stubEnv("TYPESAFE_API_KEY", "k");
     vi.stubEnv("TYPESAFE_JEV_ENDPOINT", "https://jev.test.example/evaluate");
