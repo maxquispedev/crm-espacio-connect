@@ -367,3 +367,9 @@ Ejecución: `src/server/inbox/send.ts` (guard sandbox + ventana 24 h). Conversac
 - `resolveSalesPlan` puro: prioridad disqualify→STOP, schedule_call→HUMAN, noul≥`NEEDS_HUMAN_CALL_THRESHOLD` (0.70)→HUMAN, follow-up→WAIT, precio/cierre→AUTO_CLOSE, demos/preguntas→AUTO. Sin IDs de etapa; nunca `won`.
 - No marca demo/precio/pago (post-entrega). No infiere `humanRequestedAt`. Caso desconocido: mantiene lane, no transiciona.
 - TODO inmediato: efectos CRM + writer + wire al turno.
+
+### 2026-09-20 — phase 07
+
+- Writer `writeSalesReply`: `chatJson` + Zod `{ text }`. Sin move_stage/handoff/lane. Precio solo de `VENDE_VELOZ_OFFER`. Sin URLs inventadas.
+- Si el plan no pide reply → `text: null` sin LLM. Fallo del proveedor: error tipado, sin fallback comercial.
+- TODO inmediato: efectos CRM + wire al turno.

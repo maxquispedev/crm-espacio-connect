@@ -87,3 +87,13 @@ export {
   type SalesFactUpdates,
   type SalesPlan,
 } from "@/server/sales/resolve-plan";
+
+export {
+  SalesWriterOutput,
+  writeSalesReply,
+  type SalesWriterFailure,
+  type SalesWriterOutputType,
+  type SalesWriterResult,
+  type SalesWriterSuccess,
+  type WriteSalesReplyInput,
+} from "@/server/sales/writer";
