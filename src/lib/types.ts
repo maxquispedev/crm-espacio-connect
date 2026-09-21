@@ -8,6 +8,22 @@ export type AutomationLane =
   | "human"
   | "stop";
 
+/** Motivo de un job de seguimiento comercial (`sales_follow_up_job.reason`). */
+export type SalesFollowUpReason =
+  | "awaiting_reply"
+  | "after_demo"
+  | "after_price"
+  | "scheduled_wait";
+
+/** Estado durable de `sales_follow_up_job`. */
+export type SalesFollowUpJobStatus =
+  | "pending"
+  | "processing"
+  | "sent"
+  | "cancelled"
+  | "blocked"
+  | "failed";
+
 /** Motivos de handoff persistidos en conversation.handoff_reason. */
 export type HandoffReason =
   | "cliente"

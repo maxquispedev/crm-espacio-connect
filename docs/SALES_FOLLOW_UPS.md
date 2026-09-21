@@ -22,9 +22,11 @@ Anclas actuales del CRM (no modificar en este phase):
 - Ingesta inbound: `src/server/inbox/ingest.ts` persiste, `onLeadActivity`, `maybeRunAgentTurn`.
 - Echo manual del dueño: `ingestManualEcho` registra `origin=manual` y pausa IA (`handoff_at` + `handoff_reason=manual_reply`).
 - Arranque in-process: `src/instrumentation.ts` → `src/instrumentation-node.ts` (hoy solo limpia corridas huérfanas del Laboratorio).
-- Resumen UI ya en `lead`: `next_follow_up_at`, `follow_up_count`, `follow_up_reason`. Todavía no hay cola de jobs.
+- Resumen UI ya en `lead`: `next_follow_up_at`, `follow_up_count`, `follow_up_reason`.
+- Cola durable: `sales_follow_up_job` (schema + migración; worker todavía no).
 - Lanes congeladas: `auto` | `auto_close` | `wait` | `human` | `stop`.
-- Opt-in Sales Orchestrator: `agent_profile.sales_orchestrator_enabled` (default false). Todavía no existe flag de follow-ups.
+- Opt-in Sales Orchestrator: `agent_profile.sales_orchestrator_enabled` (default false).
+- Opt-in follow-ups: `agent_profile.sales_follow_ups_enabled` (default false) + `sales_follow_up_template_id` nullable.
 
 ---
 
@@ -398,3 +400,9 @@ No implementar todavía:
 - Contrato follow-ups creado.
 - `CLAUDE.md` sincronizado con Constitución 1.3.0 (WhatsApp Cloud API + LLM/OpenRouter opcional + TypeSafe/Jev opcional).
 - Ningún código funcional todavía.
+
+### 2026-09-20 — phase 16
+
+- Tabla durable `sales_follow_up_job` creada.
+- Flags de organización `salesFollowUpsEnabled` / `salesFollowUpTemplateId` creados.
+- Worker aún no existe.

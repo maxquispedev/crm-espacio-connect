@@ -372,6 +372,15 @@ export const agentProfile = pgTable(
     salesOrchestratorEnabled: boolean("sales_orchestrator_enabled")
       .notNull()
       .default(false),
+    /** Motor de follow-ups. Default OFF; independiente del orchestrator. */
+    salesFollowUpsEnabled: boolean("sales_follow_ups_enabled")
+      .notNull()
+      .default(false),
+    /**
+     * Plantilla aprobada para follow-ups con ventana 24h cerrada.
+     * Sin FK física: la validación tenant/status/variables es de aplicación.
+     */
+    salesFollowUpTemplateId: text("sales_follow_up_template_id"),
     name: text("name").notNull().default("Asistente"),
     tone: text("tone"),
     instructions: text("instructions"),
@@ -381,6 +390,61 @@ export const agentProfile = pgTable(
     updatedAt: timestamp("updated_at").notNull().defaultNow(),
   },
   (t) => [uniqueIndex("agent_profile_org_uq").on(t.organizationId)]
+);
+
+/**
+ * Cola durable de seguimientos comerciales (PostgreSQL; sin Redis/BullMQ).
+ * Historial intencional: no hay UNIQUE que impida reprogramar el mismo lead.
+ */
+export const salesFollowUpJob = pgTable(
+  "sales_follow_up_job",
+  {
+    id: text("id").primaryKey(),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organization.id, { onDelete: "cascade" }),
+    leadId: text("lead_id")
+      .notNull()
+      .references(() => lead.id, { onDelete: "cascade" }),
+    conversationId: text("conversation_id")
+      .notNull()
+      .references(() => conversation.id, { onDelete: "cascade" }),
+    reason: text("reason", {
+      enum: ["awaiting_reply", "after_demo", "after_price", "scheduled_wait"],
+    }).notNull(),
+    /** Intento comercial 1..3 (1 en scheduled_wait). */
+    attemptNumber: integer("attempt_number").notNull(),
+    dueAt: timestamp("due_at").notNull(),
+    /** No enviar si hubo mensaje posterior a este ancla. */
+    anchorAt: timestamp("anchor_at").notNull(),
+    status: text("status", {
+      enum: [
+        "pending",
+        "processing",
+        "sent",
+        "cancelled",
+        "blocked",
+        "failed",
+      ],
+    })
+      .notNull()
+      .default("pending"),
+    runAttempts: integer("run_attempts").notNull().default(0),
+    claimedAt: timestamp("claimed_at"),
+    messageId: text("message_id"),
+    error: text("error"),
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+    updatedAt: timestamp("updated_at").notNull().defaultNow(),
+  },
+  (t) => [
+    index("sales_follow_up_job_org_status_due_idx").on(
+      t.organizationId,
+      t.status,
+      t.dueAt
+    ),
+    index("sales_follow_up_job_lead_idx").on(t.leadId),
+    index("sales_follow_up_job_conv_idx").on(t.conversationId),
+  ]
 );
 
 export const kbEntry = pgTable(
