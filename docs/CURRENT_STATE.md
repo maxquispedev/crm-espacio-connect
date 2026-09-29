@@ -1,6 +1,6 @@
 # CURRENT STATE — Espacio Connect
 
-**Actualizado:** 2026-09-29 (spec 007 — Cortes A + B + C cerrados; UI Ajustes → Anuncios operativa con mocks, E2E en ambas configuraciones, `docs/atribucion-capi.md` publicado. Pendiente único: clic CTWA real contra Meta en producción)
+**Actualizado:** 2026-09-29 (Corte 9 — auditoría final de readiness para Vende Veloz. Gates técnicos re-verificados: typecheck/lint/build verdes, 646/646 tests, 74 archivos. `docs/VENDEVELOZ_LAUNCH_CHECKLIST.md` publicado con bloques A/B/C/D. Pendiente único externo: clic CTWA real contra Meta + self-test E2E local con app+Postgres. Ningún flag de producción fue tocado en este corte.)
 **Branch:** `main`
 **Baseline funcional previo a esta sincronización documental:** `bbae7cd1dfd98d5006cfd26440a8acf1def2c1bb`
 **Propósito:** checkpoint técnico rápido. Las decisiones de negocio viven en el cerebro de Obsidian; la implementación y la historia SDD viven aquí.
@@ -768,6 +768,9 @@ reportarse como READY punta a punta hasta entonces.
 | 2026-09-29 | spec 005 cerrado (commit único): edición inline de `contact.name` desde el panel del inbox + sync de UI en las tres superficies, 569 tests |
 | 2026-09-29 | spec 006 ABIERTO: anuncio de origen de Meta — pieza visible sin CAPI todavía (puerto selectivo del upstream 018; migración 0006 + tabla `ad_attribution` + normalización + imagen best-effort; implementación en dos cortes A/B posteriores)
 | 2026-09-29 | spec 007 ABIERTO: Meta CAPI para leads Click-to-WhatsApp — adaptación selectiva del upstream 016 (gate de etapa primero: refactor neutro que centraliza los 6 callsites runtime de `lead.stageId` en `moveLeadStage(...)` antes de tocar Meta; luego CAPI core + schema/API con `ATRIBUCION` apagada por defecto, token reusado de WhatsApp, etapa calificada configurable, `Purchase` sin valor inventado, dedup `UNIQUE`, `is_test` sin evento; luego UI Ajustes → Anuncios + E2E en dos configuraciones). Commit 0 documental; sin código. | |
+| 2026-09-29 | **spec 006 CERRADO** (cortes A+B) — 594 tests |
+| 2026-09-29 | **spec 007 CERRADO** (cortes A+B+C) — 646 tests / 74 archivos |
+| 2026-09-29 | **Corte 9 — auditoría final de readiness Vende Veloz**: gates re-verificados (typecheck/lint/build verdes, 646/646 tests), `docs/VENDEVELOZ_LAUNCH_CHECKLIST.md` publicado con bloques A/B/C/D, `CURRENT_STATE.md` actualizado. Sin código de app tocado, sin flags cambiados, sin campañas creadas. Working tree limpio. |
 
 ---
 
@@ -783,10 +786,82 @@ Antes de añadir otra feature grande:
    - sección 008 (regresión spec 003 cerrado);
    - sección 009 (contrato backend del spec 004 — cola de adjuntos);
    - secciones existentes del Sales Orchestrator/follow-ups;
+   - sección 011 (anuncio de origen, spec 006);
+   - sección 012 (Meta CAPI, spec 007 — corre **dos veces** si la app está
+     con `ATRIBUCION=on`, una sola si está apagada);
 3. correr Playwright visual con `tests/e2e/009-inbox-messaging-ux.md`;
 4. registrar evidencia en el doc correspondiente y aquí;
 5. para cualquier comportamiento nuevo, abrir el siguiente spec numerado;
 6. mantener commits atómicos y actualizar `tasks.md` al cerrar cada corte.
+
+---
+
+## 11. Corte 9 — Readiness técnico para Vende Veloz (este commit)
+
+Documento durable: `docs/VENDEVELOZ_LAUNCH_CHECKLIST.md`.
+
+**Propósito:** consolidar para Max (operador) el estado técnico del repo
+antes de abrir la primera campaña real de Vende Veloz 365 sobre la
+instalación interna de Espacio Connect. **No agrega features.**
+
+### Verificación de gates ejecutada en este corte
+
+| Gate | Resultado | Comando |
+|---|---|---|
+| `pnpm typecheck` | verde (exit 0) | `tsc --noEmit` |
+| `pnpm lint` | verde (0 errors, 1 warning preexistente en `src/components/anuncio-origen.tsx:65` — `<img>` no `next/image`, aceptado) | `eslint .` |
+| `pnpm build` | verde (exit 0; 60+ rutas server-rendered; las del 007 con 404 duro si `ATRIBUCION` está apagada) | `next build` |
+| `pnpm test` | verde — **646/646 pass**, 74 archivos, 5.03 s | `vitest run` |
+| `pnpm test:e2e` | **NO EJECUTADO** — `GET http://localhost:3000/api/health` retorna `000` (sin app levantada); sin PostgreSQL local; `pg_isready` no instalado en este WSL. Constitución IX exige ejecución en vivo antes de declarar READY punta a punta. **No se inventó resultado.** |
+
+### Estructura del checklist publicado (`docs/VENDEVELOZ_LAUNCH_CHECKLIST.md`)
+
+- **A) IMPLEMENTADO Y VERIFICADO EN REPO** — gates + specs 001–007 + Sales
+  Orchestrator + follow-ups + inbox + CAPI + 006 + storage + salud/arranque.
+- **B) CONFIGURACIÓN DE PRODUCCIÓN A CONFIRMAR** — env vars (`.env.example`
+  como referencia), estado por organización Vende Veloz 365 en BD, plantillas
+  WhatsApp (0-var BODY), WhatsApp conectado, volumen `/data/media`.
+- **C) PRUEBAS REALES EXTERNAS PENDIENTES** — self-test E2E local con
+  app+Postgres (Constitución IX), primer clic CTWA real en producción
+  (no automatizable), primer lead real recibe respuesta, primer seguimiento
+  se programa/cancela, movimiento a qualified produce evento Meta, compra
+  real → `Purchase`.
+- **D) NO BLOQUEA LANZAMIENTO / FUTURO** — Campaign Playbooks, Marketing API,
+  019/Resultados, backfill, `InitiateCheckout` de fábrica, parsing fechas,
+  múltiples plantillas, cadencias ajustadas, S3/R2/email/Stripe/Google
+  (PROHIBIDOS por Constitución II).
+
+### Veredicto del corte
+
+**La base del CRM está técnicamente lista para abrir campañas reales.**
+Los tres pendientes que sí tocan producción:
+
+1. Self-test E2E local con app + Postgres activos (Constitución IX).
+2. Clic CTWA real en producción (no automatizable; mismo límite que los
+   upstreams 016 y 018).
+3. Volumen persistente `/data/media` montado en el host antes del primer
+   inbound con imagen, si se quiere conservar el creativo.
+
+### Decisión de continuidad
+
+NO se reinterpretó el contrato de Campaign Playbooks ni se reabrió
+ningún spec cerrado. La unidad de estrategia sigue siendo **Vende Veloz 365
+como funnel congelado** (`docs/SALES_ORCHESTRATOR.md`); la unidad futura
+será la **campaña**, no la organización. Cuando exista la 2ª campaña,
+abrir spec SDD nuevo y extraer config alrededor del núcleo reusable.
+
+### Cambios al árbol
+
+- **Nuevos:** `docs/VENDEVELOZ_LAUNCH_CHECKLIST.md` (~24 KB).
+- **Modificados:** `docs/CURRENT_STATE.md` (header + nueva sección §11).
+- **NO modificados:** ningún archivo de código (`src/**`), schema ni
+  migraciones (`drizzle/**`), `.env.example`, `package.json`, `pnpm-lock.yaml`.
+- **Commit único:** `docs: cerrar readiness técnico de Vende Veloz para
+  campañas`. Working tree limpio.
+
+---
+
+## 12. Qué no hacer por defecto
 
 ---
 
