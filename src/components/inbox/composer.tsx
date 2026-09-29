@@ -15,6 +15,7 @@ import { cn } from "@/lib/utils";
 import { formatBytes, formatRemaining, type PendingAttachment } from "./helpers";
 import {
   AttachmentQueueList,
+  canMutateQueue,
   decideSubmitMode,
   runQueueSend,
   shouldAutoClearQueue,
@@ -94,8 +95,18 @@ export function Composer({
     el.style.height = `${Math.min(el.scrollHeight, 120)}px`;
   }
 
-  /** Acepta archivos desde cualquier origen (picker / drop / paste) y los añade. */
+  /** Acepta archivos desde cualquier origen (picker / drop / paste) y los añade.
+   *  004 (corte 2e, FIX-3) — durante un envío (`sending=true`) NO se añaden
+   *  archivos: cualquier mutación de la cola puede desincronizar la captura
+   *  de pre-envío y provocar que el `clear()` del happy path borre archivos
+   *  que nunca pertenecieron al envío original. */
   function ingestFiles(files: File[]) {
+    if (!canMutateQueue(sending)) {
+      // Aún así, limpia el input file para que pueda volver a seleccionarse
+      // el mismo archivo cuando termine el envío.
+      if (fileRef.current) fileRef.current.value = "";
+      return;
+    }
     if (files.length === 0) return;
     const { accepted, rejected: rej } = queue.addFiles(files);
     if (accepted.length > 0) {
@@ -391,8 +402,12 @@ export function Composer({
   /* ----------------------------------------------- */
   /* Handlers de drag & drop sobre el composer       */
   /* ----------------------------------------------- */
+  // 004 (corte 2e, FIX-3) — durante `sending=true` NO se aceptan drops
+  // nuevos. El overlay ni siquiera se muestra: el compositor está ocupado
+  // enviando, no hay nada que confirmar visualmente.
 
   function handleDragEnter(e: React.DragEvent<HTMLDivElement>) {
+    if (sending) return;
     if (!e.dataTransfer.types.includes("Files")) return;
     e.preventDefault();
     dragCounter.current += 1;
@@ -401,6 +416,7 @@ export function Composer({
     setDragFilesHint(count > 0 ? count : null);
   }
   function handleDragOver(e: React.DragEvent<HTMLDivElement>) {
+    if (sending) return;
     // Necesario para permitir el drop; sin preventDefault, el navegador
     // cancela el drop y abre el archivo en una pestaña.
     if (e.dataTransfer.types.includes("Files")) e.preventDefault();
@@ -414,6 +430,15 @@ export function Composer({
     }
   }
   function handleDrop(e: React.DragEvent<HTMLDivElement>) {
+    if (sending) {
+      // Aún así consume el evento para que el navegador no abra el archivo
+      // en una pestaña nueva.
+      e.preventDefault();
+      dragCounter.current = 0;
+      setDragOver(false);
+      setDragFilesHint(null);
+      return;
+    }
     e.preventDefault();
     dragCounter.current = 0;
     setDragOver(false);
@@ -472,7 +497,11 @@ export function Composer({
         </div>
       )}
 
-      {/* 004 — Cola visual de adjuntos. */}
+      {/* 004 — Cola visual de adjuntos.
+          004 (corte 2e, FIX-3) — durante un envío en vuelo, la prop `disabled`
+          deshabilita los botones globales (Limpiar enviados, Limpiar todo)
+          y se propaga a cada `AttachmentItem` para deshabilitar también
+          los botones individuales (X, Reintentar, Confirmar). */}
       <AttachmentQueueList
         attachments={queue.attachments}
         selectedId={queue.selectedId}
@@ -484,6 +513,7 @@ export function Composer({
         onRetry={queue.retry}
         onSelectNext={queue.selectNext}
         onSelectPrev={queue.selectPrev}
+        disabled={sending}
       />
 
       {queue.needsVideoAsDocumentConfirmCount > 0 && (
@@ -578,6 +608,15 @@ export function Composer({
           multiple
           className="hidden"
           onChange={(e) => {
+            // 004 (corte 2e, FIX-3) — durante un envío en vuelo no se aceptan
+            // archivos nuevos del picker (el botón está deshabilitado pero un
+            // click programático aún podría disparar el input). Limpiamos el
+            // valor del input para que pueda volver a seleccionarse el mismo
+            // archivo cuando termine el envío.
+            if (!canMutateQueue(sending)) {
+              if (fileRef.current) fileRef.current.value = "";
+              return;
+            }
             const files = Array.from(e.target.files ?? []);
             ingestFiles(files);
           }}
@@ -585,9 +624,12 @@ export function Composer({
         <div className="flex shrink-0 items-center gap-0.5">
           <button
             onClick={() => fileRef.current?.click()}
+            // 004 (corte 2e, FIX-3) — deshabilita el botón de adjuntar
+            // mientras hay un envío en vuelo.
+            disabled={sending}
             aria-label="Adjuntar archivo"
             title="Adjuntar imagen, video, audio o documento"
-            className="flex h-11 w-11 items-center justify-center rounded text-text-3 transition-colors hover:bg-secondary hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand"
+            className="flex h-11 w-11 items-center justify-center rounded text-text-3 transition-colors hover:bg-secondary hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand disabled:cursor-not-allowed disabled:opacity-40"
           >
             <Paperclip className="h-[18px] w-[18px]" strokeWidth={1.7} />
           </button>
@@ -633,6 +675,11 @@ export function Composer({
             const items = Array.from(e.clipboardData?.items ?? []);
             const fileItems = items.filter((it) => it.kind === "file");
             if (fileItems.length === 0) return; // texto puro: flujo normal.
+            // 004 (corte 2e, FIX-3) — bloquea paste de archivos durante un
+            // envío en vuelo. El pegado de texto sigue funcionando: si el
+            // clipboard trae archivos, dejamos que el navegador los ignore
+            // (NO preventDefault); si además trae texto, ese texto sí se pega.
+            if (!canMutateQueue(sending)) return;
             const files = fileItems
               .map((it) => it.getAsFile())
               .filter((f): f is File => Boolean(f));

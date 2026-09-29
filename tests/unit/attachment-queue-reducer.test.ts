@@ -7,6 +7,7 @@
 import { describe, expect, it } from "vitest";
 import {
   applyRemoveWithCaptionTransfer,
+  canMutateQueue,
   filterDuplicates,
   progressLabel,
   queueReducer,
@@ -681,4 +682,153 @@ describe("revokeAllPreviews — happy path cleanup (004 fix 2d)", () => {
     // El fix correcto (revokeAllPreviews) sí revoca.
     expect(revokeAllPreviews([stalePending])).toBe(1);
   });
+});
+
+/* ------------------------------------------------------------------ */
+/* applyRemoveWithCaptionTransfer — nunca transferir a sent/sending    */
+/* (004 corte 2e, fix #2)                                              */
+/* ------------------------------------------------------------------ */
+
+describe("applyRemoveWithCaptionTransfer — FIX-2, salta sent/sending (004 corte 2e)", () => {
+  it("A owner + B sent + C failed → elimina A → C se vuelve owner (B sent se salta)", () => {
+    // Caso del prompt: cola [A owner, B sent, C failed] → eliminar A
+    // debe transferir captionOwner al PRIMER candidato válido, saltándose
+    // el sent (que ya no recibirá un futuro envío).
+    const owner = att("att_A", fakeFile("a.jpg", 100, "image/jpeg"), {
+      captionOwner: true,
+      status: "failed",
+      error: "x",
+    });
+    const sent = att("att_B", fakeFile("b.pdf", 1024, "application/pdf"), {
+      status: "sent",
+    });
+    const failed = att("att_C", fakeFile("c.png", 100, "image/png"), {
+      status: "failed",
+      error: "y",
+    });
+    const s0 = queueReducer(empty, { type: "add", items: [owner, sent, failed] });
+
+    const s1 = applyRemoveWithCaptionTransfer(s0, "att_A");
+    expect(s1.attachments.map((x) => x.id)).toEqual(["att_B", "att_C"]);
+    // B (sent) NO se convierte en owner.
+    expect(s1.attachments[0]?.captionOwner).toBe(false);
+    expect(s1.attachments[0]?.captionConsumed).toBe(false);
+    expect(s1.attachments[0]?.status).toBe("sent");
+    // C (failed) se vuelve owner con captionConsumed=false (aún no viajó).
+    expect(s1.attachments[1]?.captionOwner).toBe(true);
+    expect(s1.attachments[1]?.captionConsumed).toBe(false);
+    expect(s1.attachments[1]?.status).toBe("failed");
+  });
+
+  it("A owner + B sent únicamente → elimina A → nadie se vuelve owner", () => {
+    // Caso del prompt: cola [A owner, B sent] → eliminar A. Como B es
+    // sent y no puede recibir un futuro envío, NO se transfiere captionOwner
+    // (no hay a quién). La cola queda con B sin captionOwner.
+    const owner = att("att_A", fakeFile("a.jpg", 100, "image/jpeg"), {
+      captionOwner: true,
+      status: "failed",
+      error: "x",
+    });
+    const sent = att("att_B", fakeFile("b.pdf", 1024, "application/pdf"), {
+      status: "sent",
+    });
+    const s0 = queueReducer(empty, { type: "add", items: [owner, sent] });
+
+    const s1 = applyRemoveWithCaptionTransfer(s0, "att_A");
+    expect(s1.attachments.map((x) => x.id)).toEqual(["att_B"]);
+    expect(s1.attachments[0]?.captionOwner).toBe(false);
+    expect(s1.attachments[0]?.captionConsumed).toBe(false);
+  });
+
+  it("A owner + B sending + C pending → elimina A → C se vuelve owner (B sending se salta)", () => {
+    // El estado `sending` también se excluye del pool de candidatos.
+    // Aunque el envío esté en vuelo, una transferencia de captionOwner
+    // no debe apuntar a un sending (es defensivo contra una posible
+    // re-entrada y contra la lectura intermedia del queueRef.current).
+    const owner = att("att_A", fakeFile("a.jpg", 100, "image/jpeg"), {
+      captionOwner: true,
+      status: "pending",
+    });
+    const sending = att("att_B", fakeFile("b.png", 100, "image/png"), {
+      status: "sending",
+    });
+    const pending = att("att_C", fakeFile("c.webp", 100, "image/webp"));
+    const s0 = queueReducer(empty, {
+      type: "add",
+      items: [owner, sending, pending],
+    });
+
+    const s1 = applyRemoveWithCaptionTransfer(s0, "att_A");
+    expect(s1.attachments.map((x) => x.id)).toEqual(["att_B", "att_C"]);
+    expect(s1.attachments[0]?.captionOwner).toBe(false);
+    expect(s1.attachments[1]?.captionOwner).toBe(true);
+    expect(s1.attachments[1]?.captionConsumed).toBe(false);
+  });
+
+  it("FIX-2: blocked pending CON needsVideoAsDocumentConfirm=true SIGUE siendo candidato válido", () => {
+    // El adjunto bloqueado (video >16MB) está en pending y podrá enviarse
+    // tras la confirmación. Sigue siendo un candidato válido para heredar
+    // el caption: la idea es que cuando el operador confirme, el caption
+    // viaje con ese adjunto exactamente una vez.
+    const owner = att("att_A", fakeFile("a.jpg", 100, "image/jpeg"), {
+      captionOwner: true,
+      status: "pending",
+    });
+    const blocked = att("att_B", fakeFile("clip.mp4", 30 * 1024 * 1024, "video/mp4"), {
+      kind: "document",
+      willSendAsDocument: true,
+      needsVideoAsDocumentConfirm: true,
+      status: "pending",
+    });
+    const s0 = queueReducer(empty, { type: "add", items: [owner, blocked] });
+
+    const s1 = applyRemoveWithCaptionTransfer(s0, "att_A");
+    expect(s1.attachments[0]?.id).toBe("att_B");
+    expect(s1.attachments[0]?.captionOwner).toBe(true);
+    expect(s1.attachments[0]?.captionConsumed).toBe(false);
+    // El flag blocked se preserva intacto.
+    expect(s1.attachments[0]?.needsVideoAsDocumentConfirm).toBe(true);
+  });
+
+  it("FIX-2: sent primero y pending después → salta el sent y va al pending", () => {
+    // Variante del primer caso: el sent está antes del candidato válido
+    // en la cola. La búsqueda lineal debe saltárselo y elegir el pending.
+    const owner = att("att_A", fakeFile("a.jpg", 100, "image/jpeg"), {
+      captionOwner: true,
+      status: "pending",
+    });
+    const sent = att("att_B", fakeFile("b.pdf", 1024, "application/pdf"), {
+      status: "sent",
+    });
+    const pending = att("att_C", fakeFile("c.png", 100, "image/png"));
+    const s0 = queueReducer(empty, {
+      type: "add",
+      items: [owner, sent, pending],
+    });
+
+    const s1 = applyRemoveWithCaptionTransfer(s0, "att_A");
+    expect(s1.attachments[0]?.captionOwner).toBe(false); // B sent
+    expect(s1.attachments[1]?.captionOwner).toBe(true); // C pending
+  });
+});
+
+/* ------------------------------------------------------------------ */
+/* canMutateQueue — guard de mutaciones durante sending                */
+/* (004 corte 2e, fix #3)                                              */
+/* ------------------------------------------------------------------ */
+
+describe("canMutateQueue — guard de mutaciones durante sending (004 fix 2e)", () => {
+  it("sending=false → permite mutaciones", () => {
+    expect(canMutateQueue(false)).toBe(true);
+  });
+
+  it("sending=true → bloquea TODA mutación de la cola", () => {
+    expect(canMutateQueue(true)).toBe(false);
+  });
+
+  // El helper es trivial pero el contrato es importante: cualquier handler
+  // del composer que pueda añadir, eliminar o modificar adjuntos debe
+  // consultar este guard durante un envío. Si se rompe (p. ej. alguien
+  // cambia la firma), el helper deja de ser referenciado y este test
+  // actúa como red de seguridad del refactor.
 });

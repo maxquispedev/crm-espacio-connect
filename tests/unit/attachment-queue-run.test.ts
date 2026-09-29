@@ -750,10 +750,17 @@ describe("decideSubmitMode — fuente de verdad de composer.submit()", () => {
     expect(decideSubmitMode([sent, sending], "hola")).toBe("text");
   });
 
-  it("adjuntos bloqueados por video→document + texto → 'text' (no queue)", () => {
-    // Aunque haya adjuntos pendientes, si TODOS están bloqueados por
-    // `needsVideoAsDocumentConfirm`, no son "ready". Si el operador
-    // escribe texto, debe enviarse el texto (no entrar a submitQueue).
+  it("adjuntos bloqueados por video→document + texto → 'noop' (FIX-1, 004 corte 2e)", () => {
+    // 004 (corte 2e, FIX-1) — si existe al menos un pending/failed y TODOS
+    // están bloqueados por `needsVideoAsDocumentConfirm`, NO se debe enviar
+    // el textarea como texto independiente. El operador primero debe
+    // confirmar "Enviar como documento" o quitar el adjunto. Esta regla
+    // unifica el comportamiento entre el botón Enviar (canSubmit=false)
+    // y Enter (decideSubmitMode= "noop").
+    // Antes del fix: `decideSubmitMode([blocked], text)` devolvía "text"
+    // y el botón estaba deshabilitado por `canSubmit=false` con
+    // `onlyBlocked=true`, lo que producía un estado engañoso: visualmente
+    // disabled pero funcionalmente podía enviarse con Enter.
     const blocked = att(
       "att_1",
       fakeFile("clip.mp4", 30 * 1024 * 1024, "video/mp4"),
@@ -763,7 +770,76 @@ describe("decideSubmitMode — fuente de verdad de composer.submit()", () => {
         needsVideoAsDocumentConfirm: true,
       }
     );
-    expect(decideSubmitMode([blocked], "esperando confirmación")).toBe("text");
+    expect(decideSubmitMode([blocked], "esperando confirmación")).toBe("noop");
+    expect(decideSubmitMode([blocked], "")).toBe("noop");
+  });
+
+  it("FIX-1: solo sent residual + texto → 'text' (sent NO bloquea texto)", () => {
+    // El sent residual sigue sin bloquear el texto: ya no hay
+    // pending/failed que resolver, solo terminales. Caso del fix 2d.
+    const sent = att("att_x", fakeFile("x.jpg", 100, "image/jpeg"), {
+      status: "sent",
+    });
+    expect(decideSubmitMode([sent], "gracias")).toBe("text");
+  });
+
+  it("FIX-1: sent + blocked + texto → 'noop' (blocked bloquea el texto)", () => {
+    // El sent no cuenta como "ready" ni como pendiente. Pero el blocked
+    // (pending + needsVideoAsDocumentConfirm) sí es pending y SÍ es
+    // unresolved → soloBlocked=true → noop. El operador debe resolver el
+    // bloqueado antes de poder enviar texto.
+    const sent = att("att_a", fakeFile("a.jpg", 100, "image/jpeg"), {
+      status: "sent",
+    });
+    const blocked = att(
+      "att_b",
+      fakeFile("clip.mp4", 30 * 1024 * 1024, "video/mp4"),
+      {
+        kind: "document",
+        willSendAsDocument: true,
+        needsVideoAsDocumentConfirm: true,
+      }
+    );
+    expect(decideSubmitMode([sent, blocked], "hola")).toBe("noop");
+  });
+
+  it("FIX-1: sent + blocked + ready → 'queue' (queue gana al menos uno listo)", () => {
+    // Si al menos uno de los pending/failed está desbloqueado, queue gana
+    // y el texto no se envía independiente. El bloqueado se omite (skipped)
+    // en runQueueSend pero NO bloquea el envío del listo.
+    const sent = att("att_a", fakeFile("a.jpg", 100, "image/jpeg"), {
+      status: "sent",
+    });
+    const blocked = att(
+      "att_b",
+      fakeFile("clip.mp4", 30 * 1024 * 1024, "video/mp4"),
+      {
+        kind: "document",
+        willSendAsDocument: true,
+        needsVideoAsDocumentConfirm: true,
+      }
+    );
+    const ready = att("att_c", fakeFile("c.png", 100, "image/png"));
+    expect(decideSubmitMode([sent, blocked, ready], "")).toBe("queue");
+  });
+
+  it("FIX-1: blocked + failed NO bloqueado → 'queue' (failed NO es bloqueado)", () => {
+    // `failed` cuenta como ready (puede re-enviarse). Si hay al menos un
+    // failed sin bloqueo, queue gana aunque haya un blocked pendiente.
+    const blocked = att(
+      "att_b",
+      fakeFile("clip.mp4", 30 * 1024 * 1024, "video/mp4"),
+      {
+        kind: "document",
+        willSendAsDocument: true,
+        needsVideoAsDocumentConfirm: true,
+      }
+    );
+    const failed = att("att_c", fakeFile("c.png", 100, "image/png"), {
+      status: "failed",
+      error: "x",
+    });
+    expect(decideSubmitMode([blocked, failed], "")).toBe("queue");
   });
 
   it("mezcla bloqueado + listo → 'queue' (al menos uno listo, queue gana)", () => {
@@ -790,11 +866,10 @@ describe("decideSubmitMode — fuente de verdad de composer.submit()", () => {
   });
 
   it("decideSubmitMode y canSubmit usan el mismo filtro (consistencia rama/botón)", () => {
-    // El botón `Enviar` usa `queue.readyToSend.length > 0` (filtro
-    // idéntico al de `decideSubmitMode`). Si el filtro divergiera, el
-    // botón podría habilitarse mientras submit() entraría a la rama
-    // opuesta. Aquí verificamos que ambos caminos producen el mismo
-    // resultado sobre los mismos adjuntos.
+    // El botón `Enviar` usa `queue.readyToSend.length > 0 || (text && !onlyBlocked)`
+    // (FIX-1 corte 2e). Si el filtro divergiera, el botón podría habilitarse
+    // mientras submit() entraría a la rama opuesta. Aquí verificamos que
+    // ambos caminos producen el mismo resultado sobre los mismos adjuntos.
     const cases: PendingAttachment[][] = [
       [],
       [att("a", fakeFile("a.jpg", 100, "image/jpeg"))],
@@ -818,14 +893,52 @@ describe("decideSubmitMode — fuente de verdad de composer.submit()", () => {
           !a0.needsVideoAsDocumentConfirm &&
           (a0.status === "pending" || a0.status === "failed")
       );
+      const hasUnresolved = list.some(
+        (a0) => a0.status === "pending" || a0.status === "failed"
+      );
+      const onlyBlocked = hasUnresolved && readyToSend.length === 0;
       const mode = decideSubmitMode(list, "hola");
-      const buttonWantsQueueOrText =
-        readyToSend.length > 0 || "hola".trim().length > 0;
-      // Modo "queue" o "text" significa que hay algo que enviar
-      // (botón debería estar habilitado). "noop" significa que no.
+      const buttonEnabled =
+        readyToSend.length > 0 || ("hola".trim().length > 0 && !onlyBlocked);
+      // El modo "queue" o "text" significa que hay algo que enviar (botón
+      // habilitado). "noop" significa que NO (botón deshabilitado). Ambos
+      // deben coincidir — esta es la garantía de que Enter y el botón
+      // nunca se contradicen.
       const submitHasWork = mode !== "noop";
-      expect(submitHasWork).toBe(buttonWantsQueueOrText);
+      expect(submitHasWork).toBe(buttonEnabled);
     }
+  });
+
+  it("FIX-1 consistencia: cola con solo bloqueado + texto → botón y Enter ambos deshabilitados", () => {
+    // Caso del FIX-1: si solo hay bloqueados pendientes, ambos caminos
+    // deben rechazar el envío. Antes del fix, decideSubmitMode devolvía
+    // "text" (contradecía el botón). Ahora ambos dicen "noop".
+    const blocked = att(
+      "att_1",
+      fakeFile("clip.mp4", 30 * 1024 * 1024, "video/mp4"),
+      {
+        kind: "document",
+        willSendAsDocument: true,
+        needsVideoAsDocumentConfirm: true,
+      }
+    );
+    const readyToSend = blocked
+      ? [blocked].filter(
+          (a) =>
+            !a.needsVideoAsDocumentConfirm &&
+            (a.status === "pending" || a.status === "failed")
+        )
+      : [];
+    const hasUnresolved = [blocked].some(
+      (a) => a.status === "pending" || a.status === "failed"
+    );
+    const onlyBlocked = hasUnresolved && readyToSend.length === 0;
+    const text = "hola";
+    const buttonEnabled =
+      readyToSend.length > 0 || (text.trim().length > 0 && !onlyBlocked);
+    const mode = decideSubmitMode([blocked], text);
+    expect(mode).toBe("noop");
+    expect(buttonEnabled).toBe(false);
   });
 });
 
@@ -924,5 +1037,96 @@ describe("runQueueSend tras transferencia de captionOwner (004 fix 2d)", () => {
       }).calls
     ).toEqual([{ id: "att_2", caption: null }]);
     expect(consumed).toEqual([]); // nadie consume caption: ya no hay owner activo
+  });
+});
+
+/* ------------------------------------------------------------------ */
+/* runQueueSend + applyRemoveWithCaptionTransfer (sent salta) — caption */
+/* (004 corte 2e, fix #2)                                              */
+/* ------------------------------------------------------------------ */
+
+describe("runQueueSend tras transferencia de captionOwner saltando sent (004 fix 2e)", () => {
+  // Caso del prompt: A owner failed, B sent, C failed → eliminar A =>
+  // C se vuelve owner (B se salta por ser sent). El retry de C debe
+  // recibir el caption exactamente una vez.
+
+  it("transferencia saltando sent + retry del nuevo owner → caption viaja exactamente una vez", async () => {
+    const owner = att("att_A", fakeFile("a.jpg", 100, "image/jpeg"), {
+      captionOwner: true,
+      status: "failed",
+      error: "x",
+    });
+    const sent = att("att_B", fakeFile("b.pdf", 1024, "application/pdf"), {
+      status: "sent",
+    });
+    const failed = att("att_C", fakeFile("c.png", 100, "image/png"), {
+      status: "failed",
+      error: "y",
+    });
+    const s0 = queueReducerForRun(emptyForRun, {
+      type: "add",
+      items: [owner, sent, failed],
+    });
+
+    // 1) Eliminar A: captionOwner salta a C (B es sent, queda fuera).
+    const s1 = applyRemoveWithCaptionTransfer(s0, "att_A");
+    expect(s1.attachments.map((x) => x.id)).toEqual(["att_B", "att_C"]);
+    expect(s1.attachments[1]?.captionOwner).toBe(true);
+    expect(s1.attachments[1]?.captionConsumed).toBe(false);
+
+    // 2) Retry de C: status failed → pending.
+    const cPending = queueReducerForRun(s1, { type: "retry", id: "att_C" });
+    expect(cPending.attachments[1]?.status).toBe("pending");
+    expect(cPending.attachments[1]?.captionOwner).toBe(true);
+
+    // 3) Send: caption viaja con C exactamente una vez. B no se procesa
+    //    (ya sent, runQueueSend lo omite).
+    const sendOne = makeSendOneWithCaptions(new Map([["att_C", null]]));
+    const consumed: string[] = [];
+    const r = await runQueueSend({
+      attachments: cPending.attachments,
+      sendOne,
+      onStatus: () => {},
+      onCaptionConsumed: (id) => consumed.push(id),
+      caption: "pie",
+    });
+    expect(r).toEqual({ sent: 1, failed: 0, skipped: 0 });
+    expect(
+      (sendOne as unknown as {
+        calls: { id: string; caption: string | null }[];
+      }).calls
+    ).toEqual([{ id: "att_C", caption: "pie" }]);
+    expect(consumed).toEqual(["att_C"]); // caption viajado una sola vez, con el nuevo owner
+  });
+
+  it("A owner + B sent únicamente → elimina A → nadie se vuelve owner; retry de B imposible (ya sent)", async () => {
+    const owner = att("att_A", fakeFile("a.jpg", 100, "image/jpeg"), {
+      captionOwner: true,
+      status: "failed",
+      error: "x",
+    });
+    const sent = att("att_B", fakeFile("b.pdf", 1024, "application/pdf"), {
+      status: "sent",
+    });
+    const s0 = queueReducerForRun(emptyForRun, {
+      type: "add",
+      items: [owner, sent],
+    });
+
+    const s1 = applyRemoveWithCaptionTransfer(s0, "att_A");
+    expect(s1.attachments[0]?.captionOwner).toBe(false);
+
+    // runQueueSend omite B (sent); el caption NO viaja con nadie.
+    const sendOne = makeSendOneWithCaptions(new Map());
+    const consumed: string[] = [];
+    const r = await runQueueSend({
+      attachments: s1.attachments,
+      sendOne,
+      onStatus: () => {},
+      onCaptionConsumed: (id) => consumed.push(id),
+      caption: "pie",
+    });
+    expect(r).toEqual({ sent: 0, failed: 0, skipped: 0 });
+    expect(consumed).toEqual([]);
   });
 });

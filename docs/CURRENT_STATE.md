@@ -1,6 +1,6 @@
 # CURRENT STATE — Espacio Connect
 
-**Actualizado:** 2026-09-29 (sync técnico tras spec 004 polish + corte 2c + corte 2d)
+**Actualizado:** 2026-09-29 (sync técnico tras spec 004 polish + corte 2c + corte 2d + corte 2e)
 **Branch:** `main`
 **Baseline funcional previo a esta sincronización documental:** `bbae7cd1dfd98d5006cfd26440a8acf1def2c1bb`
 **Propósito:** checkpoint técnico rápido. Las decisiones de negocio viven en el cerebro de Obsidian; la implementación y la historia SDD viven aquí.
@@ -283,7 +283,7 @@ Implementado a través de commits atómicos `0 → 1 → 2 → 2a → 2b → 2c 
 | `pnpm typecheck` | verde |
 | `pnpm lint` | verde |
 | `pnpm build` | verde |
-| `pnpm test` | verde — **546 tests** (522 post-2c + 24 nuevos del corte 2d) |
+| `pnpm test` | verde — **560 tests** (546 post-2d + 14 nuevos del corte 2e) |
 | `pnpm test:e2e` (sección 009) | **PENDIENTE en este entorno** — sin app local ni PostgreSQL activa |
 | Playwright visual `tests/e2e/009-inbox-messaging-ux.md` | **PENDIENTE en este entorno** |
 | Sección 008 (regresión spec 003 cerrado) | pendiente de re-correr con la app levantada |
@@ -312,6 +312,31 @@ reportarse como READY punta a punta hasta entonces.
     ignora sin previewUrl, lista vacía, regresión "filtro por status
     dejaría huérfanas".
 
+**Detalle de tests del corte 2e** (14 nuevos):
+
+- `attachment-queue-run.test.ts`: 8 nuevos (1 modificado)
+  - `decideSubmitMode` × 5 casos nuevos (FIX-1): blocked + texto →
+    `"noop"`; sent residual + texto → `"text"` (confirmación); sent +
+    blocked + texto → `"noop"`; sent + blocked + ready → `"queue"`;
+    blocked + failed no bloqueado → `"queue"`.
+  - Test de consistencia `decideSubmitMode` ↔ `canSubmit` actualizado
+    para usar el filtro nuevo (`onlyBlocked`). Nuevo test "FIX-1
+    consistencia: cola con solo bloqueado + texto → botón y Enter
+    ambos deshabilitados".
+  - `runQueueSend` × 2 casos de integración con
+    `applyRemoveWithCaptionTransfer` saltando sent (FIX-2): A owner
+    failed + B sent + C failed → C se vuelve owner y retry de C
+    recibe caption exactamente una vez; A owner + B sent únicamente
+    → nadie hereda captionOwner y runQueueSend omite B.
+- `attachment-queue-reducer.test.ts`: 6 nuevos
+  - `applyRemoveWithCaptionTransfer` × 5 casos (FIX-2): A owner + B
+    sent + C failed → C owner; A owner + B sent únicamente → nadie;
+    A owner + B sending + C pending → C owner; blocked con
+    `needsVideoAsDocumentConfirm=true` SIGUE siendo candidato válido;
+    sent primero + pending después → salta sent.
+  - `canMutateQueue` × 2 casos (FIX-3): `sending=false` → true,
+    `sending=true` → false.
+
 ---
 
 ## 9. Historia técnica corta
@@ -327,6 +352,7 @@ reportarse como READY punta a punta hasta entonces.
 | 2026-09-29 | spec 004 cerrado: cola de adjuntos + UX polish (commits 0→1→2→2a→2b, 500 tests) |
 | 2026-09-29 | spec 004 corte 2c — fix de comportamiento antes de E2E (cleanup total, caption durable, pre-validación image/audio, botón engañoso del panel), 522 tests |
 | 2026-09-29 | spec 004 corte 2d — fix de comportamiento post-0e7148c (rama submit con sent residual, cleanup happy path revoca todas las previews, transferencia captionOwner al eliminar owner), 546 tests |
+| 2026-09-29 | spec 004 corte 2e — 3 últimos edge cases del cliente (decideSubmitMode=noop con solo bloqueados, transferencia captionOwner salta sent/sending, mutaciones de la cola bloqueadas durante sending), 560 tests |
 
 ---
 

@@ -40,6 +40,7 @@ export function AttachmentItem({
   onPrev,
   onNext,
   positionLabel,
+  disabled = false,
 }: {
   attachment: PendingAttachment;
   selected: boolean;
@@ -54,6 +55,11 @@ export function AttachmentItem({
   onNext?: () => void;
   /** "1 de 3" opcional, para que el lector de pantalla anounce contexto. */
   positionLabel?: string;
+  /** 004 (corte 2e, FIX-3) — `true` durante un envío en vuelo: deshabilita
+   * X (remove), Reintentar, Confirmar video→document y bloquea la tecla
+   * Delete/Backspace para que no haya forma de mutar la cola mientras
+   * el composer está enviando. */
+  disabled?: boolean;
 }) {
   const {
     file,
@@ -116,6 +122,12 @@ export function AttachmentItem({
           return;
         }
         if ((e.key === "Delete" || e.key === "Backspace") && status !== "sent") {
+          // 004 (corte 2e, FIX-3) — bloquea borrado por teclado durante un
+          // envío en vuelo para que no haya forma de mutar la cola.
+          if (disabled) {
+            e.preventDefault();
+            return;
+          }
           // No permite borrar lo ya enviado (estado terminal; evita pérdidas).
           e.preventDefault();
           onRemove();
@@ -230,11 +242,13 @@ export function AttachmentItem({
               <button
                 type="button"
                 onClick={(e) => {
+                  if (disabled) return; // 004 (corte 2e, FIX-3)
                   e.stopPropagation();
                   onConfirmVideoAsDocument();
                 }}
+                disabled={disabled}
                 aria-label={`Enviar ${file.name} como documento`}
-                className="flex min-h-[28px] flex-1 items-center justify-center rounded bg-warning-text px-1.5 py-0.5 text-[10px] font-semibold text-warning-soft transition-opacity hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-warning-text"
+                className="flex min-h-[28px] flex-1 items-center justify-center rounded bg-warning-text px-1.5 py-0.5 text-[10px] font-semibold text-warning-soft transition-opacity hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-warning-text disabled:cursor-not-allowed disabled:opacity-50"
               >
                 Enviar como documento
               </button>
@@ -264,11 +278,13 @@ export function AttachmentItem({
             <button
               type="button"
               onClick={(e) => {
+                if (disabled) return; // 004 (corte 2e, FIX-3)
                 e.stopPropagation();
                 onRetry();
               }}
+              disabled={disabled}
               aria-label={`Reintentar envío de ${file.name}`}
-              className="flex min-h-[28px] items-center justify-center gap-1 rounded bg-danger/10 px-1.5 py-0.5 text-[10px] font-medium text-danger transition-colors hover:bg-danger/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-danger"
+              className="flex min-h-[28px] items-center justify-center gap-1 rounded bg-danger/10 px-1.5 py-0.5 text-[10px] font-medium text-danger transition-colors hover:bg-danger/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-danger disabled:cursor-not-allowed disabled:opacity-50"
             >
               <RotateCcw className="h-3 w-3" strokeWidth={2} />
               Reintentar
@@ -280,17 +296,20 @@ export function AttachmentItem({
       {/* Botón X — visible siempre que la tarjeta sea interactiva
           (oculto si está bloqueado porque la confirmación tiene su propio botón;
           oculto si está sent porque es estado terminal, salvo que sea la única
-          tarjeta, donde sigue mostrándose para limpiar). */}
+          tarjeta, donde sigue mostrándose para limpiar).
+          004 (corte 2e, FIX-3) — deshabilitado durante un envío en vuelo. */}
       {!isBlocked && (
         <button
           type="button"
           onClick={(e) => {
+            if (disabled) return; // 004 (corte 2e, FIX-3)
             e.stopPropagation();
             onRemove();
           }}
+          disabled={disabled}
           aria-label={`Quitar ${file.name} de la cola`}
           className={cn(
-            "absolute right-1 top-1 z-10 flex h-6 w-6 items-center justify-center rounded-full bg-background/90 text-text-2 shadow-sm transition-opacity hover:text-foreground focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand",
+            "absolute right-1 top-1 z-10 flex h-6 w-6 items-center justify-center rounded-full bg-background/90 text-text-2 shadow-sm transition-opacity hover:text-foreground focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand disabled:cursor-not-allowed disabled:opacity-50",
             // Estado sent: opacity baja para no distraer; sigue siendo focable.
             status === "sent"
               ? "opacity-50 group-hover:opacity-100"

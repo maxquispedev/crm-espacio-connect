@@ -379,6 +379,98 @@ y de la cola para alinearla con la rama de tests ya escrita en el corte
 - [x] **T2d06** `pnpm typecheck && pnpm lint && pnpm build && pnpm test`
   verdes tras el corte 2d. Total tests: 546 (522 + 24 nuevos).
 
+### Corte 2e — últimos 3 edge cases del cliente (este commit)
+
+Tres regresiones finas detectadas al releer el código tras el corte 2d.
+NO agrega capacidades nuevas. NO toca backend, WhatsApp sender,
+límites, video-as-document backend, storage, historial,
+transcodificación, voice recording, Sales/WHMCS. Solo refina la
+lógica cliente del composer y la cola.
+
+#### Fix 1 — `decideSubmitMode` desactiva envío de texto cuando todo está bloqueado
+
+- [x] **T2e01** [US4] `decideSubmitMode` extendido:
+  - Regla nueva: si existe al menos un attachment pending/failed pero
+    TODOS están bloqueados por `needsVideoAsDocumentConfirm`, el modo
+    es `"noop"` (no se envía ni cola ni texto).
+  - Antes del fix: `decideSubmitMode([blocked], text)` devolvía `"text"`.
+    El botón Enviar estaba visualmente deshabilitado (`canSubmit=false`
+    con `onlyBlocked=true`) pero Enter llamaba `submit()` directamente,
+    que seguía la rama "text" y enviaba el textarea sin que el operador
+    hubiera confirmado o quitado el adjunto bloqueado.
+  - Sent residual NO entra en esta regla: si solo quedan sent, no hay
+    pending/failed pendientes y la rama es `"text"` (corte 2d intacto).
+  - Unificación botón ↔ Enter: ambos consultan exactamente el mismo
+    filtro (`readyToSend.length > 0 || (text && !onlyBlocked)`), así
+    que ya no pueden contradecirse.
+
+#### Fix 2 — `applyRemoveWithCaptionTransfer` salta `sent`/`sending`
+
+- [x] **T2e02** [US4] `applyRemoveWithCaptionTransfer` refinado:
+  - Candidato válido para heredar `captionOwner`: status `pending` o
+    `failed`, NO captionOwner, y con `captionConsumed=false` (lo que
+    se infiere del hecho de que se transfiere).
+  - `needsVideoAsDocumentConfirm=true` NO excluye al candidato: el
+    adjunto está temporalmente bloqueado pero podrá enviarse tras la
+    confirmación y debe poder recibir el caption exactamente una vez.
+  - Nunca transferir a `sent` ni `sending` (son terminales, ya no
+    recibirán un futuro envío).
+  - Si no hay candidato (todos los restantes son sent/sending), se
+    quita sin transferir — el caption queda perdido por diseño (no
+    puede viajar con nadie que ya esté enviado).
+
+#### Fix 3 — Bloquear mutaciones de la cola durante `sending=true`
+
+- [x] **T2e03** [US1, US4] Nuevo helper puro `canMutateQueue(sending)`
+  exportado desde `attachment-queue.tsx`. Punto único de consulta
+  para todos los handlers que mutan la cola.
+  - `composer.ingestFiles`: si `!canMutateQueue(sending)` → no-op
+    (igual limpia el `<input type="file">` para que pueda
+    re-seleccionarse el mismo archivo cuando termine el envío).
+  - `composer.handleDragEnter`/`handleDragOver`/`handleDrop`: durante
+    sending, ni siquiera muestran el overlay; el drop se consume sin
+    invocar `ingestFiles`.
+  - `composer.onPaste` (archivos del clipboard): durante sending, no
+    se hace `preventDefault` — el navegador ignora los archivos y el
+    texto del clipboard sí se pega normalmente.
+  - `composer.fileRef.onChange`: durante sending, no se aceptan
+    archivos del picker; se limpia el valor del input.
+  - Botón Paperclip (adjuntar): `disabled={sending}`.
+  - `AttachmentItem`: nueva prop `disabled` que deshabilita X (remove),
+    Reintentar y Enviar como documento; además bloquea Delete/Backspace.
+  - `AttachmentQueueList`: nueva prop `disabled` que deshabilita
+    "Limpiar enviados" y "Limpiar todo", y se propaga a cada item.
+
+- [x] **T2e04** Tests añadidos en `tests/unit/attachment-queue-run.test.ts`:
+  - `decideSubmitMode` × 5 casos nuevos: blocked + texto → `"noop"`
+    (FIX-1); sent residual + texto → `"text"` (FIX-1 confirmación);
+    sent + blocked + texto → `"noop"` (FIX-1); sent + blocked + ready
+    → `"queue"` (FIX-1); blocked + failed no bloqueado → `"queue"`
+    (FIX-1).
+  - Test de consistencia `decideSubmitMode` ↔ `canSubmit` actualizado
+    para reflejar el filtro nuevo (FIX-1). Nuevo test "FIX-1
+    consistencia: cola con solo bloqueado + texto → botón y Enter
+    ambos deshabilitados".
+  - `runQueueSend` × integración con `applyRemoveWithCaptionTransfer`
+    saltando sent × 2 casos: A owner failed + B sent + C failed → C
+    se vuelve owner y retry de C recibe caption exactamente una vez;
+    A owner + B sent únicamente → nadie hereda captionOwner y
+    runQueueSend omite B (sent).
+
+- [x] **T2e05** Tests añadidos en `tests/unit/attachment-queue-reducer.test.ts`:
+  - `applyRemoveWithCaptionTransfer` × 5 casos nuevos: A owner + B
+    sent + C failed → C se vuelve owner (B se salta); A owner + B
+    sent únicamente → nadie owner (FIX-2); A owner + B sending + C
+    pending → C se vuelve owner (B sending se salta); blocked con
+    `needsVideoAsDocumentConfirm=true` SIGUE siendo candidato válido
+    para heredar captionOwner (FIX-2 confirmación); sent primero +
+    pending después → la búsqueda lineal salta el sent.
+  - `canMutateQueue` × 2 casos: `sending=false` → true,
+    `sending=true` → false.
+
+- [x] **T2e06** `pnpm typecheck && pnpm lint && pnpm build && pnpm test`
+  verdes tras el corte 2e. Total tests: 560 (546 + 14 nuevos).
+
 **PENDIENTE fuera del entorno actual**:
 - `pnpm test:e2e` (sección 009) en vivo con app + mocks + BD.
 - Playwright visual con `tests/e2e/009-inbox-messaging-ux.md`.

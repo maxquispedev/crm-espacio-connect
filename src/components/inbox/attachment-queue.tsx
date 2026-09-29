@@ -47,7 +47,7 @@ export type QueueState = {
 };
 
 /**
- * 004 (corte 2d) — Maneja `remove` con la regla de transferencia de
+ * 004 (cortes 2d + 2e) — Maneja `remove` con la regla de transferencia de
  * `captionOwner`:
  *   - Si el adjunto eliminado NO era captionOwner, o su caption YA había
  *     viajado (`captionConsumed=true`), solo lo quitamos.
@@ -60,8 +60,19 @@ export type QueueState = {
  *   - Nunca transferimos a un adjunto que ya tiene `captionOwner=true`
  *     (defensivo: en la práctica solo hay un dueño a la vez, pero si el
  *     estado viniera corrupto, no creamos dueños duplicados).
- *   - Si no queda ningún candidato (caso de cola de un solo elemento),
- *     simplemente quitamos sin transferir.
+ *   - 004 (corte 2e, FIX-2) — Nunca transferimos a un adjunto en estado
+ *     `sent` ni `sending`: son terminales y ya NO pueden recibir un
+ *     futuro envío. Un sent residual en la cola NO debe absorber el
+ *     caption que aún no viajó; debe saltarse al siguiente candidato
+ *     que sí pueda enviarse después.
+ *   - 004 (corte 2e) — Candidato válido: status `pending` o `failed`.
+ *     `needsVideoAsDocumentConfirm=true` NO excluye al candidato: el
+ *     adjunto está bloqueado temporalmente pero podrá enviarse cuando
+ *     el operador confirme, momento en el que el caption deberá
+ *     viajar con él exactamente una vez.
+ *   - Si no queda ningún candidato (caso de cola de un solo elemento o
+ *     todos los restantes son sent/sending), simplemente quitamos sin
+ *     transferir.
  *
  * Exportada para poder testear la regla sin React. Es una función pura.
  */
@@ -91,13 +102,24 @@ export function applyRemoveWithCaptionTransfer(
     };
   }
 
-  // Encontrar el primer adjunto restante sin captionOwner.
+  // Encontrar el primer adjunto restante que:
+  //   - NO sea ya captionOwner (defensivo: evita dueños duplicados)
+  //   - NO esté en estado terminal (sent/sending) — esos ya no recibirán
+  //     un futuro envío (corte 2e).
+  // El adjunto puede estar bloqueado por needsVideoAsDocumentConfirm;
+  // sigue siendo válido porque podrá enviarse tras la confirmación.
   // captionConsumed=false explícito: el caption aún no viajó y debe
   // viajar con el nuevo dueño en su próximo envío.
-  const newOwnerIdx = remaining.findIndex((a) => a.captionOwner !== true);
+  const newOwnerIdx = remaining.findIndex(
+    (a) =>
+      a.captionOwner !== true &&
+      a.status !== "sent" &&
+      a.status !== "sending"
+  );
   if (newOwnerIdx === -1) {
     // No hay candidato (caso borde: el único captionOwner es el que se
-    // eliminó). Solo quitamos, sin transferir.
+    // eliminó, o todos los restantes son sent/sending). Solo quitamos,
+    // sin transferir.
     return {
       ...state,
       attachments: remaining,
@@ -291,29 +313,48 @@ export type QueueSummary = {
 /* ------------------------------------------------------------------ */
 
 /**
- * 004 (corte 2d) — Modo de submit que debe ejecutar el compositor:
+ * 004 (cortes 2d + 2e) — Modo de submit que debe ejecutar el compositor:
  *   - `"queue"` si hay adjuntos listos para enviar (no bloqueados y en
  *     estado pending/failed). En este caso el compositor entra a
  *     `submitQueue()`.
- *   - `"text"` si NO hay adjuntos listos pero hay texto en el textarea.
- *     En este caso el compositor envía texto plano por `onSend(value)`.
- *   - `"noop"` si no hay nada que enviar (ni adjuntos listos ni texto).
+ *   - `"text"` si NO hay adjuntos pendientes/fallidos sin resolver pero
+ *     hay texto en el textarea. En este caso el compositor envía texto
+ *     plano por `onSend(value)`.
+ *   - `"noop"` si no hay nada que enviar: ni adjuntos listos para
+ *     enviar, ni texto, ni adjuntos bloqueados esperando confirmación
+ *     del operador (que es el caso nuevo del corte 2e: si TODO lo
+ *     pendiente/fallido está bloqueado por `needsVideoAsDocumentConfirm`,
+ *     el operador primero debe confirmar o quitar el adjunto; no se
+ *     envía el textarea como texto independiente).
  *
- * Reglas críticas (regresión del corte 2d):
- *   - Adjuntos con `status="sent"` NO cuentan como "listos" (ya están
- *     terminales). Si solo queda un sent residual y el operador escribe
- *     texto, la rama debe ir a `"text"`, NO a `"queue"` (el bug anterior
- *     usaba `attachments.some(a => !a.needsVideoAsDocumentConfirm)` que
+ * Reglas críticas (regresiones arregladas en cortes 2d y 2e):
+ *   - Corte 2d: Adjuntos con `status="sent"` NO cuentan como "listos"
+ *     (ya están terminales). Si solo queda un sent residual y el
+ *     operador escribe texto, la rama debe ir a `"text"`, NO a `"queue"`
+ *     (el bug anterior usaba
+ *     `attachments.some(a => !a.needsVideoAsDocumentConfirm)` que
  *     consideraba sent como listo y mandaba `submitQueue()` a un bucle
  *     vacío que retornaba sin enviar el texto).
- *   - Adjuntos con `needsVideoAsDocumentConfirm=true` se excluyen
- *     explícitamente: bloqueados = no cuentan como listos aunque su
- *     status sea pending.
+ *   - Corte 2d: Adjuntos con `needsVideoAsDocumentConfirm=true` se
+ *     excluyen explícitamente del cómputo de "listos": bloqueados = no
+ *     cuentan como listos aunque su status sea pending.
+ *   - Corte 2e (FIX-1): Si existe AL MENOS un adjunto pending/failed
+ *     pero TODOS están bloqueados por `needsVideoAsDocumentConfirm`,
+ *     la rama es `"noop"`. Antes este caso caía en `"text"` y el botón
+ *     Enviar estaba visualmente disabled por `canSubmit=false`, pero
+ *     `submit()` seguía esa rama por Enter y enviaba el texto sin
+ *     que el operador hubiera confirmado o quitado el adjunto bloqueado.
+ *     Ahora botón y Enter coinciden: ambos devuelven `"noop"`.
+ *   - Corte 2e: un `sent` residual NO bloquea el envío de texto (sigue
+ *     cayendo en `"text"`). La regla "todos los pending/failed
+ *     bloqueados" solo se cumple si HAY pending/failed pendientes de
+ *     resolver; si la cola solo tiene sent residuales, el camino es
+ *     "text" (es exactamente el caso del fix 2d).
  *
  * Esta helper es la única fuente de verdad que `composer.submit()`
- * consulta; el cálculo de `canSubmit` del botón y la decisión de la rama
- * de submit usan exactamente este mismo filtro para que el botón y la
- * acción no se contradigan.
+ * consulta; el cálculo de `canSubmit` del botón y la decisión de la
+ * rama de submit usan exactamente este mismo filtro para que el botón
+ * y la acción no se contradigan.
  */
 export type SubmitMode = "queue" | "text" | "noop";
 
@@ -327,6 +368,14 @@ export function decideSubmitMode(
       (a.status === "pending" || a.status === "failed")
   );
   if (readyToSend.length > 0) return "queue";
+  // 004 (corte 2e, FIX-1) — todos los pending/failed están bloqueados por
+  // needsVideoAsDocumentConfirm: NO permitir enviar el textarea como texto
+  // independiente. El operador primero debe confirmar ("Enviar como documento")
+  // o quitar el adjunto. Enter y botón deben coincidir (ambos "noop").
+  const hasUnresolved = attachments.some(
+    (a) => a.status === "pending" || a.status === "failed"
+  );
+  if (hasUnresolved && readyToSend.length === 0) return "noop";
   if (text.trim().length > 0) return "text";
   return "noop";
 }
@@ -334,6 +383,34 @@ export function decideSubmitMode(
 /* ------------------------------------------------------------------ */
 /* Cleanup del happy path del envío                                    */
 /* ------------------------------------------------------------------ */
+
+/**
+ * 004 (corte 2e, FIX-3) — Helper que centraliza la decisión de permitir
+ * mutaciones sobre la cola de adjuntos. Mientras `sending=true` no se debe
+ * poder añadir, eliminar, ni modificar adjuntos para que la captura del
+ * bucle de envío no quede desincronizada con attachments añadidos o
+ * quitados a media corrida (regresión: `q.clear()` del happy path podía
+ * borrar un archivo nuevo que nunca perteneció al envío original).
+ *
+ * Esta helper existe como punto único de consulta para:
+ *   - Los handlers del composer (`ingestFiles`, `handleDragEnter`,
+ *     `handleDrop`, `onPaste` con archivos, `fileRef` onChange).
+ *   - Los botones que mutan estado en `AttachmentItem` (X de remove,
+ *     Reintentar, Enviar como documento).
+ *   - Los botones globales en `AttachmentQueueList` (Limpiar enviados,
+ *     Limpiar todo).
+ *
+ * `sending` proviene del state local del composer (`setSending(true)`
+ * se activa al inicio de `submitQueue`/`submit()` rama texto y se
+ * desactiva en el `finally`). Es ortogonal al `submitInFlight` ref
+ * (que cubre el caso de doble-submit concurrente): durante un envío
+ * NO se debe poder tocar la cola.
+ *
+ * Función pura para poder probarla sin React (ver tests).
+ */
+export function canMutateQueue(sending: boolean): boolean {
+  return !sending;
+}
 
 /**
  * 004 (corte 2d) — Recorre los adjuntos del momento de captura y revoca
@@ -744,6 +821,11 @@ export async function runQueueSend(
  * Cola horizontal con scroll, pensada para mostrarse sobre el textarea.
  * Muestra un header con el conteo y progreso inline ("3 adjuntos · 12 MB ·
  * 1/3 enviados") y ofrece "Limpiar enviados" cuando aplica.
+ *
+ * 004 (corte 2e, FIX-3) — `disabled` deshabilita los botones globales
+ * "Limpiar enviados" y "Limpiar todo" para que no se pueda mutar la cola
+ * mientras hay un envío en vuelo. Cada `AttachmentItem` recibe también
+ * este flag para deshabilitar sus botones individuales.
  */
 export function AttachmentQueueList({
   attachments,
@@ -756,6 +838,7 @@ export function AttachmentQueueList({
   onRetry,
   onSelectNext,
   onSelectPrev,
+  disabled = false,
 }: {
   attachments: PendingAttachment[];
   selectedId: string | null;
@@ -769,6 +852,10 @@ export function AttachmentQueueList({
   onRetry?: (id: string) => void;
   onSelectNext?: () => void;
   onSelectPrev?: () => void;
+  /** 004 (corte 2e, FIX-3) — `true` durante un envío en vuelo: deshabilita
+   * los botones globales y se propaga a cada `AttachmentItem` para
+   * deshabilitar también los botones individuales. */
+  disabled?: boolean;
 }) {
   if (attachments.length === 0) return null;
 
@@ -815,8 +902,9 @@ export function AttachmentQueueList({
             <button
               type="button"
               onClick={onClearSent}
+              disabled={disabled}
               aria-label="Quitar adjuntos enviados de la cola"
-              className="rounded px-2 py-1 text-[11px] font-medium text-text-3 transition-colors hover:bg-secondary hover:text-text-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand"
+              className="rounded px-2 py-1 text-[11px] font-medium text-text-3 transition-colors hover:bg-secondary hover:text-text-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand disabled:cursor-not-allowed disabled:opacity-50"
             >
               Limpiar enviados
             </button>
@@ -825,8 +913,9 @@ export function AttachmentQueueList({
             <button
               type="button"
               onClick={onClearAll}
+              disabled={disabled}
               aria-label="Limpiar toda la cola de adjuntos"
-              className="rounded px-2 py-1 text-[11px] font-medium text-text-3 transition-colors hover:bg-secondary hover:text-text-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand"
+              className="rounded px-2 py-1 text-[11px] font-medium text-text-3 transition-colors hover:bg-secondary hover:text-text-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand disabled:cursor-not-allowed disabled:opacity-50"
             >
               Limpiar todo
             </button>
@@ -858,6 +947,7 @@ export function AttachmentQueueList({
             onPrev={onSelectPrev ? () => onSelectPrev() : undefined}
             onNext={onSelectNext ? () => onSelectNext() : undefined}
             positionLabel={`${i + 1} de ${attachments.length}`}
+            disabled={disabled}
           />
         ))}
       </ul>
