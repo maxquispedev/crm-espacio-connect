@@ -57,3 +57,37 @@ autónoma (skill `loop-sdd`), y vuelve a ti **solo** al verificar en vivo o al b
 
 Ver la *Definición de Hecho REFORZADA* y *Modo Objetivo — Loop SDD* en
 [`CLAUDE.md`](../CLAUDE.md).
+
+
+## Cierre obligatorio de cada ciclo
+
+El SDD no termina al terminar código. Cada corte debe dejar contexto recuperable.
+
+Antes de cerrar una feature o una fase:
+
+1. **`tasks.md`** — marcar tareas completadas, pendientes y bloqueadas con estado real.
+2. **Evidencia** — registrar gates ejecutados, número de tests relevante y self-test E2E.
+3. **`docs/CURRENT_STATE.md`** — actualizarlo si cambió el estado global, un módulo importante o el siguiente checkpoint.
+4. **Doc de dominio** — actualizar contratos/historia específicos si aplica.
+5. **Obsidian** — si cambió precio, alcance, política, flujo comercial o una decisión de negocio, sincronizar esa decisión en el cerebro; el repo conserva lo necesario para implementar.
+6. **Commit atómico** — no mezclar el cierre con features ajenas.
+
+Si una verificación no pudo ejecutarse, se documenta como pendiente con la causa.
+Nunca traducir “typecheck/lint/test/build verdes” a “E2E listo” si el flujo real no se ejerció.
+
+## Recuperación de contexto después de perder el chat
+
+Un agente nuevo debe poder reconstruir el trabajo sin conversaciones previas:
+
+```text
+AGENTS.md
+  → Constitution
+  → docs/CURRENT_STATE.md
+  → spec activo (spec/plan/tasks)
+  → docs de dominio
+  → código/tests
+```
+
+Para trabajo anterior a la adopción completa de Spec Kit, no inventar specs
+retroactivos. Usar los docs durables existentes como historia y abrir un spec
+formal en el siguiente cambio observable de ese dominio.
