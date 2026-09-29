@@ -11,6 +11,7 @@ import { ConversationList } from "./conversation-list";
 import { MessageThread } from "./message-thread";
 import { Composer } from "./composer";
 import { ContactPanel } from "./contact-panel";
+import { applyContactNamePatch } from "./conversation-patch";
 
 export function InboxClient() {
   const [conversations, setConversations] = useState<ConversationDto[] | null>(
@@ -161,6 +162,17 @@ export function InboxClient() {
     [refetchConversations]
   );
 
+  // 005 — Tras un rename exitoso desde el panel, sincroniza el `contact.name`
+  // en el array de conversaciones (panel, header del hilo, lista izquierda) con
+  // un patch in-place. Evita el refetch (latencia + race con SSE — ver
+  // specs/005-quick-lead-name/plan.md §D-1).
+  const onContactUpdated = useCallback(
+    ({ id, name }: { id: string; name: string }) => {
+      setConversations((prev) => applyContactNamePatch(prev ?? [], { id, name }));
+    },
+    []
+  );
+
   return (
     <div className="flex h-full">
       <section className="w-[360px] shrink-0 overflow-hidden border-r">
@@ -234,11 +246,12 @@ export function InboxClient() {
         )}
       >
         {selected && (
-          <div className="h-full w-[320px]">
+          <div className="h-full w-[320px]" key={selected.contact.id}>
             <ContactPanel
               conversation={selected}
               refreshKey={detailRev}
               onPatchConversation={patchConversation}
+              onContactUpdated={onContactUpdated}
               onClose={() => togglePanel(false)}
             />
           </div>

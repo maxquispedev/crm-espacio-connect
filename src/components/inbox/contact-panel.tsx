@@ -1,8 +1,15 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { Check, ChevronRight, Sparkles, UserRound } from "lucide-react";
+import {
+  Check,
+  ChevronRight,
+  Pencil,
+  Sparkles,
+  UserRound,
+  X,
+} from "lucide-react";
 import type { ContactSalesDto, ConversationDto, StageDto } from "@/lib/types";
 import { cn, formatPhone } from "@/lib/utils";
 import {
@@ -22,6 +29,8 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { formatTime } from "@/components/inbox/helpers";
 
+type ContactNameUpdate = { id: string; name: string };
+
 const HANDOFF_LABELS: Record<string, string> = {
   cliente: "El cliente pidió un humano",
   modelo: "El agente decidió escalar",
@@ -35,6 +44,7 @@ export function ContactPanel({
   conversation,
   refreshKey = 0,
   onPatchConversation,
+  onContactUpdated,
   onClose,
 }: {
   conversation: ConversationDto;
@@ -44,6 +54,12 @@ export function ContactPanel({
     aiEnabled?: boolean;
     reactivate?: boolean;
   }) => Promise<void>;
+  /**
+   * Notifica al padre que el `contact.name` cambió en el servidor tras un
+   * guardado exitoso del editor inline. El padre sincroniza las tres
+   * superficies (panel, header del hilo, lista izquierda) vía patch in-place.
+   */
+  onContactUpdated?: (update: ContactNameUpdate) => void;
   onClose: () => void;
 }) {
   const [notes, setNotes] = useState("");
@@ -160,10 +176,12 @@ export function ContactPanel({
               seed={conversation.contact.id}
               size="md"
             />
-            <div className="min-w-0">
-              <p className="truncate text-sm font-[650]">
-                {conversation.contact.name}
-              </p>
+            <div className="min-w-0 flex-1">
+              <ContactNameEditor
+                contactId={conversation.contact.id}
+                name={conversation.contact.name}
+                onSaved={(update) => onContactUpdated?.(update)}
+              />
               <p className="text-xs text-text-3">
                 {formatPhone(conversation.contact.phone)}
               </p>
@@ -331,6 +349,187 @@ export function ContactPanel({
           </Button>
         </section>
       </div>
+    </div>
+  );
+}
+
+/**
+ * 005 — Editor inline del `contact.name` en la cabecera del panel.
+ *
+ * Estados: `"view"` (default) muestra el nombre + icono lápiz; `"edit"`
+ * muestra un input con autofocus+select y dos botones (check/X).
+ *
+ * Atajos:
+ * - Click lápiz o doble-click sobre el nombre → `mode="edit"`.
+ * - Enter sin Shift → submit (PATCH).
+ * - Escape → cancela y restaura el nombre anterior.
+ * - Blur → cancela (decisión conservadora, plan §D-3).
+ * - Click en check → submit. Click en X → cancela.
+ *
+ * Trim antes de validar. Si queda vacío, no se llama a la API y se muestra
+ * un error inline. Durante `saving=true` el input y los botones quedan
+ * deshabilitados y un segundo Enter/click se ignora.
+ *
+ * Defensa SSE: el `draft` vive en `useState` local y NO se sincroniza con la
+ * prop `name` mientras `mode === "edit"`. Un rename entrante por SSE solo
+ * cambia la prop `name` cuando el modo edición termina (guardar o cancelar).
+ *
+ * Si el PATCH devuelve 200, se sale de modo edición con el `name` que
+ * devolvió el servidor como nueva fuente de verdad (FR-9).
+ */
+function ContactNameEditor({
+  contactId,
+  name,
+  onSaved,
+}: {
+  contactId: string;
+  name: string;
+  onSaved: (update: ContactNameUpdate) => void;
+}) {
+  const [mode, setMode] = useState<"view" | "edit">("view");
+  const [draft, setDraft] = useState(name);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  // Ref defensivo contra doble submit aunque `saving` esté desactualizado.
+  const savingRef = useRef(false);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  function enterEdit() {
+    if (saving) return;
+    setDraft(name);
+    setError(null);
+    setMode("edit");
+  }
+
+  function cancelEdit() {
+    if (saving) return;
+    setMode("view");
+    setDraft(name);
+    setError(null);
+  }
+
+  async function submit() {
+    if (savingRef.current) return;
+    const trimmed = draft.trim();
+    if (trimmed === "") {
+      setError("El nombre no puede estar vacío");
+      return;
+    }
+    savingRef.current = true;
+    setSaving(true);
+    setError(null);
+    try {
+      const res = await fetch(`/api/contacts/${contactId}`, {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ name: trimmed }),
+      });
+      if (!res.ok) {
+        const payload = (await res.json().catch(() => null)) as
+          | { error?: { message?: string } }
+          | null;
+        setError(
+          payload?.error?.message ?? "No se pudo guardar el nombre"
+        );
+        return;
+      }
+      const data = (await res.json()) as {
+        contact?: { id?: string; name?: string };
+      };
+      const savedName = data.contact?.name?.trim() || trimmed;
+      onSaved({ id: contactId, name: savedName });
+      setMode("view");
+      setDraft(savedName);
+    } catch {
+      setError("Sin conexión con el servidor");
+    } finally {
+      savingRef.current = false;
+      setSaving(false);
+    }
+  }
+
+  // Autofocus + select programático al entrar en modo edición.
+  useEffect(() => {
+    if (mode !== "edit") return;
+    const el = inputRef.current;
+    if (!el) return;
+    el.focus();
+    el.select();
+  }, [mode]);
+
+  if (mode === "view") {
+    return (
+      <div className="flex min-w-0 items-center gap-1">
+        <button
+          type="button"
+          onDoubleClick={enterEdit}
+          onClick={enterEdit}
+          aria-label="Editar nombre"
+          className="group flex min-w-0 items-center gap-1.5 rounded-sm text-left transition-colors"
+        >
+          <span className="truncate text-sm font-[650]">{name}</span>
+          <Pencil
+            className="h-3.5 w-3.5 shrink-0 text-text-3 opacity-0 transition-opacity group-hover:opacity-100"
+            strokeWidth={1.7}
+          />
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex min-w-0 flex-col gap-1">
+      <div className="flex min-w-0 items-center gap-1">
+        <input
+          ref={inputRef}
+          type="text"
+          value={draft}
+          maxLength={120}
+          disabled={saving}
+          onChange={(e) => {
+            setDraft(e.target.value);
+            if (error) setError(null);
+          }}
+          onBlur={() => {
+            if (!saving) cancelEdit();
+          }}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" && !e.shiftKey) {
+              e.preventDefault();
+              void submit();
+            } else if (e.key === "Escape") {
+              e.preventDefault();
+              cancelEdit();
+            }
+          }}
+          aria-label="Nombre del contacto"
+          aria-invalid={error !== null}
+          className="min-w-0 flex-1 rounded-md border border-border-strong bg-background px-2 py-1 text-sm font-[650] outline-none focus:border-brand focus:ring-[3px] focus:ring-brand-soft disabled:opacity-60"
+        />
+        <button
+          type="button"
+          onClick={() => void submit()}
+          disabled={saving || draft.trim() === ""}
+          aria-label="Guardar nombre"
+          className="shrink-0 rounded-md p-1 text-text-3 transition-colors hover:bg-accent hover:text-foreground disabled:opacity-40"
+        >
+          <Check className="h-3.5 w-3.5" strokeWidth={2} />
+        </button>
+        <button
+          type="button"
+          onClick={cancelEdit}
+          disabled={saving}
+          aria-label="Cancelar edición"
+          className="shrink-0 rounded-md p-1 text-text-3 transition-colors hover:bg-accent hover:text-foreground disabled:opacity-40"
+        >
+          <X className="h-3.5 w-3.5" strokeWidth={2} />
+        </button>
+      </div>
+      {error && (
+        <p role="alert" className="text-[11px] text-text-3">
+          {error}
+        </p>
+      )}
     </div>
   );
 }

@@ -240,37 +240,59 @@ Specs formales actuales:
 - `specs/002-diseno-atlas-white-label/`
 - `specs/003-paridad-inbox-whatsapp/`
 - `specs/004-inbox-messaging-ux/` (cola de adjuntos del composer + UX polish, cerrado)
-- `specs/005-quick-lead-name/` (edición inline de `contact.name` desde el panel del inbox — **ABIERTO**, solo docs en este commit)
+- `specs/005-quick-lead-name/` (edición inline de `contact.name` desde el panel del inbox — **CERRADO** en commit único)
 
 ### Estado del spec 005
 
-Abierto el 2026-09-29. Spec/plan/tasks documentados; la implementación está
-planificada como **un solo corte funcional** (commit 1) tras el commit 0
-documental de este PR. Alcance acotado:
+**Cerrado el 2026-09-29** en un solo commit funcional tras el commit 0
+documental. Implementación entrega:
 
-- Edición inline del `contact.name` en la cabecera del `ContactPanel`
-  (panel lateral derecho del inbox): icono lápiz → input autofocus + select →
-  Enter guarda · Escape cancela · blur cancela (decisión conservadora, ver
-  `plan.md` §D-3).
-- Sincronización inmediata post-guardado en las tres superficies que muestran
-  el nombre (panel lateral, header de la conversación activa, lista izquierda)
-  vía patch in-place del array de conversaciones (helper pura
-  `applyContactNamePatch` en `src/components/inbox/conversation-patch.ts`),
-  sin refetch y sin esperar SSE.
-- Re-mount del `ContactPanel` al cambiar de conversación
-  (`key={selected.contact.id}`) para descartar el estado local de edición.
+- **Helper pura testeable** `applyContactNamePatch` en
+  `src/components/inbox/conversation-patch.ts`: sincroniza `contact.name` en
+  el array de conversaciones de forma inmutable, retornando la misma
+  referencia cuando no hay match (evita renders espurios).
+- **Microcomponente inline `ContactNameEditor`** dentro de
+  `src/components/inbox/contact-panel.tsx`: estados `view` ↔ `edit`,
+  trim+validación cliente, doble-submit corto-circuitado por
+  `savingRef`, manejo de errores del servidor con mensaje inline.
+- **Wiring en `inbox-client.tsx`**: handler `onContactUpdated` aplica
+  `applyContactNamePatch` al array, y `key={selected.contact.id}` fuerza
+  re-mount del panel al cambiar de conversación (descarta el estado de
+  edición).
+- **Tests unit nuevos**: 9 casos en
+  `tests/unit/conversation-patch.test.ts`.
+- **Guion E2E** `tests/e2e/010-quick-lead-name.md` con 10 pasos visuales
+  de Playwright y caminos infelices documentados (red caída, 4xx/5xx,
+  blur, doble Enter, cambio de conversación, SSE concurrente).
 
-Restricciones explícitas del spec:
+Restricciones respetadas:
 
 - Reutiliza exclusivamente `PATCH /api/contacts/:id` (ya valida
   `name` trim 1–120 y aplica `scoped()`).
-- No crea endpoint paralelo, no modifica schema, no introduce store global,
-  no añade dependencias npm.
-- Fuera de alcance: edición de phone/email/empresa/tags, modal, nueva página,
-  pipeline, Sales, follow-ups, sender, webhook.
+- Cero endpoints nuevos, cero cambios de schema, cero store global,
+  cero nuevas dependencias npm.
+- Fuera de alcance confirmado: phone/email/empresa/tags, modal, nueva
+  página, pipeline, Sales, follow-ups, sender, webhook.
 
-Pendiente de este PR: ningún código de app. El commit 1 implementará la
-feature; este PR solo abre el spec y registra el estado.
+**Verificación actual:**
+
+| Gate | Estado |
+|---|---|
+| `pnpm typecheck` | verde |
+| `pnpm lint` | verde |
+| `pnpm build` | verde |
+| `pnpm test` | verde — **569 tests** (560 del spec 004 + 9 nuevos del spec 005) |
+| `pnpm test:e2e` (sección 010) | **PENDIENTE en este entorno** — sin app local ni PostgreSQL activa |
+| Playwright visual `tests/e2e/010-quick-lead-name.md` | **PENDIENTE en este entorno** |
+
+El spec 005 está **verificado unitariamente punta a punta** pero **NO
+verificado en vivo punta a punta** hasta correr Playwright manual contra
+`pnpm dev` local con los 10 pasos visuales y los caminos infelices
+documentados en el guion E2E. Por Constitución IX no debe reportarse
+como READY punta a punta hasta entonces. La verificación pendiente es
+del mismo tipo y gravedad que las secciones 008 y 009: si el entorno
+local no tiene app ni BD activas, queda registrada como pendiente y se
+ejecuta en el siguiente checkpoint que disponga de la app levantada.
 
 Trabajo posterior documentado antes de exigir Spec Kit completo:
 
@@ -436,7 +458,7 @@ reportarse como READY punta a punta hasta entonces.
 | 2026-09-29 | spec 004 corte 2c — fix de comportamiento antes de E2E (cleanup total, caption durable, pre-validación image/audio, botón engañoso del panel), 522 tests |
 | 2026-09-29 | spec 004 corte 2d — fix de comportamiento post-0e7148c (rama submit con sent residual, cleanup happy path revoca todas las previews, transferencia captionOwner al eliminar owner), 546 tests |
 | 2026-09-29 | spec 004 corte 2e — 3 últimos edge cases del cliente (decideSubmitMode=noop con solo bloqueados, transferencia captionOwner salta sent/sending, mutaciones de la cola bloqueadas durante sending), 560 tests |
-| 2026-09-29 | spec 005 abierto (docs only): edición inline de `contact.name` desde el panel del inbox; implementación planificada en commit único posterior |
+| 2026-09-29 | spec 005 cerrado (commit único): edición inline de `contact.name` desde el panel del inbox + sync de UI en las tres superficies, 569 tests |
 
 ---
 
