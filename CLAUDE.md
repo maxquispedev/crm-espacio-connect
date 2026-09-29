@@ -1,4 +1,8 @@
-# Vocero CRM — Guía para Claude
+# Espacio Connect (fork de Vocero CRM) — Guía para Claude
+
+> **Entrada común para agentes:** antes de trabajar, lee [AGENTS.md](AGENTS.md) y
+> [docs/CURRENT_STATE.md](docs/CURRENT_STATE.md). Este archivo añade reglas
+> específicas para Claude Code; la Constitución sigue siendo la autoridad normativa.
 
 Vocero es un CRM de WhatsApp open source (MIT), self-hosted, con agente de IA y
 Laboratorio de auto-evaluación. Una instancia = un negocio. Este archivo guía a
@@ -131,10 +135,10 @@ manténlos al día. Invocable como `/loop-sdd <objetivo>`.
 
 ## Memoria persistente
 
-Memoria de archivos en `memory/` (índice `memory/MEMORY.md`, cargado por
-sesión). Persiste decisiones, gotchas y correcciones; no dupliques lo que el
-repo ya registra. Los subagentes con `memory: project` usan
-`.claude/agent-memory/`.
+El checkpoint técnico compartido entre agentes vive en `docs/CURRENT_STATE.md`;
+el estado durable de cada feature vive en `specs/*/tasks.md`. No dupliques en
+memoria informal lo que ya está versionado. Los subagentes con `memory: project`
+usan `.claude/agent-memory/`.
 
 ## Arquitectura de agentes
 
