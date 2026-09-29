@@ -1,6 +1,6 @@
 # CURRENT STATE — Espacio Connect
 
-**Actualizado:** 2026-09-29 (spec 005 abierto + checkpoint técnico de evolución multi-campaña del Sales Orchestrator)
+**Actualizado:** 2026-09-29 (spec 006 ABIERTO: anuncio de origen de Meta — pieza visible sin CAPI todavía)
 **Branch:** `main`
 **Baseline funcional previo a esta sincronización documental:** `bbae7cd1dfd98d5006cfd26440a8acf1def2c1bb`
 **Propósito:** checkpoint técnico rápido. Las decisiones de negocio viven en el cerebro de Obsidian; la implementación y la historia SDD viven aquí.
@@ -241,6 +241,87 @@ Specs formales actuales:
 - `specs/003-paridad-inbox-whatsapp/`
 - `specs/004-inbox-messaging-ux/` (cola de adjuntos del composer + UX polish, cerrado)
 - `specs/005-quick-lead-name/` (edición inline de `contact.name` desde el panel del inbox — **CERRADO** en commit único)
+- `specs/006-anuncio-de-origen/` (de qué anuncio de Meta llegó cada conversación — **ABIERTO**, pieza visible sin CAPI todavía)
+
+### Estado del spec 006
+
+**Abierto el 2026-09-29** (este PR documental). Puerto selectivo de la
+spec 018 del upstream `kevinrivm/vocero-crm`: trae la pieza visible al
+raíz (bandeja con marca de anuncio, panel con tarjeta del creativo, filtro
+Anuncios, copia best-effort del thumbnail al volumen de adjuntos) sin
+arrastrar su pila multitenant, su CAPI ni su spec 016 previa.
+
+Lo que entrega el spec (lo que se implementará en los dos cortes
+posteriores, **no** en este PR):
+
+- **Tabla nueva `ad_attribution`** con UNIQUE `(organization_id,
+  conversation_id)` y migración aditiva `0006_anuncio_de_origen.sql`
+  re-ejecutable. En este repo la tabla aún no existía (la creamos
+  completa desde cero; mismo shape de columna que la 0014 del upstream
+  018 para que sean compatibles si en el futuro se sincronizan las dos
+  bases).
+- **Normalización pura** del `messages[].referral` de WhatsApp en
+  `src/server/attribution/referral.ts`. Cotas: id 128, titular 300,
+  texto 2000, URL 2048, raw 8 KB. `ctwa_clid` se trata como si la
+  futura bandera `ATRIBUCION` estuviera **apagada**: la columna se
+  guarda `NULL` y el `raw` no contiene la clave. La promesa del futuro
+  spec 007 (una instancia que no atribuye no acumula identificadores de
+  clic) se respeta desde el primer despliegue.
+- **Imagen del creativo** copiada best-effort fuera del webhook a un
+  `media_asset` con defensa SSRF equivalente al upstream: solo `https`
+  desde hosts de Meta (allowlist cerrada: `fbcdn.net`, `fbsbx.com`,
+  `facebook.com`, `cdninstagram.com`, `instagram.com` y sus
+  subdominios), validación por salto (máx. 3), MIME en
+  `{image/jpeg, image/png, image/webp, image/gif}`, hasta 300 KB, 5 s
+  por intento, un reintento ante fallo transitorio. Una descarga por
+  `(organization_id, source_id)` deduplicada en memoria.
+- **DTO `ConversationDto.anuncio`** con `{ headline, sourceId,
+  sourceType }` para la lista, y **`AnuncioDto`** completo (sin el
+  valor del `ctwa_clid`: solo `hasCtwaClid: boolean`) para el detalle
+  del contacto y el evento SSE `conversation.updated`.
+- **UI**: marca «Anuncio · titular» / «Publicación · titular» en la
+  lista, filtro `Anuncios` con contador, tarjeta del anuncio en el
+  panel lateral, línea secundaria en el kanban del pipeline.
+- **Conversaciones orgánicas** quedan iguales: sin marca, sin tarjeta,
+  sin línea secundaria, sin cambio en el filtro.
+
+Restricciones respetadas:
+
+- Sin Marketing API, sin nombre de campaña / adset / ad (Meta no los
+  entrega en el `referral`).
+- Sin Conversions API, sin `Ajustes → Anuncios`, sin envío a Meta →
+  spec 007.
+- Sin cambios en Sales Orchestrator, Jev, follow-ups, sender,
+  `window.ts`, `agent_profile`.
+- Cero nuevas dependencias npm.
+- Migración ADITIVA y tenant-safe: `organization_id NOT NULL` con
+  índice org-first, FK con `ON DELETE CASCADE` a `organization`,
+  `contact` y `conversation`.
+- No Marketing API: la columna `source_id` ya es el identificador
+  estable de Meta para el creativo.
+
+**Plan en dos cortes posteriores:**
+
+- **Corte A — servidor/datos** (PR futuro): schema + migración +
+  normalización + ingesta + queries + lectura de imagen + mocks +
+  tests unit. Sin UI. Tareas TA01–TA22.
+- **Corte B — UI + E2E + cierre** (PR tras A): lista + filtro + tarjeta
+  + pipeline + sección E2E + actualización CURRENT_STATE + cierre.
+  Tareas TB01–TB09.
+
+**Verificación actual (este PR documental):**
+
+| Gate | Estado |
+|---|---|
+| Constitution Check | sin violaciones |
+| Spec / Plan / Tasks creados | sí |
+| Migración aplicada | **NO** (todavía) |
+| Implementación | **NO** (todavía — la implementación es cortes A y B) |
+| Self-test E2E | **NO** (todavía — sección 011 pendiente) |
+| Playwright visual | **NO** (todavía — TB07 pendiente) |
+
+Por Constitución VI, este PR solo abre el spec; la implementación y la
+verificación en vivo quedan en los cortes A y B posteriores.
 
 ### Estado del spec 005
 
@@ -459,6 +540,7 @@ reportarse como READY punta a punta hasta entonces.
 | 2026-09-29 | spec 004 corte 2d — fix de comportamiento post-0e7148c (rama submit con sent residual, cleanup happy path revoca todas las previews, transferencia captionOwner al eliminar owner), 546 tests |
 | 2026-09-29 | spec 004 corte 2e — 3 últimos edge cases del cliente (decideSubmitMode=noop con solo bloqueados, transferencia captionOwner salta sent/sending, mutaciones de la cola bloqueadas durante sending), 560 tests |
 | 2026-09-29 | spec 005 cerrado (commit único): edición inline de `contact.name` desde el panel del inbox + sync de UI en las tres superficies, 569 tests |
+| 2026-09-29 | spec 006 ABIERTO: anuncio de origen de Meta — pieza visible sin CAPI todavía (puerto selectivo del upstream 018; migración 0006 + tabla `ad_attribution` + normalización + imagen best-effort; implementación en dos cortes A/B posteriores) |
 
 ---
 
