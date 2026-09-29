@@ -11,9 +11,10 @@ import {
 } from "lucide-react";
 import type { ConversationDto, TemplateDto } from "@/lib/types";
 import { cn } from "@/lib/utils";
-import { formatBytes, formatRemaining } from "./helpers";
+import { formatBytes, formatRemaining, type PendingAttachment } from "./helpers";
 import {
   AttachmentQueueList,
+  runQueueSend,
   useAttachmentQueue,
 } from "./attachment-queue";
 import { TemplateSender } from "./template-sender";
@@ -57,9 +58,16 @@ export function Composer({
   const taRef = useRef<HTMLTextAreaElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const dragCounter = useRef(0);
+  // 004 — Anti doble-envío. Doble capa: disabled en el botón (visual) + este
+  // ref (lógica). Cubre clicks programáticos y re-renders concurrentes.
+  const submitInFlight = useRef(false);
 
   // 004 — Cola de adjuntos. El hook libera Object URLs al desmontar.
   const queue = useAttachmentQueue();
+  // Refs para que `submitQueue` vea SIEMPRE el estado actual sin re-crear el
+  // closure en cada render. Evita que un send en vuelo use una cola vieja.
+  const queueRef = useRef(queue);
+  queueRef.current = queue;
 
   useEffect(() => {
     let cancelled = false;
@@ -108,8 +116,53 @@ export function Composer({
     if (fileRef.current) fileRef.current.value = "";
   }
 
+  /**
+   * Envía un adjunto individual al endpoint existente. Devuelve `null` en éxito
+   * o un mensaje de error legible en fallo. NO aborta el bucle del caller —
+   * el caller decide si continuar con el siguiente adjunto.
+   */
+  async function sendOne(
+    att: PendingAttachment,
+    caption: string | null
+  ): Promise<string | null> {
+    const form = new FormData();
+    // Reconstruimos el File con el MIME efectivo cuando difiere del original
+    // (caso video re-taggeado a document). El servidor también acepta el File
+    // tal cual cuando el override tipado `kind=document` se envía aparte.
+    const fileToSend =
+      att.effectiveMime && att.effectiveMime !== att.file.type
+        ? new File([att.file], att.file.name, { type: att.effectiveMime })
+        : att.file;
+    form.set("file", fileToSend);
+    // 004 — Typed contract: si el cliente decidió forzar `document`
+    // (típicamente video >16MB), lo declara con el campo `kind`. El
+    // servidor valida contra ALLOWED_KIND_OVERRIDES; cualquier otro valor
+    // se ignora silenciosamente.
+    if (att.willSendAsDocument) {
+      form.set("kind", "document");
+    }
+    if (caption) {
+      form.set("caption", caption.slice(0, 1024));
+    }
+    return apiSend(
+      `/api/conversations/${conversation.id}/messages/media`,
+      { method: "POST", body: form }
+    );
+  }
+
   async function apiSend(path: string, init: RequestInit): Promise<string | null> {
-    const res = await fetch(path, init);
+    // 004 — `fetch` puede lanzar por red caída o CORS; lo tratamos como un
+    // error de envío más (no abortamos el bucle de la cola). El compositor
+    // y el sender de location/contact también pasan por aquí, así que el
+    // try/catch los protege igual.
+    let res: Response;
+    try {
+      res = await fetch(path, init);
+    } catch (cause) {
+      return cause instanceof Error
+        ? `Sin conexión con el servidor (${cause.message})`
+        : "Sin conexión con el servidor";
+    }
     if (res.ok) return null;
     const data = (await res.json().catch(() => null)) as {
       error?: { message?: string };
@@ -122,58 +175,80 @@ export function Composer({
     );
   }
 
+  /**
+   * 004 — Bucle de envío de la cola. Itera secuencialmente (no en paralelo)
+   * para que los mensajes lleguen en orden al hilo y para que un fallo
+   * individual no rompa el resto. Cada adjunto transita por estados
+   * independientes (`pending → sending → sent|failed`) y conserva su error.
+   * El caption se aplica SOLO al primero que se intenta enviar.
+   *
+   * La lógica iterativa vive en `runQueueSend` (función pura testeable); aquí
+   * se conecta con React state (refs, refs de queue, fetch real, onSent).
+   *
+   * Si el bucle termina con TODO enviado (sin errores y sin bloqueos),
+   * limpiamos el textarea. Si algo falló, conservamos el textarea para que
+   * el operador pueda reintentar los fallidos con el mismo caption.
+   */
+  async function submitQueue() {
+    if (submitInFlight.current) return; // anti-doble-envío (capa lógica)
+    const q = queueRef.current;
+    if (q.readyToSend.length === 0) return;
+    submitInFlight.current = true;
+    setSending(true);
+    setError(null);
+    try {
+      const caption = text.trim();
+      const result = await runQueueSend({
+        attachments: q.readyToSend,
+        sendOne,
+        onStatus: q.updateStatus,
+        caption: caption || null,
+      });
+      // Si TODO salió bien (sin errores y sin bloqueos), limpiamos el caption.
+      // Si algo falló, conservamos el textarea para que el operador pueda
+      // reintentar manualmente los fallidos con el mismo texto.
+      const stillBlocked = q.needsVideoAsDocumentConfirmCount > 0;
+      const allDone = result.failed === 0 && !stillBlocked && result.sent > 0;
+      if (allDone) {
+        setText("");
+        if (taRef.current) taRef.current.style.height = "auto";
+      }
+      if (result.sent > 0) onSent();
+    } finally {
+      submitInFlight.current = false;
+      setSending(false);
+    }
+  }
+
   async function submit() {
-    if (sending) return;
+    if (submitInFlight.current) return;
     setError(null);
 
-    // 004 (corte 1): si hay cola, envía el PRIMER pendiente. El envío
-    // múltiple (todos en cadena, anti-doble-envío, estados por adjunto,
-    // reintento) entra en el commit 2 con T205/T206. Mientras tanto, el
-    // comportamiento es retro-compatible: cada click envía uno, igual que
-    // antes.
-    const head = queue.firstToSend;
-    if (head) {
-      setSending(true);
-      const form = new FormData();
-      // Si el cliente decidió re-tag (video >16MB), envía con el MIME
-      // efectivo; si no, envía el MIME original del File.
-      const fileToSend =
-        head.effectiveMime && head.effectiveMime !== head.file.type
-          ? new File([head.file], head.file.name, { type: head.effectiveMime })
-          : head.file;
-      form.set("file", fileToSend);
-      const caption = text.trim();
-      if (caption) form.set("caption", caption.slice(0, 1024));
-      const err = await apiSend(
-        `/api/conversations/${conversation.id}/messages/media`,
-        { method: "POST", body: form }
-      );
-      setSending(false);
-      if (err) {
-        setError(err);
-        return;
-      }
-      // Lo enviamos: lo sacamos de la cola. (El commit 2 añade estado
-      // visible + retry; aquí el comportamiento es éxito ⇒ quitar.)
-      queue.remove(head.id);
-      // El caption solo aplica al primero; limpiar el textarea tras éxito.
-      setText("");
-      if (taRef.current) taRef.current.style.height = "auto";
-      onSent();
+    // Si hay adjuntos listos (no bloqueados), bucle de envío.
+    const hasReady = queue.attachments.some(
+      (a) => !a.needsVideoAsDocumentConfirm
+    );
+    if (hasReady) {
+      await submitQueue();
       return;
     }
 
     const value = text.trim();
     if (!value) return;
+    submitInFlight.current = true;
     setSending(true);
-    const err = await onSend(value);
-    setSending(false);
-    if (err) {
-      setError(err);
-      return;
+    try {
+      const err = await onSend(value);
+      if (err) {
+        setError(err);
+        return;
+      }
+      setText("");
+      if (taRef.current) taRef.current.style.height = "auto";
+    } finally {
+      submitInFlight.current = false;
+      setSending(false);
     }
-    setText("");
-    if (taRef.current) taRef.current.style.height = "auto";
   }
 
   async function submitLocation() {
@@ -249,10 +324,15 @@ export function Composer({
   }
 
   const hasQueue = queue.attachments.length > 0;
+  // 004 — El botón Enviar está deshabilitado si:
+  //   - hay algo en vuelo (anti-doble-envío visual)
+  //   - la cola está vacía Y no hay texto Y no hay panel secundario abierto
+  //   - hay adjuntos bloqueados esperando confirmación y nada más que enviar
+  const onlyBlocked = queue.attachments.length > 0 && queue.readyToSend.length === 0;
   const canSubmit =
-    hasQueue ||
-    text.trim().length > 0 ||
-    panel !== null;
+    queue.readyToSend.length > 0 ||
+    (text.trim().length > 0 && !onlyBlocked) ||
+    (panel !== null && !hasQueue);
 
   /* ----------------------------------------------- */
   /* Handlers de drag & drop sobre el composer       */
@@ -332,7 +412,20 @@ export function Composer({
         onSelect={queue.select}
         onRemove={queue.remove}
         onClearAll={queue.clear}
+        onConfirmVideoAsDocument={queue.confirmVideoAsDocument}
+        onRetry={queue.retry}
       />
+
+      {queue.needsVideoAsDocumentConfirmCount > 0 && (
+        <p className="mb-2 text-[11px] text-warning-text">
+          Hay {queue.needsVideoAsDocumentConfirmCount} adjunto
+          {queue.needsVideoAsDocumentConfirmCount === 1 ? "" : "s"} que excede
+          {queue.needsVideoAsDocumentConfirmCount === 1 ? "" : "n"} el límite de
+          video. Confírmalo
+          {queue.needsVideoAsDocumentConfirmCount === 1 ? "" : "s"} para enviar
+          como documento.
+        </p>
+      )}
 
       {panel === "location" && (
         <div className="mb-2.5 flex flex-wrap items-end gap-2 rounded-md border bg-secondary/50 p-2.5">

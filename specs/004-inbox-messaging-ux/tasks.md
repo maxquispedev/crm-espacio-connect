@@ -11,8 +11,9 @@
 | 0 | `docs(spec): open 004 — UX de mensajería del inbox` | Este PR: solo docs. | T001–T005 |
 | 1 | `feat(inbox): cola de adjuntos + helpers + previews` | Helpers + componentes presentacionales + tests unit. El composer sigue funcionando como antes. | T101–T112 |
 | 2 | `feat(inbox): composer cola con drag&drop, paste, submit, retry, a11y, e2e` | Composer reescrito (rama adjuntos) + drag&drop + paste + submit secuencial + retry + E2E + guion Playwright. | T201–T222 |
+| 2a | `feat(inbox): enviar cola con typed kind override + estados por adjunto + retry` | **Este commit**: bucle de envío `runQueueSend`, anti-doble-envío, retry por adjunto, confirmación explícita video→document, override tipado `kind=document` en endpoint, tests de multi-send/fallo parcial/retry/anti-doble/videos >16MB/>100MB. | T2a01–T2a14 |
 
-> **No hay commit 3 de código** — los 3 commits pedistes son **docs + 2 commits de código**. La razón: el spec es lo bastante acotado para caber en dos cortes limpios (uno de scaffolding + uno de integración completa), evitando un commit "puente" con el composer a medio migrar.
+> **No hay commit 3 de código** — los 3 commits pedistes son **docs + 2 commits de código**. La razón: el spec es lo bastante acotado para caber en dos cortes limpios (uno de scaffolding + uno de integración completa), evitando un commit "puente" con el composer a medio migrar. El commit 2a es un refinamiento incremental del commit 2: reescribe la rama de envío sin tocar drag&drop/paste/dropzone (ya verdes), añade el override tipado y el estado `sending`/`sent` por adjunto.
 
 ---
 
@@ -100,6 +101,67 @@
 
 - [ ] **T209** [P] [US5] Test unit `src/components/inbox/__tests__/composer-anti-double.test.tsx`: simular doble click en Enviar; verificar que `fetch` se llama **una vez por adjunto**, no el doble. Usar `vi.fn()` para `fetch` y assert `mock.calls.length === attachments.length`.
 - [ ] **T210** [P] [US1, US4] Test unit `src/components/inbox/__tests__/composer-submit-queue.test.tsx`: simular cola de 3 adjuntos, segundo con respuesta 413; verificar que el primero queda `sent`, el segundo `failed` con mensaje, el tercero `sent`; el caption solo aparece en el primero; el textarea se limpia al final solo si todo salió bien.
+
+---
+
+## Commit 2a — Envío de la cola + validación + estados por adjunto (este commit)
+
+**Propósito**: cablear el bucle de envío real (`runQueueSend`), el anti-doble-envío con `submitInFlight`, el manejo de error por adjunto con `failed` visible y reintento, y la confirmación explícita del re-tag video→document. Se añade un **override tipado `kind`** al endpoint existente para que el cliente pueda forzar `document` sin falsificar el MIME (typed contract: server-side `ALLOWED_KIND_OVERRIDES`).
+
+No toca drag&drop/paste/dropzone (ya entregados en el commit 1). Mantiene intactos: sandbox, ventana 24h, tenant scope, media persistence, status/webhook, follow-ups.
+
+### Server — contrato mínimo (typed override)
+
+- [x] **T2a01** En `src/server/whatsapp/media.ts`: añadir `FileMediaKind` (tipo estrecho `image|video|audio|document`), `ALLOWED_KIND_OVERRIDES = {document}`, y `opts?: { kind?: FileMediaKind }` a `validateOutgoing`. Cuando el override difiere del derivado y NO está permitido, lanza `unsupported_type`.
+- [x] **T2a02** En `src/server/inbox/send.ts`: añadir `kind?: FileMediaKind` al input de `sendMediaMessage`. Cuando el override es `document`: subir a Graph con `application/octet-stream` (esquiva chequeo nativo de tipo en Cloud API), persistir `mimeType='application/octet-stream'` y `kind='document'`, enviar el mensaje a Graph como `type=document` con el `filename` original preservado.
+- [x] **T2a03** En `src/app/api/conversations/[id]/messages/media/route.ts`: aceptar campo opcional `kind` en el form. Si viene, validar contra `ALLOWED_KIND_OVERRIDES` (cualquier valor no permitido se ignora silenciosamente, nunca amplía los tipos nativos).
+
+### Client — modelo de cola + estado por adjunto
+
+- [x] **T2a04** En `src/components/inbox/helpers.ts`: añadir flag `needsVideoAsDocumentConfirm` a `PendingAttachment`. `classifyForQueue` para video >16MB y ≤100MB devuelve `willSendAsDocument=true, needsVideoAsDocumentConfirm=true` (la cola NO auto-re-taggea silenciosamente; pide confirmación). Para >100MB sigue devolviendo `null`.
+- [x] **T2a05** En `src/components/inbox/attachment-queue.tsx`: añadir acciones `confirmVideoAsDocument(id)` y `retry(id)` al reducer; exponer `confirmVideoAsDocument`, `retry`, `updateStatus`, `readyToSend`, `needsVideoAsDocumentConfirmCount` en `useAttachmentQueue`. Pasar `onConfirmVideoAsDocument` y `onRetry` a `AttachmentQueueList`.
+
+### Client — componentes
+
+- [x] **T2a06** En `src/components/inbox/attachment-item.tsx`:
+  - Banner inline de confirmación `Excede el límite de video (16 MB). ¿Enviarlo como documento? [Enviar como documento]` cuando `needsVideoAsDocumentConfirm=true`.
+  - Botón `↻ Reintentar` + texto del error del servidor cuando `status='failed'`.
+  - Indicadores `sending` (spinner) y `sent` (check) en la esquina del preview.
+  - X oculto cuando está bloqueado (la confirmación tiene su propio botón) y cuando está `sent`.
+  - ARIA: `aria-label` dinámico con estado (`pendiente | enviando | enviado | con error`).
+- [x] **T2a07** En `src/components/inbox/attachment-queue.tsx`: `AttachmentQueueList` reenvía `onConfirmVideoAsDocument` y `onRetry` por adjunto.
+
+### Client — composer: bucle de envío
+
+- [x] **T2a08** En `src/components/inbox/composer.tsx`:
+  - `apiSend` defensivo contra `fetch` que lanza por red caída (devuelve string, no propaga).
+  - `submitQueue` envuelve `runQueueSend` con `submitInFlight` (useRef) como anti-doble-envío (capa lógica, independiente del `disabled` del botón).
+  - Caption del textarea se aplica SOLO al primer adjunto intentado (vía `runQueueSend`).
+  - Si TODO salió bien (sin errores y sin adjuntos bloqueados), limpia el textarea; si no, conserva el caption para reintentos manuales.
+  - Envía el campo `kind=document` cuando el adjunto tiene `willSendAsDocument=true`.
+  - Botón Enviar deshabilitado si hay adjuntos bloqueados sin adjuntos listos para enviar.
+  - Línea de aviso debajo de la cola cuando hay adjuntos bloqueados por confirmación.
+
+### Client — `runQueueSend` (función pura testeable)
+
+- [x] **T2a09** En `src/components/inbox/attachment-queue.tsx`: exportar `runQueueSend({attachments, sendOne, onStatus, caption})` puro, sin React. Garantiza:
+  - iteración secuencial `for await`;
+  - `caption` solo al primero;
+  - omite `needsVideoAsDocumentConfirm=true` (skipped);
+  - omite `status='sent'` (ya terminal) y `status='sending'` (defensivo);
+  - un fallo no aborta el bucle (cada `sendOne` se evalúa independientemente).
+
+### Tests nuevos
+
+- [x] **T2a10** Actualizar `tests/unit/attachment-queue-classify.test.ts` con el flag `needsVideoAsDocumentConfirm` (13 tests).
+- [x] **T2a11** Añadir a `tests/unit/attachment-queue-reducer.test.ts`: tests de `confirmVideoAsDocument` y `retry` (3 tests).
+- [x] **T2a12** Añadir `tests/unit/attachment-queue-run.test.ts`: tests de `runQueueSend` cubriendo multi-send secuencial, fallo parcial, retry, caption solo al primero, bloqueo video→document, no duplicar `sent`, no re-entrada en `sending`, anti-doble-envío con patrón guard (8 tests).
+- [x] **T2a13** Añadir `tests/unit/send-media-kind-override.test.ts`: tests del override tipado en `sendMediaMessage` (4 tests: video 30MB como document, pdf normal intacto, >100MB rejected, kind no permitido rejected).
+- [x] **T2a14** Añadir a `tests/unit/media-send.test.ts`: tests de `validateOutgoing` con override (6 tests).
+
+### Verificación del commit
+
+- [x] **T2a15** `pnpm typecheck && pnpm lint && pnpm build && pnpm test` — verde. 488 tests pasan (28 nuevos).
 
 ### Self-test E2E (sección 009)
 

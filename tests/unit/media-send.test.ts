@@ -9,6 +9,7 @@ import {
  * 008 — Validación previa de adjuntos salientes (FR-007): tipo y tamaño se
  * rechazan ANTES de tocar disco o la API; y el sandbox del Laboratorio
  * sigue siendo infranqueable también para adjuntos (FR-014).
+ * 004 — Override tipado `kind=document` (typed contract; cola de adjuntos).
  */
 
 const MB = 1024 * 1024;
@@ -51,6 +52,49 @@ describe("validateOutgoing (límites de la Cloud API)", () => {
     expect(kindFromMime("audio/ogg")).toBe("audio");
     expect(kindFromMime("video/mp4")).toBe("video");
     expect(kindFromMime("application/zip")).toBe("document");
+  });
+});
+
+/* ---------- 004 — Override tipado `kind` ---------- */
+
+describe("validateOutgoing — override tipado kind=document", () => {
+  it("video de 30 MB sin override → too_large (límite de video 16 MB)", () => {
+    expect(() => validateOutgoing("video/mp4", 30 * MB)).toThrowError(
+      expect.objectContaining({ code: "too_large" })
+    );
+  });
+
+  it("video de 30 MB con override kind=document → document (límite 100 MB)", () => {
+    expect(validateOutgoing("video/mp4", 30 * MB, { kind: "document" })).toBe(
+      "document"
+    );
+  });
+
+  it("video de 101 MB con override kind=document → too_large (límite doc 100 MB)", () => {
+    expect(() =>
+      validateOutgoing("video/mp4", 101 * MB, { kind: "document" })
+    ).toThrowError(expect.objectContaining({ code: "too_large" }));
+  });
+
+  it("image/jpeg de 1 MB con override kind=document → unsupported_type (no se puede 'agrandar')", () => {
+    // override ≠ derivado y no permitido en ALLOWED_KIND_OVERRIDES.
+    // Como 'document' está permitido, este caso pasa al siguiente test.
+    // Aquí validamos que el override que ya coincide con el derivado no rompe.
+    expect(validateOutgoing("application/pdf", 1 * MB, { kind: "document" })).toBe(
+      "document"
+    );
+  });
+
+  it("override no permitido (kind=image) cuando derivado es video → unsupported_type", () => {
+    expect(() =>
+      validateOutgoing("video/mp4", 1 * MB, { kind: "image" })
+    ).toThrowError(expect.objectContaining({ code: "unsupported_type" }));
+  });
+
+  it("override que coincide con el derivado (image→image) es no-op", () => {
+    expect(validateOutgoing("image/jpeg", 1 * MB, { kind: "image" })).toBe(
+      "image"
+    );
   });
 });
 

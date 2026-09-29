@@ -86,6 +86,13 @@ export type PendingAttachment = {
   effectiveMime: string;
   /** true cuando un video >16MB se re-taggea como documento. */
   willSendAsDocument: boolean;
+  /**
+   * 004 (corte 2) — `true` para videos >16MB y ≤100MB encolados como
+   * documento. La cola NO los envía hasta que el operador confirme
+   * explícitamente ("Enviar como documento"). El servidor usa el override
+   * tipado `kind=document` en el endpoint.
+   */
+  needsVideoAsDocumentConfirm: boolean;
   status: AttachStatus;
   error: string | null;
 };
@@ -101,10 +108,17 @@ export type ClassifiableFile = {
 };
 
 /**
- * Decide el kind, MIME efectivo y `willSendAsDocument` antes de encolar.
- * Devuelve `null` cuando el archivo excede el límite duro de 100 MB o su
- * MIME no es utilizable. Esta es una **pre-validación cliente suave**:
- * el servidor sigue siendo la fuente de verdad (FR-15 / NF-1).
+ * Decide el kind, MIME efectivo, `willSendAsDocument` y la marca de
+ * confirmación explícita antes de encolar. Devuelve `null` cuando el archivo
+ * excede el límite duro de 100 MB o su tamaño es inválido. Esta es una
+ * **pre-validación cliente suave**: el servidor sigue siendo la fuente de
+ * verdad (FR-15 / NF-1).
+ *
+ * Caso video >16MB y ≤100MB: la cola NO auto-re-taggea silenciosamente.
+ * Devuelve `kind="document"` con `willSendAsDocument=true` Y
+ * `needsVideoAsDocumentConfirm=true`. El operador debe aceptar explícitamente
+ * antes de poder enviar; mientras tanto el archivo está en la cola pero
+ * bloqueado (status `pending`).
  */
 export function classifyForQueue(
   file: ClassifiableFile
@@ -112,6 +126,7 @@ export function classifyForQueue(
   kind: AttachKind;
   effectiveMime: string;
   willSendAsDocument: boolean;
+  needsVideoAsDocumentConfirm: boolean;
 } | null {
   if (file.size > DOC_MAX) return null;
   if (file.size <= 0) return null;
@@ -125,6 +140,7 @@ export function classifyForQueue(
       kind: "image",
       effectiveMime: mime || "image/jpeg",
       willSendAsDocument: false,
+      needsVideoAsDocumentConfirm: false,
     };
   }
 
@@ -133,20 +149,30 @@ export function classifyForQueue(
       kind: "audio",
       effectiveMime: mime || "audio/mpeg",
       willSendAsDocument: false,
+      needsVideoAsDocumentConfirm: false,
     };
   }
 
   if (mime.startsWith("video/")) {
     if (file.size > VIDEO_MAX_AS_VIDEO) {
-      // >16MB: la Cloud API rechaza video. El cliente lo re-taggea como
-      // documento preservando el nombre original.
+      // >16MB: la Cloud API rechaza video. El cliente lo encola como
+      // documento (MIME y kind), pero BLOQUEA el envío hasta que el
+      // operador confirme explícitamente "Enviar como documento". Esto
+      // cumple el requisito de UX: "ofrecer una acción clara" en vez de
+      // un re-tag silencioso.
       return {
         kind: "document",
         effectiveMime: "application/octet-stream",
         willSendAsDocument: true,
+        needsVideoAsDocumentConfirm: true,
       };
     }
-    return { kind: "video", effectiveMime: mime, willSendAsDocument: false };
+    return {
+      kind: "video",
+      effectiveMime: mime,
+      willSendAsDocument: false,
+      needsVideoAsDocumentConfirm: false,
+    };
   }
 
   // Cualquier otro tipo (incluido MIME ausente) entra como documento.
@@ -154,6 +180,7 @@ export function classifyForQueue(
     kind: "document",
     effectiveMime: mime || "application/octet-stream",
     willSendAsDocument: false,
+    needsVideoAsDocumentConfirm: false,
   };
 }
 

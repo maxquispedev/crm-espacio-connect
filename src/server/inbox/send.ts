@@ -14,6 +14,7 @@ import {
   saveMediaFile,
   uploadGraphMedia,
   validateOutgoing,
+  type FileMediaKind,
 } from "@/server/whatsapp/media";
 import { cancelFollowUpsOnManualReply } from "@/server/sales/follow-ups/store";
 
@@ -206,15 +207,40 @@ export async function sendText(input: {
  * El archivo queda ANTES en el volumen local (fuente durable de la preview);
  * si Graph falla tras eso, el mensaje se persiste `failed` (visible en el
  * hilo, nunca se pierde en silencio) y el SendError lleva `messageId`.
+ *
+ * 004 — Acepta un override opcional `kind` (typed contract) para que el
+ * cliente pueda forzar `document` cuando el archivo cruza el límite de su
+ * tipo nativo (típico: video > 16 MB). Cuando el override es a `document`,
+ * la subida a Graph y el `mimeType` persistido usan `application/octet-stream`
+ * para esquivar el chequeo de tamaño del tipo nativo en la Cloud API; el
+ * `fileName` original se conserva en el payload y en `mediaAsset.fileName`.
  */
 export async function sendMediaMessage(input: {
   conversationId: string;
   organizationId: string;
   file: { data: Buffer; mimeType: string; fileName?: string };
   caption?: string;
+  /** Override tipado del kind (ver `validateOutgoing` para constraints). */
+  kind?: FileMediaKind;
 }): Promise<SendResult> {
   // Validación previa (FR-007): tipo y tamaño antes de tocar disco o red.
-  const kind = validateOutgoing(input.file.mimeType, input.file.data.byteLength);
+  // El override (typed contract) decide qué límites aplicar; el servidor
+  // no se basa en faking del MIME para aceptar el archivo.
+  const kind = validateOutgoing(input.file.mimeType, input.file.data.byteLength, {
+    kind: input.kind,
+  });
+
+  // Cuando el cliente forza `document` (caso video grande) subimos y
+  // persistimos como application/octet-stream: el binario real viaja intacto,
+  // pero la metadata declara "documento genérico" para no activar el chequeo
+  // de tipo nativo de la Cloud API. El nombre original va en el payload.
+  const isKindOverridden = Boolean(input.kind && input.kind === "document");
+  const uploadFile = isKindOverridden
+    ? {
+        ...input.file,
+        mimeType: "application/octet-stream",
+      }
+    : input.file;
 
   const { credentials, recipient } = await prepareSend(
     input.conversationId,
@@ -234,7 +260,7 @@ export async function sendMediaMessage(input: {
       id: assetId,
       organizationId: input.organizationId,
       kind,
-      mimeType: input.file.mimeType,
+      mimeType: isKindOverridden ? "application/octet-stream" : input.file.mimeType,
       fileName: input.file.fileName ?? null,
       fileSize: input.file.data.byteLength,
       caption: input.caption ?? null,
@@ -245,7 +271,7 @@ export async function sendMediaMessage(input: {
   const asset = assetRows[0]!;
 
   try {
-    const waMediaId = await uploadGraphMedia(credentials, input.file);
+    const waMediaId = await uploadGraphMedia(credentials, uploadFile);
     await db
       .update(schema.mediaAsset)
       .set({ waMediaId, updatedAt: new Date() })

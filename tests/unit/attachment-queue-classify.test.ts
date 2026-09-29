@@ -26,6 +26,7 @@ describe("classifyForQueue", () => {
       kind: "image",
       effectiveMime: "image/jpeg",
       willSendAsDocument: false,
+      needsVideoAsDocumentConfirm: false,
     });
   });
 
@@ -38,6 +39,7 @@ describe("classifyForQueue", () => {
     const r = classifyForQueue(fakeFile("voz.ogg", 5 * 1024 * 1024, "audio/ogg"));
     expect(r?.kind).toBe("audio");
     expect(r?.effectiveMime).toBe("audio/ogg");
+    expect(r?.needsVideoAsDocumentConfirm).toBe(false);
   });
 
   it("acepta video mp4 dentro del límite como video (16 MB exacto incluido)", () => {
@@ -46,9 +48,10 @@ describe("classifyForQueue", () => {
     );
     expect(r?.kind).toBe("video");
     expect(r?.willSendAsDocument).toBe(false);
+    expect(r?.needsVideoAsDocumentConfirm).toBe(false);
   });
 
-  it("re-taggea video > 16 MB como documento con application/octet-stream", () => {
+  it("re-taggea video > 16 MB como documento y exige confirmación explícita", () => {
     const r = classifyForQueue(
       fakeFile("clip.mp4", VIDEO_MAX_AS_VIDEO + 1, "video/mp4")
     );
@@ -56,21 +59,26 @@ describe("classifyForQueue", () => {
       kind: "document",
       effectiveMime: "application/octet-stream",
       willSendAsDocument: true,
+      needsVideoAsDocumentConfirm: true,
     });
   });
 
-  it("re-taggea video entre 16 MB y 100 MB manteniendo willSendAsDocument=true", () => {
+  it("re-taggea video entre 16 MB y 100 MB manteniendo willSendAsDocument=true y pide confirmación", () => {
     const r = classifyForQueue(
       fakeFile("clip.mp4", 30 * 1024 * 1024, "video/mp4")
     );
     expect(r?.kind).toBe("document");
     expect(r?.effectiveMime).toBe("application/octet-stream");
     expect(r?.willSendAsDocument).toBe(true);
+    expect(r?.needsVideoAsDocumentConfirm).toBe(true);
   });
 
   it("rechaza cualquier archivo > 100 MB (null)", () => {
     expect(
       classifyForQueue(fakeFile("huge.pdf", DOC_MAX + 1, "application/pdf"))
+    ).toBeNull();
+    expect(
+      classifyForQueue(fakeFile("huge.mp4", DOC_MAX + 1, "video/mp4"))
     ).toBeNull();
     expect(
       classifyForQueue(fakeFile("huge.mp4", DOC_MAX + 1, "video/mp4"))
@@ -82,6 +90,7 @@ describe("classifyForQueue", () => {
     expect(r?.kind).toBe("document");
     expect(r?.effectiveMime).toBe("application/pdf");
     expect(r?.willSendAsDocument).toBe(false);
+    expect(r?.needsVideoAsDocumentConfirm).toBe(false);
   });
 
   it("MIME vacío cae como documento con application/octet-stream", () => {
@@ -90,6 +99,7 @@ describe("classifyForQueue", () => {
       kind: "document",
       effectiveMime: "application/octet-stream",
       willSendAsDocument: false,
+      needsVideoAsDocumentConfirm: false,
     });
   });
 
@@ -102,14 +112,16 @@ describe("classifyForQueue", () => {
       fakeFile("clip.mp4", VIDEO_MAX_AS_VIDEO, "video/mp4")
     );
     expect(r?.kind).toBe("video");
+    expect(r?.needsVideoAsDocumentConfirm).toBe(false);
   });
 
-  it("re-taggea video de exactamente 16 MB + 1 byte", () => {
+  it("re-taggea video de exactamente 16 MB + 1 byte y pide confirmación", () => {
     const r = classifyForQueue(
       fakeFile("clip.mp4", VIDEO_MAX_AS_VIDEO + 1, "video/mp4")
     );
     expect(r?.kind).toBe("document");
     expect(r?.willSendAsDocument).toBe(true);
+    expect(r?.needsVideoAsDocumentConfirm).toBe(true);
   });
 
   it("acepta documento de exactamente 100 MB (frontera inclusiva)", () => {

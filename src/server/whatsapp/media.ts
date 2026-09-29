@@ -68,15 +68,55 @@ export class MediaValidationError extends Error {
 }
 
 /**
+ * Tipos de mensaje que pueden viajar como archivo adjunto (excluye
+ * `location` y `contacts` que son payloads estructurados). `MediaKind` se
+ * conserva amplio para no romper consumidores existentes (`schema.mediaAsset`
+ * incluye sticker/contacts/etc), pero el contrato de override de esta capa
+ * se cierra solo a los cuatro tipos de archivo.
+ */
+export type FileMediaKind = Exclude<
+  MediaKind,
+  "sticker" | "location" | "contacts"
+>;
+
+/**
+ * 004 — Kind override explícito del cliente (typed contract). Por ahora
+ * solo se permite forzar `document` desde la cola de adjuntos cuando el
+ * archivo cruza el límite de su tipo nativo (p. ej. video > 16 MB que se
+ * re-taggea como documento). Bloquear otros overrides mantiene a salvo el
+ * bypass: el cliente nunca puede "agrandar" un image/video/audio.
+ */
+export const ALLOWED_KIND_OVERRIDES: ReadonlySet<FileMediaKind> = new Set<FileMediaKind>([
+  "document",
+]);
+
+/**
  * Valida MIME y tamaño para envío; devuelve el kind resuelto. Los formatos
  * que WhatsApp no acepta como su tipo nativo (p. ej. image/bmp) van como
- * documento — igual que hace la app de WhatsApp.
+ * documento — igual que hace la app de WhatsApp. Acepta un override opcional
+ * `kind` para forzar la categoría (typed contract para el caso
+ * "video grande como documento"); el cliente lo pide explícitamente y el
+ * servidor valida que esté en `ALLOWED_KIND_OVERRIDES`.
  */
-export function validateOutgoing(mime: string, sizeBytes: number) {
+export function validateOutgoing(
+  mime: string,
+  sizeBytes: number,
+  opts?: { kind?: FileMediaKind }
+): FileMediaKind {
   if (!/^[\w.-]+\/[\w.+-]+$/.test(mime)) {
     throw new MediaValidationError("unsupported_type", "Tipo de archivo no reconocido");
   }
-  const kind = kindFromMime(mime);
+  const derived: FileMediaKind = kindFromMime(mime);
+  let kind: FileMediaKind = derived;
+  if (opts?.kind && opts.kind !== derived) {
+    if (!ALLOWED_KIND_OVERRIDES.has(opts.kind)) {
+      throw new MediaValidationError(
+        "unsupported_type",
+        "Tipo de archivo no soportado para override"
+      );
+    }
+    kind = opts.kind;
+  }
   const limit = MEDIA_LIMITS[kind];
   if (sizeBytes > limit.maxBytes) {
     throw new MediaValidationError(

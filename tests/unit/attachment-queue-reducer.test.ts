@@ -29,6 +29,7 @@ function att(
     kind: "image",
     effectiveMime: file.type || "application/octet-stream",
     willSendAsDocument: false,
+    needsVideoAsDocumentConfirm: false,
     status: "pending",
     error: null,
     ...overrides,
@@ -139,6 +140,67 @@ describe("queueReducer — updateStatus", () => {
     });
     expect(s1.attachments[0]?.status).toBe("failed");
     expect(s1.attachments[1]?.status).toBe("pending");
+  });
+});
+
+describe("queueReducer — confirmVideoAsDocument", () => {
+  it("desbloquea un adjunto (needsVideoAsDocumentConfirm=false) preservando el resto", () => {
+    const blocked = att("att_1", fakeFile("clip.mp4", 30 * 1024 * 1024, "video/mp4"), {
+      kind: "document",
+      willSendAsDocument: true,
+      needsVideoAsDocumentConfirm: true,
+    });
+    const other = att("att_2", fakeFile("a.jpg", 100, "image/jpeg"));
+    const s1 = queueReducer(empty, { type: "add", items: [blocked, other] });
+    const s2 = queueReducer(s1, { type: "confirmVideoAsDocument", id: "att_1" });
+    expect(s2.attachments[0]?.needsVideoAsDocumentConfirm).toBe(false);
+    expect(s2.attachments[0]?.willSendAsDocument).toBe(true);
+    expect(s2.attachments[1]?.id).toBe("att_2");
+  });
+
+  it("no afecta a adjuntos no bloqueados", () => {
+    const blocked = att("att_1", fakeFile("clip.mp4", 30 * 1024 * 1024, "video/mp4"), {
+      kind: "document",
+      willSendAsDocument: true,
+      needsVideoAsDocumentConfirm: true,
+    });
+    const plain = att("att_2", fakeFile("a.jpg", 100, "image/jpeg"));
+    const s1 = queueReducer(empty, { type: "add", items: [blocked, plain] });
+    const s2 = queueReducer(s1, { type: "confirmVideoAsDocument", id: "att_2" });
+    expect(s2.attachments[1]?.needsVideoAsDocumentConfirm).toBe(false);
+  });
+});
+
+describe("queueReducer — retry", () => {
+  it("transita failed → pending y limpia el error", () => {
+    const failed = att("att_1", fakeFile("a.jpg", 100, "image/jpeg"), {
+      status: "failed",
+      error: "boom",
+    });
+    const s1 = queueReducer(empty, { type: "add", items: [failed] });
+    const s2 = queueReducer(s1, { type: "retry", id: "att_1" });
+    expect(s2.attachments[0]?.status).toBe("pending");
+    expect(s2.attachments[0]?.error).toBeNull();
+  });
+
+  it("no afecta a adjuntos que NO están en failed", () => {
+    const sent = att("att_1", fakeFile("a.jpg", 100, "image/jpeg"), {
+      status: "sent",
+    });
+    const pending = att("att_2", fakeFile("b.jpg", 100, "image/jpeg"));
+    const s1 = queueReducer(empty, { type: "add", items: [sent, pending] });
+    const s2 = queueReducer(s1, { type: "retry", id: "att_1" });
+    expect(s2.attachments[0]?.status).toBe("sent");
+    const s3 = queueReducer(s2, { type: "retry", id: "att_2" });
+    // pending ya estaba pending — sin cambio observable (sigue pending).
+    expect(s3.attachments[1]?.status).toBe("pending");
+  });
+
+  it("no afecta a ids inexistentes", () => {
+    const a = att("att_1", fakeFile("a.jpg", 100, "image/jpeg"));
+    const s1 = queueReducer(empty, { type: "add", items: [a] });
+    const s2 = queueReducer(s1, { type: "retry", id: "no_existe" });
+    expect(s2.attachments).toEqual(s1.attachments);
   });
 });
 

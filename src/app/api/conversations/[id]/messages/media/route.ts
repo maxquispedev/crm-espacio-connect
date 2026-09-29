@@ -1,7 +1,11 @@
 import { apiError, withAuth } from "@/lib/api";
 import { getConversation } from "@/server/inbox/queries";
 import { SendError, sendMediaMessage } from "@/server/inbox/send";
-import { MediaValidationError } from "@/server/whatsapp/media";
+import {
+  ALLOWED_KIND_OVERRIDES,
+  MediaValidationError,
+  type FileMediaKind,
+} from "@/server/whatsapp/media";
 
 export const dynamic = "force-dynamic";
 
@@ -18,9 +22,26 @@ const SEND_ERROR_STATUS: Record<SendError["code"], number> = {
 };
 
 /**
+ * Tipos permitidos para override de `kind`. Lo decide el servidor; el cliente
+ * no puede saltarse `ALLOWED_KIND_OVERRIDES` aunque mande otro valor.
+ */
+function parseKindOverride(
+  raw: FormDataEntryValue | null
+): FileMediaKind | undefined {
+  if (typeof raw !== "string" || !raw.trim()) return undefined;
+  const v = raw.trim() as FileMediaKind;
+  return ALLOWED_KIND_OVERRIDES.has(v) ? v : undefined;
+}
+
+/**
  * 008 — Envía un adjunto de archivo por la conversación (multipart):
- * `file` (binario, requerido) + `caption` (opcional). La validación de tipo y
- * tamaño ocurre ANTES de tocar Graph (413/415 con el límite en el mensaje).
+ * `file` (binario, requerido) + `caption` (opcional) + `kind` (override
+ * opcional, typed contract). La validación de tipo y tamaño ocurre ANTES de
+ * tocar Graph (413/415 con el límite en el mensaje).
+ *
+ * 004 — El campo `kind` permite a la cola de adjuntos del composer forzar
+ * `document` (caso video > 16 MB) sin tener que falsificar el MIME del
+ * archivo. El servidor lo valida contra `ALLOWED_KIND_OVERRIDES`.
  */
 export const POST = withAuth(async (session, req: Request, ctx: Params) => {
   const { id } = await ctx.params;
@@ -40,6 +61,10 @@ export const POST = withAuth(async (session, req: Request, ctx: Params) => {
     typeof captionRaw === "string" && captionRaw.trim()
       ? captionRaw.trim().slice(0, 1024)
       : undefined;
+  // Override opcional del kind (typed contract 004). Si viene un valor no
+  // permitido, se ignora silenciosamente: el cliente no puede "agrandar"
+  // un tipo nativo, solo forzar `document` (ver ALLOWED_KIND_OVERRIDES).
+  const kindOverride = parseKindOverride(form.get("kind"));
 
   const data = Buffer.from(await file.arrayBuffer());
 
@@ -53,6 +78,7 @@ export const POST = withAuth(async (session, req: Request, ctx: Params) => {
         fileName: file.name || undefined,
       },
       caption,
+      kind: kindOverride,
     });
     return Response.json({ messageId: result.messageId }, { status: 201 });
   } catch (err) {
