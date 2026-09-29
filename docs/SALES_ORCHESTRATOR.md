@@ -20,6 +20,11 @@ Anclas actuales del CRM (no modificar en este phase):
 
 Capa comercial automática para **Vende Veloz 365**, opt-in por organización.
 
+Este documento describe la implementación V1 concreta de Vende Veloz. A
+2026-09-29 **no debe reinterpretarse como un contrato único para futuras
+campañas**: el motor contiene piezas reutilizables, pero producto, preguntas,
+política, oferta y writer siguen congelados para este funnel.
+
 ```
 mensaje WhatsApp
   → CRM persiste el mensaje
@@ -510,3 +515,83 @@ No bloquean el Orchestrator V1 (ver `docs/SALES_FOLLOW_UPS.md` para el motor ya 
 - Sales Orchestrator V1 queda congelado/cerrado.
 - Próximo bloque independiente: motor de follow-ups. → cerrado: `docs/SALES_FOLLOW_UPS.md`.
 
+
+
+---
+
+## 13. Checkpoint 2026-09-29 — evolución futura por campaña (DEFERRED)
+
+### Estado técnico actual
+
+La integración ya separa correctamente responsabilidades:
+
+- **Jev** interpreta el state comercial y devuelve una decisión estructurada;
+- **CRM** conserva estado durable y ejecuta lanes, pipeline, handoff y follow-ups;
+- **writer OpenRouter-compatible** redacta dentro de una decisión ya resuelta.
+
+Son ampliamente reutilizables:
+
+- cliente Jev / TypeSafe;
+- normalizer y contrato de decisión;
+- estado durable del lead;
+- lanes;
+- resolver determinístico;
+- handoff;
+- infraestructura de follow-ups.
+
+El acoplamiento que queda hoy es deliberado y pertenece al funnel Vende Veloz:
+
+- `VENDE_VELOZ_PRODUCT`;
+- `VENDE_VELOZ_COMMERCIAL_POLICY`;
+- `VENDE_VELOZ_OFFER`;
+- `JEV_SALES_QUESTIONS_V2`;
+- imports directos en `build-state.ts`;
+- prompt/reglas concretas de `writer.ts`;
+- acciones/semántica diseñadas alrededor del funnel actual.
+
+### Decisión
+
+**No hacer ahora un refactor genérico.** La prioridad es operar Vende Veloz y
+validar el funnel real.
+
+La siguiente campaña distinta que requiera Jev será el trigger para abrir un
+nuevo spec SDD. La unidad de configuración deberá ser **la campaña / estrategia
+comercial**, no simplemente la organización.
+
+Ejemplo: una misma organización Espacio Veloz podría tener campañas separadas de
+correo corporativo, hosting y automatización con criterios comerciales distintos.
+
+### Dirección candidata del futuro spec
+
+Un **Campaign Playbook** deberá poder variar, como mínimo:
+
+1. **Product / Offer Context** — producto, propuesta y condiciones reales;
+2. **Jev Evaluation Questions** — qué señales debe interpretar Jev;
+3. **Lead Management Policy** — cómo se autogestiona/posiciona el lead;
+4. **Human Handoff Policy** — cuándo interviene una persona;
+5. **Writer Policy** — tono, claims, recursos, oferta y forma de contestar;
+6. **Follow-up Policy** — cuándo y cuánto seguir.
+
+No definir todavía tablas, IDs, versionado, CRUD, atribución ni router de
+campañas. Esas decisiones deben salir de la segunda campaña real, no de
+abstracción anticipada.
+
+### Invariantes que deben sobrevivir a la futura generalización
+
+- Jev interpreta; **no ejecuta efectos**.
+- El CRM decide y persiste lane, pipeline, follow-ups y handoff.
+- El writer redacta; **no recupera autoridad comercial**.
+- El aislamiento tenant sigue siendo obligatorio.
+- Las reglas de una campaña no pueden contaminar otra.
+- Vende Veloz debe seguir pasando como baseline/regresión.
+- Orchestrator OFF conserva la ruta legacy.
+
+### Punto exacto para continuar más adelante
+
+Cuando exista la siguiente campaña:
+
+1. leer `docs/CURRENT_STATE.md` y este documento;
+2. documentar diferencias reales respecto a Vende Veloz;
+3. abrir el siguiente spec SDD;
+4. extraer solo las dimensiones demostradas por ese segundo caso;
+5. reutilizar el núcleo actual y evitar una reescritura.

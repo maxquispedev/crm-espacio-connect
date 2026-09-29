@@ -1,6 +1,6 @@
 # CURRENT STATE — Espacio Connect
 
-**Actualizado:** 2026-09-29 (sync técnico tras spec 004 polish + corte 2c + corte 2d + corte 2e)
+**Actualizado:** 2026-09-29 (spec 005 abierto + checkpoint técnico de evolución multi-campaña del Sales Orchestrator)
 **Branch:** `main`
 **Baseline funcional previo a esta sincronización documental:** `bbae7cd1dfd98d5006cfd26440a8acf1def2c1bb`
 **Propósito:** checkpoint técnico rápido. Las decisiones de negocio viven en el cerebro de Obsidian; la implementación y la historia SDD viven aquí.
@@ -138,6 +138,58 @@ Estado implementado:
 Último freeze registrado: typecheck/lint/test/build verdes con 382 tests.
 E2E/live Jev quedó pendiente en ese checkpoint por falta de app local y
 credenciales TypeSafe/Jev.
+
+### Checkpoint técnico — núcleo reusable vs. configuración Vende Veloz
+
+El Sales Orchestrator **ya está cableado al flujo real del inbox** cuando
+`agent_profile.sales_orchestrator_enabled=true`. Ruta vigente:
+
+`ingest → maybeRunAgentTurn → runAgentTurn → runSalesOrchestratorTurn → Jev → resolver determinístico → writer → efectos CRM`.
+
+Piezas que hoy funcionan como núcleo reusable:
+
+- `src/server/sales/client.ts`: adaptador TypeSafe/Jev aislado, endpoint completo por env, retries y degradación segura;
+- `normalize.ts` / `decision.ts`: frontera raw provider → decisión tipada;
+- lanes y estado durable del lead;
+- resolver determinístico de lane/efectos;
+- handoff humano;
+- follow-ups durables;
+- separación estricta Jev = interpretación, CRM = efectos, writer = redacción.
+
+Piezas todavía específicas del funnel/campaña **Vende Veloz 365**:
+
+- `src/server/sales/vende-veloz.ts`: producto, política comercial y oferta;
+- `src/server/sales/questions.ts`: preguntas y criterios Jev del funnel actual;
+- `build-state.ts`: inyecta producto/política Vende Veloz al state;
+- `writer.ts`: prompt, pricing, claims y reglas de respuesta de Vende Veloz;
+- parte de `next_action` / semántica del resolver refleja ese proceso comercial.
+
+### Decisión de continuidad — DEFERRED multi-campaign
+
+**No generalizar ahora.** La prioridad inmediata es poner Vende Veloz en
+operación real con lo ya construido y corregir únicamente evidencia que aparezca
+en producción.
+
+Cuando exista la siguiente campaña comercial concreta, abrir un nuevo spec SDD para
+extraer la configuración específica hacia un concepto de **Campaign Playbook**.
+La unidad de estrategia será la campaña, no la organización completa: una misma
+organización podrá tener campañas diferentes con reglas diferentes.
+
+Dimensiones candidatas del futuro playbook, sin definir todavía schema ni CRUD:
+
+- Product / Offer Context;
+- Jev Evaluation Questions;
+- Lead Management Policy (autogestión, lane, pipeline, next action);
+- Human Handoff Policy;
+- Writer Policy;
+- Follow-up Policy.
+
+El trabajo futuro debe **extraer/injectar configuración alrededor del núcleo
+existente**, no reescribir Jev ni el Sales Orchestrator. Vende Veloz queda como
+primer playbook concreto y baseline de regresión.
+
+**Punto de reanudación:** segunda campaña real → comparar sus necesidades con
+Vende Veloz → abrir spec → extraer únicamente lo que efectivamente deba variar.
 
 ---
 
@@ -389,6 +441,9 @@ reportarse como READY punta a punta hasta entonces.
 ---
 
 ## 10. Próximo checkpoint recomendado
+
+**No bloquear la salida de Vende Veloz por el refactor multi-campaña futuro.**
+Primero operar el funnel actual y obtener evidencia real.
 
 Antes de añadir otra feature grande:
 
