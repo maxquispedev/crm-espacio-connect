@@ -45,6 +45,10 @@ const envSchema = z.object({
   TYPESAFE_API_KEY: z.string().optional(),
   TYPESAFE_JEV_ENDPOINT: z.string().url().optional(),
   JEV_MODEL: z.string().optional(),
+  // 007 — Bandera "ATRIBUCION". Apagada por defecto; cualquier valor
+  // distinto de "on" ⇒ apagada. Mientras esté apagada, toda la superficie
+  // CAPI devuelve 404 y 006 sigue mostrando origen sin ctwa_clid a Meta.
+  ATRIBUCION: z.string().optional(),
 });
 
 export type Env = z.infer<typeof envSchema>;

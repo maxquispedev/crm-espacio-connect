@@ -231,6 +231,38 @@ export async function POST(req: Request, ctx: Params) {
     });
   }
 
+  // 007 — POST {datasetId}/events → Conversions API.
+  // dataset id "DSET-FAIL" fuerza un fallo de Meta para los tests E2E.
+  // dataset id "DSET-ZERO" fuerza events_received = 0 (200 con cuerpo
+  // vacío de acuse). Cualquier otro id devuelve el acuse positivo.
+  if (path.length === 2 && path[1] === "events") {
+    const datasetId = path[0] ?? "";
+    if (datasetId === "DSET-FAIL") {
+      return Response.json(
+        {
+          error: {
+            message: "Dataset rejected by Meta",
+            type: "GraphMethodException",
+            code: 100,
+            fbtrace_id: `fbtrace_${nextN()}`,
+          },
+        },
+        { status: 400 }
+      );
+    }
+    if (datasetId === "DSET-ZERO") {
+      return Response.json({
+        events_received: 0,
+        fbtrace_id: `fbtrace_${nextN()}`,
+      });
+    }
+    // Acuse positivo: events_received = 1 con fbtrace_id determinístico.
+    return Response.json({
+      events_received: 1,
+      fbtrace_id: `fbtrace_${nextN()}`,
+    });
+  }
+
   return Response.json({});
 }
 

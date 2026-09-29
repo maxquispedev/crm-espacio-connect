@@ -2,11 +2,13 @@ import { and, eq } from "drizzle-orm";
 import { z } from "zod";
 import { apiError, parseBody, withAuth } from "@/lib/api";
 import { getDb, schema } from "@/lib/db";
+import { scoped } from "@/lib/db/tenant";
 import { publish } from "@/server/events/bus";
 import {
   StageGatewayError,
   moveLeadStage,
 } from "@/server/leads/stage-gateway";
+import { reportStageChangeOnMove } from "@/server/attribution/report-on-stage-change";
 
 export const dynamic = "force-dynamic";
 
@@ -68,5 +70,50 @@ export const PATCH = withAuth(async (session, req: Request, ctx: Params) => {
     });
   }
 
+  // 007 — Corte B: tras el commit exitoso del gateway, engancha CAPI.
+  // Best-effort absoluto: nunca afecta la respuesta al usuario ni rompe el
+  // drag/drop. Si Meta rechaza, la fila queda como `failed` consultable.
+  if (result.moved) {
+    const toStageName = await loadStageKindAndName(
+      session.organizationId,
+      result.toStageId
+    );
+    if (toStageName) {
+      void reportStageChangeOnMove({
+        organizationId: session.organizationId,
+        leadId: result.lead.id,
+        moved: true,
+        fromStageId: result.fromStageId,
+        toStageId: result.toStageId,
+        toStageName: toStageName.name,
+        toStageKind: toStageName.kind,
+      });
+    }
+  }
+
   return Response.json({ lead: result.lead });
 });
+
+async function loadStageKindAndName(
+  organizationId: string,
+  stageId: string
+): Promise<{ name: string; kind: "open" | "won" | "lost" } | null> {
+  const db = getDb();
+  const rows = await db
+    .select({
+      name: schema.pipelineStage.name,
+      kind: schema.pipelineStage.kind,
+    })
+    .from(schema.pipelineStage)
+    .where(
+      scoped(
+        schema.pipelineStage.organizationId,
+        organizationId,
+        eq(schema.pipelineStage.id, stageId)
+      )
+    )
+    .limit(1);
+  const r = rows[0];
+  if (!r) return null;
+  return { name: r.name, kind: r.kind };
+}

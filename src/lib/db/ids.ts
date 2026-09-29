@@ -21,6 +21,8 @@ const prefixes = {
   integrationEvent: "iev",
   salesFollowUpJob: "sfj",
   adAttribution: "adr",
+  conversionEvent: "cev",
+  capiSettings: "ccs",
 } as const;
 
 export type IdKind = keyof typeof prefixes;

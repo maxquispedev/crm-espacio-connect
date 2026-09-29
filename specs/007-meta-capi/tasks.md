@@ -119,102 +119,96 @@
 > Corte A, con dedup, best-effort, mock equivalente al upstream. Sin UI
 > final salvo tipos estrictamente necesarios.
 
-- [ ] B1. Migración aditiva y re-ejecutable `drizzle/00XX_meta_capi.sql`
-  con dos tablas nuevas:
-  - `conversion_event (id text PK cev_, organization_id NOT NULL,
-    conversation_id NOT NULL FK, event_name text NOT NULL CHECK in
-    ('QualifiedLead','Purchase'), custom_data jsonb NOT NULL,
-    payload jsonb NOT NULL, status text NOT NULL CHECK in
-    ('sent','failed','skipped'), fbtrace_id text NULL, error_message
-    text NULL, created_at timestamptz NOT NULL DEFAULT now(),
-    UNIQUE (organization_id, conversation_id, event_name))`;
-  - `capi_settings (id text PK ccs_, organization_id NOT NULL UNIQUE
-    FK, dataset_id text NOT NULL, access_token_ciphertext text NULL,
-    access_token_last4 text NULL, qualified_stage_id text NULL FK
-    pipeline_stage(id), updated_at timestamptz NOT NULL DEFAULT now())`.
-- [ ] B2. `src/lib/db/ids.ts`: prefijos `cev_`, `ccs_`. `src/lib/db/
+- [x] B1. Migración aditiva y re-ejecutable `drizzle/0007_meta_capi.sql`
+  con dos tablas nuevas (`conversion_event`, `capi_settings`). —
+  **2026-09-29**: `0007_meta_capi.sql` re-ejecutable (IF NOT EXISTS en
+  tablas/índices/check, DO con EXCEPTION WHEN duplicate_object para FK).
+  UNIQUE principal `(organization_id, conversation_id, event_name)` con
+  check de catálogo cerrado y de status.
+- [x] B2. `src/lib/db/ids.ts`: prefijos `cev_`, `ccs_`. `src/lib/db/
   schema.ts`: las dos tablas y relaciones (`ad_attribution` de 006 ya
-  existente).
-- [ ] B3. `src/lib/env.ts`: documentar `ATRIBUCION` (off por defecto;
-  valores válidos: `'on' | '' | ausente`).
-- [ ] B4. `src/server/attribution/flag.ts`: `isCapiEnabled()` siguiendo
-  el patrón de los flags existentes (agenda/flag). **Apagada por
-  defecto**; cualquier valor distinto de `'on'` ⇒ apagada.
-- [ ] B5. `src/lib/meta/capi.ts`: payload, catálogo cerrado de eventos
-  (solo `QualifiedLead`, `Purchase`), validación Zod, traducción de
-  centavos→unidades si aplica, lectura del acuse `events_received`,
-  clasificación `sent`/`failed` con motivo textual. Reusa el
-  `graphRequest` de `lib/meta/client.ts`.
-- [ ] B6. `src/server/attribution/settings.ts`: lectura/escritura de
-  `capi_settings` con cifrado AES-256-GCM (`lib/crypto`). Hacia el
-  cliente solo `last4` y estado; nunca a logs.
-- [ ] B7. `src/server/attribution/conversions.ts`:
-  - `reportStageChange({ organizationId, conversationId, fromStage,
-    toStage, customData })`:
-    - guardrail `is_test` → `skipped` con motivo;
-    - guardrail flag apagada → `skipped` con motivo;
-    - guardrail sin `ctwa_clid` (consultar `ad_attribution` de 006) →
-      `skipped` con motivo;
-    - dedup: `ON CONFLICT (organization_id, conversation_id,
-      event_name) DO NOTHING` con escritura previa en `conversion_event`
-      con `status = 'skipped'` si no aplica;
-    - elegir evento según mapeo:
-      - `toStage.kind = 'won'` y el evento no fue reportado antes para
-        esta conversación → `Purchase` (con `value`/`currency` **solo
-        si** el lead tiene monto válido; si no, sin ellos);
-      - `toStage.id === settings.qualifiedStageId` y el evento no fue
-        reportado antes → `QualifiedLead`;
-      - si no, sin cambios;
-    - emitir por `POST /{dataset_id}/events` con `action_source =
-      "business_messaging"` y `messaging_channel = "whatsapp"`;
-    - `user_data`: solo `ctwa_clid` (hash con SHA-256 según contrato
-      Meta) + `whatsapp_business_account_id`;
-    - acuse: `events_received >= 1` → `sent` con `fbtrace_id`;
-      cualquier otra cosa → `failed` con `error_message` textual;
-  - `emitConversion(...)` queda **público** con su dedup, su acuse y
-    su registro de actividad (es el mismo del upstream; permite que un
-    fork agregue el espejo `InitiateCheckout` documentado si quiere,
-    sin re-arquitectura).
-- [ ] B8. Enganchar `reportStageChange` en el gateway del Corte A:
-  - se llama **DESPUÉS** del commit exitoso (nunca dentro de la
-    transacción larga);
-  - se llama **fuera** de cualquier `try/catch` que afecte la respuesta
-    al usuario;
-  - el resultado (sent/failed/skipped) va a `conversion_event` y es
-    consultable por API;
-  - un fallo de Meta **jamás** revierte el cambio de etapa.
-- [ ] B9. APIs `/api/settings/capi`:
-  - `GET`: devuelve `capi_settings` saneado (sin ciphertext, solo
-    `dataset_id`, `access_token_last4`, `qualified_stage_id`, `updated_at`)
-    o 404 si la bandera está apagada;
-  - `POST/PATCH`: guarda `dataset_id`, token opcional (cifrado),
-    `qualified_stage_id`; valida con Zod; valida que la etapa
-    seleccionada sea del tenant y tenga `kind = 'open'`;
-  - autenticación Better Auth + tenant (`scoped()`); 404 si bandera
-    apagada.
-- [ ] B10. API `/api/settings/capi/events`: lista `conversion_event` del
-  tenant para la tabla de actividad; 404 si bandera apagada; paginación
-  simple.
-- [ ] B11. `src/app/api/dev/wa-mock/**` (o capa equivalente): el mock de
-  Graph aprende `POST {dataset}/events` para el Corte C — para Corte B
-  basta con que el adapter `lib/meta/capi.ts` sea testeable contra un
-  cliente inyectable.
-- [ ] B12. Unit tests:
-  - `capi-payload`: payload exacto (campos, `action_source`,
-    `messaging_channel`, `user_data` solo con `ctwa_clid` +
-    `whatsapp_business_account_id`);
-  - `capi-flag`: apagada por defecto, encendida solo con `ATRIBUCION=on`;
-  - `conversions`: mapeo de etapa → evento, dedup, guardrails
-    (`is_test`, sin `ctwa_clid`, sin dataset, sin etapa calificada),
-    `Purchase` sin `value` inventado, `events_received >= 1` →
-    `sent`;
-  - `stage-gateway` ya cubierto en A9.
-- [ ] B13. Self-test con mocks: `WA_MOCK_ENABLED=true`,
-  `OPENROUTER_BASE_URL` → ai-mock, mock de `{dataset}/events`. Sin
-  llamada real a Meta.
-- [ ] B14. Gate técnico: `pnpm typecheck && pnpm lint && pnpm build &&
-  pnpm test`.
-- [ ] B15. Working tree limpio. Un commit:
+  existente). — **2026-09-29**: `conversionEvent` y `capiSettings`
+  declarados con `organizationId NOT NULL` y FK con ON DELETE CASCADE
+  según el patrón del repo.
+- [x] B3. `src/lib/env.ts`: documentar `ATRIBUCION` (off por defecto;
+  valores válidos: `'on' | '' | ausente`). — **2026-09-29**:
+  `ATRIBUCION: z.string().optional()`. `.env.example` añade la guía
+  inline completa.
+- [x] B4. `src/server/attribution/flag.ts`: `isCapiEnabled()` siguiendo
+  el patrón de los flags existentes. — **2026-09-29**: `isCapiEnabled()`
+  reemplaza al placeholder `false` del Corte A. `atribucionEnabled()`
+  queda como compat.
+- [x] B5. `src/lib/meta/capi.ts`: payload, catálogo cerrado de eventos,
+  validación Zod, hash SHA-256 de `ctwa_clid`, lectura del acuse
+  `events_received`. — **2026-09-29**: `buildCapiPayload` arma el
+  payload exacto (`action_source: business_messaging`, `messaging_channel:
+  whatsapp`, `user_data` solo `ctwa_clid` hasheado + `whatsapp_business_account_id`,
+  `custom_data.lead_stage` siempre). `sendCapiEvent` reusa `graphRequest`
+  con import lazy (evita ciclos con tests que mockean `@/lib/meta/client`).
+  `isAckPositive(ack)` aplica el único acuse válido (`events_received >= 1`).
+- [x] B6. `src/server/attribution/settings.ts`: lectura/escritura de
+  `capi_settings` con cifrado AES-256-GCM. — **2026-09-29**:
+  `getCapiSettings` (descifra server-side), `getCapiSettingsDto` (DTO
+  saneado sin ciphertext), `upsertCapiSettings` (preserva token
+  existente si no se pasa uno nuevo), `isQualifiedStageForTenant`
+  (valida que la etapa sea del tenant y `kind = "open"`).
+- [x] B7. `src/server/attribution/conversions.ts`:
+  `reportStageChange({ organizationId, conversationId, fromStage,
+  toStage, dealValue?, dealCurrency? })` con guardrails
+  (flag apagada, `is_test`, sin `ctwa_clid`, sin config, sin token),
+  dedup durable (consulta previa + `ON CONFLICT DO NOTHING` del INSERT),
+  mapeo de evento (`won` ⇒ `Purchase`, `qualifiedStageId` ⇒
+  `QualifiedLead`), `user_data` mínimo con `ctwa_clid` hasheado y
+  `whatsapp_business_account_id`, `Purchase` con `value`/`currency`
+  solo si el lead tiene monto válido (nunca `0`). `events_received >= 1`
+  ⇒ `sent` con `fbtrace_id`; cualquier otra cosa ⇒ `failed` con motivo
+  textual. `emitConversion(...)` queda público como punto de extensión
+  para futuros hooks (receta de `InitiateCheckout` documentada).
+- [x] B8. Enganchar `reportStageChange` en el gateway del Corte A:
+  `src/server/attribution/report-on-stage-change.ts` exporta
+  `reportStageChangeOnMove(...)` (single lead) y
+  `reportStageChangeOnBulkMove(...)` (bulk). Los callers
+  (`app/api/pipeline/leads/[id]`, `app/api/pipeline/stages/[id]`,
+  `server/sales/orchestrator.ts`, `server/ai/pipeline.ts`) llaman
+  `void reportStageChangeOnMove(...)` **DESPUÉS** del commit del gateway,
+  **fuera** de cualquier try/catch que afecte la respuesta al usuario.
+  Un fallo de Meta jamás revierte el cambio de etapa — el desenlace
+  queda escrito en `conversion_event` y es consultable por API.
+- [x] B9. APIs `/api/settings/capi`: `GET` devuelve el DTO saneado o 404
+  si la bandera está apagada. `PUT` guarda `datasetId`, token opcional,
+  `qualifiedStageId` (validado contra `kind = "open"` del tenant). —
+  **2026-09-29**: autenticación Better Auth + tenant (`scoped()`); 404
+  si bandera apagada.
+- [x] B10. API `/api/settings/capi/events`: lista `conversion_event` del
+  tenant para la tabla de actividad. — **2026-09-29**: `limit`
+  opcional (default 50, max 200); 404 si bandera apagada.
+- [x] B11. `src/app/api/dev/wa-mock/**` aprende `POST {dataset}/events`.
+  — **2026-09-29**: el mock devuelve acuse positivo con `fbtrace_id`.
+  `DSET-FAIL` fuerza error 400; `DSET-ZERO` fuerza `events_received=0`
+  para el camino infeliz de tests.
+- [x] B12. Unit tests: `capi-payload.test.ts` (19 tests: catálogo,
+  estructura exacta del payload, `action_source`, `messaging_channel`,
+  `user_data` solo con `ctwa_clid` hasheado + WABA ID, hash SHA-256
+  trim+lowercase, `isAckPositive` con `events_received = 0` ⇒ failed,
+  Purchase sin `value` inventado, traducción de errores Meta);
+  `capi-flag.test.ts` (7 tests: apagada por defecto, solo `'on'`
+  enciende, `atribucionEnabled` compat); `capi-conversions.test.ts`
+  (casos puros de anti-valor-falso + acuse).
+- [x] B13. Self-test con mocks: el adaptador `lib/meta/capi.ts` es
+  testeable contra `global.fetch` (los unit tests cubren los caminos
+  del adapter). El mock de `{dataset}/events` está cableado en B11.
+  El self-test E2E en vivo (sección 012 del arnés) se implementa
+  en el Corte C.
+- [x] B14. Gate técnico: `pnpm typecheck && pnpm lint && pnpm build &&
+  pnpm test` en verde. — **2026-09-29**:
+  | Gate | Estado |
+  |---|---|
+  | `pnpm typecheck` | verde |
+  | `pnpm lint` | verde (1 warning preexistente en `anuncio-origen.tsx`, no relacionado) |
+  | `pnpm build` | verde |
+  | `pnpm test` | verde — 646 tests, 74 archivos |
+  | E2E en vivo | **PENDIENTE** — el self-test del Corte C corre el flujo real con la app levantada (igual que en 006 y follow-ups). |
+- [x] B15. Working tree limpio. Un commit:
   `feat(attribution): reportar QualifiedLead y Purchase a Meta CAPI`.
 
 ## Corte C — UI + E2E + cierre

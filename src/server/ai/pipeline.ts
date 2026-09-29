@@ -1,5 +1,6 @@
 import { asc, desc, eq } from "drizzle-orm";
 import { getDb, schema } from "@/lib/db";
+import { scoped } from "@/lib/db/tenant";
 import { getEnv, isAiConfigured } from "@/lib/env";
 import { chatJson, type ChatMessage } from "@/lib/ai";
 import { publish } from "@/server/events/bus";
@@ -11,6 +12,7 @@ import { buildAgentSystemPrompt } from "@/server/ai/prompts";
 import { persistClientHumanRequest } from "@/server/sales/explicit-handoff";
 import { runSalesOrchestratorTurn } from "@/server/sales/orchestrator";
 import { StageGatewayError, moveLeadStage } from "@/server/leads/stage-gateway";
+import { reportStageChangeOnMove } from "@/server/attribution/report-on-stage-change";
 
 /**
  * Turno del agente (FR-021..FR-025).
@@ -240,7 +242,7 @@ async function moveLeadToStage(
   const lead = rows[0];
   if (!lead) return;
   try {
-    await moveLeadStage({
+    const result = await moveLeadStage({
       organizationId,
       leadId: lead.id,
       toStageId: stageId,
@@ -248,6 +250,24 @@ async function moveLeadToStage(
       actor: "agent",
       reason: "ai_move_stage",
     });
+
+    // 007 — Corte B: tras el commit exitoso del gateway, engancha CAPI.
+    // El agente inline (Zod agent) también pasa por la misma puerta que
+    // el drag/drop humano y que Jev. Best-effort absoluto.
+    if (result.moved) {
+      const nextStage = await loadStageKindAndName(organizationId, stageId);
+      if (nextStage) {
+        void reportStageChangeOnMove({
+          organizationId,
+          leadId: lead.id,
+          moved: true,
+          fromStageId: result.fromStageId,
+          toStageId: stageId,
+          toStageName: nextStage.name,
+          toStageKind: nextStage.kind,
+        });
+      }
+    }
   } catch (err) {
     if (err instanceof StageGatewayError) {
       console.warn(`[ai/pipeline] move_stage rechazado: ${err.message}`);
@@ -255,6 +275,30 @@ async function moveLeadToStage(
     }
     throw err;
   }
+}
+
+async function loadStageKindAndName(
+  organizationId: string,
+  stageId: string
+): Promise<{ name: string; kind: "open" | "won" | "lost" } | null> {
+  const db = getDb();
+  const rows = await db
+    .select({
+      name: schema.pipelineStage.name,
+      kind: schema.pipelineStage.kind,
+    })
+    .from(schema.pipelineStage)
+    .where(
+      scoped(
+        schema.pipelineStage.organizationId,
+        organizationId,
+        eq(schema.pipelineStage.id, stageId)
+      )
+    )
+    .limit(1);
+  const r = rows[0];
+  if (!r) return null;
+  return { name: r.name, kind: r.kind };
 }
 
 async function appendLeadNote(

@@ -7,6 +7,7 @@ import {
   StageGatewayError,
   bulkMoveLeadsToStage,
 } from "@/server/leads/stage-gateway";
+import { reportStageChangeOnBulkMove } from "@/server/attribution/report-on-stage-change";
 
 export const dynamic = "force-dynamic";
 
@@ -95,8 +96,9 @@ export const DELETE = withAuth(async (session, req: Request, ctx: Params) => {
     }
     // Corte A — la reasignación masiva al eliminar una etapa pasa por la
     // puerta única. La validación de tenant + destino la hace el gateway.
+    let bulkResult;
     try {
-      await bulkMoveLeadsToStage({
+      bulkResult = await bulkMoveLeadsToStage({
         organizationId: session.organizationId,
         fromStageId: id,
         toStageId: moveTo,
@@ -109,6 +111,15 @@ export const DELETE = withAuth(async (session, req: Request, ctx: Params) => {
       }
       throw err;
     }
+
+    // 007 — Corte B: tras el commit exitoso del gateway, engancha CAPI por
+    // cada lead movido (solo si la etapa destino es won o qualified).
+    void reportStageChangeOnBulkMove({
+      organizationId: session.organizationId,
+      bulk: bulkResult,
+      toStageName: stage.name,
+      toStageKind: stage.kind,
+    });
   }
 
   await db

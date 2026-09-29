@@ -11,6 +11,7 @@ import { scheduleNextFollowUp } from "@/server/sales/follow-ups/store";
 import { VENDE_VELOZ_OFFER } from "@/server/sales/vende-veloz";
 import { writeSalesReply } from "@/server/sales/writer";
 import { StageGatewayError, moveLeadStage } from "@/server/leads/stage-gateway";
+import { reportStageChangeOnMove } from "@/server/attribution/report-on-stage-change";
 
 type Conversation = typeof schema.conversation.$inferSelect;
 type Lead = typeof schema.lead.$inferSelect;
@@ -156,8 +157,9 @@ async function persistDecision(input: {
     // atomicidad original fusionando lane/facts/snapshot en el mismo UPDATE
     // a través del gateway. Sin dependencia circular: el gateway no conoce
     // Jev, Jev solo le pasa `extra` con los campos que ya actualizaba.
+    let moveResult;
     try {
-      await moveLeadStage({
+      moveResult = await moveLeadStage({
         organizationId: input.organizationId,
         leadId: input.lead.id,
         toStageId: nextStageId,
@@ -176,6 +178,24 @@ async function persistDecision(input: {
         });
       } else {
         throw err;
+      }
+    }
+
+    // 007 — Corte B: tras el commit exitoso del gateway, engancha CAPI.
+    // Jev también pasa por la puerta única: su decisión dispara el mismo
+    // reporte que un drag/drop humano. Best-effort absoluto.
+    if (moveResult?.moved) {
+      const nextStage = await loadStageById(input.organizationId, nextStageId);
+      if (nextStage) {
+        void reportStageChangeOnMove({
+          organizationId: input.organizationId,
+          leadId: input.lead.id,
+          moved: true,
+          fromStageId: moveResult.fromStageId,
+          toStageId: nextStageId,
+          toStageName: nextStage.name,
+          toStageKind: nextStage.kind,
+        });
       }
     }
   } else {
@@ -299,6 +319,25 @@ async function loadKb(organizationId: string) {
     .from(schema.kbEntry)
     .where(scoped(schema.kbEntry.organizationId, organizationId))
     .orderBy(asc(schema.kbEntry.createdAt));
+}
+
+async function loadStageById(
+  organizationId: string,
+  stageId: string
+): Promise<Stage | null> {
+  const db = getDb();
+  const rows = await db
+    .select()
+    .from(schema.pipelineStage)
+    .where(
+      scoped(
+        schema.pipelineStage.organizationId,
+        organizationId,
+        eq(schema.pipelineStage.id, stageId)
+      )
+    )
+    .limit(1);
+  return rows[0] ?? null;
 }
 
 function publishConversation(organizationId: string, conversationId: string): void {

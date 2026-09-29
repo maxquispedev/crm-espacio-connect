@@ -639,3 +639,103 @@ export const adAttribution = pgTable(
     index("ad_attribution_org_created_idx").on(t.organizationId, t.createdAt),
   ]
 );
+
+/**
+ * 007 — Log durable del reporte CAPI.
+ *
+ * Cada fila representa el desenlace de un intento de reportar un evento a
+ * Meta Conversions API (QualifiedLead / Purchase). Es la fuente de verdad de
+ * la pestaña "Anuncios" de Ajustes y la única barrera contra reenvío
+ * duplicado: el UNIQUE (organization_id, conversation_id, event_name) más
+ * el ON CONFLICT DO NOTHING garantizan idempotencia incluso bajo doble
+ * webhook o doble movimiento de etapa concurrente.
+ *
+ * Status:
+ *  - `sent`: Meta acusó recibo (events_received >= 1). fbtrace_id queda.
+ *  - `failed`: Meta rechazó / token vencido / red caída. error_message con
+ *    el motivo textual de Meta o de red.
+ *  - `skipped`: no había nada que reportar (is_test, sin ctwa_clid, sin
+ *    config). skip_reason con la causa legible.
+ */
+export const conversionEvent = pgTable(
+  "conversion_event",
+  {
+    id: text("id").primaryKey(),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organization.id, { onDelete: "cascade" }),
+    conversationId: text("conversation_id")
+      .notNull()
+      .references(() => conversation.id, { onDelete: "cascade" }),
+    /** Catálogo cerrado: solo 'QualifiedLead' o 'Purchase'. */
+    eventName: text("event_name").notNull(),
+    /** Subset del custom_data que reporta el fork (ej. lead_stage). */
+    customData: jsonb("custom_data").notNull().default(sql`'{}'::jsonb`),
+    /** Payload completo que se envió a Meta (auditoría / debug). */
+    payload: jsonb("payload").notNull().default(sql`'{}'::jsonb`),
+    status: text("status", {
+      enum: ["sent", "failed", "skipped"],
+    })
+      .notNull()
+      .default("skipped"),
+    /** Trazabilidad que el soporte de Meta pide para debug de eventos. */
+    fbtraceId: text("fbtrace_id"),
+    errorMessage: text("error_message"),
+    /** Motivo textual de un skip (sin ctwa_clid, is_test, sin config, etc). */
+    skipReason: text("skip_reason"),
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+  },
+  (t) => [
+    // Barrera principal: idempotencia. Doble webhook o doble move concurrente
+    // → una sola fila durable.
+    uniqueIndex("conversion_event_org_conv_event_uq").on(
+      t.organizationId,
+      t.conversationId,
+      t.eventName
+    ),
+    // Listado por organización, más reciente primero (UI Ajustes → Anuncios).
+    index("conversion_event_org_created_idx").on(
+      t.organizationId,
+      t.createdAt
+    ),
+  ]
+);
+
+/**
+ * 007 — Configuración CAPI por organización.
+ *
+ *  - `datasetId`: el identificador del dataset de Meta al que se reportan
+ *    los eventos.
+ *  - Token opcional. Si está NULL se reusa el token del WhatsApp business
+ *    (mismo que autoriza publicar en el dataset del WABA). Pegar token
+ *    específico es opcional, cifrado con la misma capa `lib/crypto`.
+ *  - `qualifiedStageId`: etapa `kind = "open"` del propio pipeline que el
+ *    tenant eligió como "lead calificado". NO hardcodeada a "Interesado".
+ *
+ * Hacia el cliente solo `datasetId`, `accessTokenLast4`, `qualifiedStageId`
+ * y `updatedAt`. El ciphertext nunca sale.
+ */
+export const capiSettings = pgTable(
+  "capi_settings",
+  {
+    id: text("id").primaryKey(),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organization.id, { onDelete: "cascade" }),
+    datasetId: text("dataset_id").notNull(),
+    accessTokenCipher: text("access_token_cipher"),
+    accessTokenIv: text("access_token_iv"),
+    accessTokenTag: text("access_token_tag"),
+    accessTokenLast4: text("access_token_last4"),
+    /** Etapa `kind = "open"` que dispara QualifiedLead. */
+    qualifiedStageId: text("qualified_stage_id").references(
+      () => pipelineStage.id,
+      { onDelete: "set null" }
+    ),
+    updatedAt: timestamp("updated_at").notNull().defaultNow(),
+  },
+  (t) => [
+    // Una sola fila por organización.
+    uniqueIndex("capi_settings_org_uq").on(t.organizationId),
+  ]
+);
