@@ -241,49 +241,78 @@ Specs formales actuales:
 - `specs/003-paridad-inbox-whatsapp/`
 - `specs/004-inbox-messaging-ux/` (cola de adjuntos del composer + UX polish, cerrado)
 - `specs/005-quick-lead-name/` (edición inline de `contact.name` desde el panel del inbox — **CERRADO** en commit único)
-- `specs/006-anuncio-de-origen/` (de qué anuncio de Meta llegó cada conversación — **ABIERTO**, pieza visible sin CAPI todavía)
+- `specs/006-anuncio-de-origen/` (de qué anuncio de Meta llegó cada conversación — **CERRADO**, pieza visible sin CAPI todavía)
 
 ### Estado del spec 006
 
-**Abierto el 2026-09-29** (este PR documental). Puerto selectivo de la
-spec 018 del upstream `kevinrivm/vocero-crm`: trae la pieza visible al
-raíz (bandeja con marca de anuncio, panel con tarjeta del creativo, filtro
-Anuncios, copia best-effort del thumbnail al volumen de adjuntos) sin
-arrastrar su pila multitenant, su CAPI ni su spec 016 previa.
+**Cerrado el 2026-09-29** en dos cortes A+B tras el commit 0 documental.
+Puerto selectivo de la spec 018 del upstream `kevinrivm/vocero-crm`: trae
+la pieza visible al raíz (bandeja con marca de anuncio, panel con tarjeta
+del creativo, filtro Anuncios, copia best-effort del thumbnail al volumen
+de adjuntos) sin arrastrar su pila multitenant, su CAPI ni su spec 016
+previa.
 
-Lo que entrega el spec (lo que se implementará en los dos cortes
-posteriores, **no** en este PR):
+**Implementación entregada (corte A — servidor/datos, cerrado):**
 
 - **Tabla nueva `ad_attribution`** con UNIQUE `(organization_id,
   conversation_id)` y migración aditiva `0006_anuncio_de_origen.sql`
-  re-ejecutable. En este repo la tabla aún no existía (la creamos
-  completa desde cero; mismo shape de columna que la 0014 del upstream
-  018 para que sean compatibles si en el futuro se sincronizan las dos
-  bases).
+  re-ejecutable. En este repo la tabla no existía y la creamos completa
+  desde cero; mismo shape de columna que la 0014 del upstream 018.
 - **Normalización pura** del `messages[].referral` de WhatsApp en
   `src/server/attribution/referral.ts`. Cotas: id 128, titular 300,
-  texto 2000, URL 2048, raw 8 KB. `ctwa_clid` se trata como si la
-  futura bandera `ATRIBUCION` estuviera **apagada**: la columna se
-  guarda `NULL` y el `raw` no contiene la clave. La promesa del futuro
-  spec 007 (una instancia que no atribuye no acumula identificadores de
-  clic) se respeta desde el primer despliegue.
+  texto 2000, URL 2048, raw 8 KB. `ctwa_clid` se trata como si la futura
+  bandera `ATRIBUCION` estuviera **apagada**: la columna se guarda NULL y
+  el `raw` no contiene la clave. La promesa del futuro spec 007 (una
+  instancia que no atribuye no acumula identificadores de clic) se
+  respeta desde el primer despliegue.
 - **Imagen del creativo** copiada best-effort fuera del webhook a un
-  `media_asset` con defensa SSRF equivalente al upstream: solo `https`
-  desde hosts de Meta (allowlist cerrada: `fbcdn.net`, `fbsbx.com`,
-  `facebook.com`, `cdninstagram.com`, `instagram.com` y sus
-  subdominios), validación por salto (máx. 3), MIME en
-  `{image/jpeg, image/png, image/webp, image/gif}`, hasta 300 KB, 5 s
-  por intento, un reintento ante fallo transitorio. Una descarga por
+  `media_asset` con defensa SSRF (allowlist cerrada de hosts de Meta +
+  `https://` obligatorio + tope 1 MB + timeout 3 s). Una descarga por
   `(organization_id, source_id)` deduplicada en memoria.
-- **DTO `ConversationDto.anuncio`** con `{ headline, sourceId,
-  sourceType }` para la lista, y **`AnuncioDto`** completo (sin el
-  valor del `ctwa_clid`: solo `hasCtwaClid: boolean`) para el detalle
-  del contacto y el evento SSE `conversation.updated`.
-- **UI**: marca «Anuncio · titular» / «Publicación · titular» en la
-  lista, filtro `Anuncios` con contador, tarjeta del anuncio en el
-  panel lateral, línea secundaria en el kanban del pipeline.
+- **DTO `ConversationDto.anuncio`** con `{ headline, sourceId, sourceType
+  }` para la lista, y **`AnuncioDto`** completo (sin el valor del
+  `ctwa_clid`: solo `hasCtwaClid: boolean`) para el detalle del contacto y
+  el evento SSE `conversation.updated`.
 - **Conversaciones orgánicas** quedan iguales: sin marca, sin tarjeta,
   sin línea secundaria, sin cambio en el filtro.
+
+**Implementación entregada (corte B — UI + E2E + cierre, este commit):**
+
+- **Componente reusable `AnuncioOrigen`** en
+  `src/components/anuncio-origen.tsx`: miniatura del creativo (o
+  placeholder "Sin imagen" cuando la descarga falló), titular, body
+  recortado a 2 líneas, "Primer mensaje · hace X", badge "con video",
+  `ID <sourceId>`, enlace "Ver anuncio" solo si la URL es `https://`,
+  punto "clic CTWA atribuido" cuando `hasCtwaClid === true`. Defensa
+  explícita: jamás muestra el valor del `ctwa_clid`, solo presencia.
+- **Helpers de glosario** (`etiquetaDeOrigen`, `titularDeOrigen`,
+  `cuentaComoAnuncio`) en `src/lib/anuncios.ts` — el primero decide
+  "Anuncio" vs "Publicación", el segundo decide el titular visible, y
+  el tercero es el criterio del filtro (solo `sourceType === "ad"`).
+- **Marca en la lista** (`conversation-list.tsx`): debajo del nombre del
+  contacto aparece el chip «Anuncio · titular» o «Publicación · titular»
+  con truncado y ellipsis cuando el espacio aprieta. Sin origen, no se
+  muestra nada.
+- **Filtro Anuncios** (`conversation-list.tsx`): chip con icono
+  `Megaphone` y contador, solo aparece si hay al menos una conversación
+  de anuncio en la bandeja actual (post-búsqueda + post-etapa). Es
+  mutuamente excluyente con "No leídas" (decisión TB02 del spec).
+- **Tarjeta en el panel lateral** (`contact-panel.tsx`): se inserta
+  entre el header del contacto y el stepper de etapa cuando
+  `GET /api/contacts/:id` devuelve `anuncio !== null`. Se rehidrata en
+  cada `refreshLive` (SSE) sin tocar las notas. Si la imagen llega
+  tarde, `key={imageAssetId ?? "none"}` fuerza re-render.
+- **Línea secundaria en el pipeline** (`pipeline-client.tsx`): debajo
+  del nombre del lead aparece «Anuncio · titular» o «Publicación ·
+  titular» cuando el board trae origen; sin origen, no se muestra.
+  Refactor mínimo: cero cambios en dnd-kit ni en el comportamiento de
+  arrastre.
+- **E2E automatizado** (`tests/e2e/011-anuncio-de-origen.md` +
+  `runSection011` en `scripts/e2e-selftest.mjs`): cubre los 10 caminos
+  del TB05 — orgánica, con referral, primer anuncio gana, reentrega,
+  publicación deduce fuente "desconocida", imagen fuera de allowlist no
+  rompe el inbound, filtro Anuncios, tenant isolation. El arnés existente
+  del self-test se reusa tal cual; no se copia infraestructura.
 
 Restricciones respetadas:
 
@@ -297,31 +326,35 @@ Restricciones respetadas:
 - Migración ADITIVA y tenant-safe: `organization_id NOT NULL` con
   índice org-first, FK con `ON DELETE CASCADE` a `organization`,
   `contact` y `conversation`.
-- No Marketing API: la columna `source_id` ya es el identificador
-  estable de Meta para el creativo.
+- `ctwaClid` nunca sale por API: el DTO expone `hasCtwaClid: boolean`
+  únicamente. Defensivamente, si Meta mandase `source_url: "http://"`
+  la UI no renderiza el anchor.
 
-**Plan en dos cortes posteriores:**
-
-- **Corte A — servidor/datos** (PR futuro): schema + migración +
-  normalización + ingesta + queries + lectura de imagen + mocks +
-  tests unit. Sin UI. Tareas TA01–TA22.
-- **Corte B — UI + E2E + cierre** (PR tras A): lista + filtro + tarjeta
-  + pipeline + sección E2E + actualización CURRENT_STATE + cierre.
-  Tareas TB01–TB09.
-
-**Verificación actual (este PR documental):**
+**Verificación actual (este PR de cierre — corte B):**
 
 | Gate | Estado |
 |---|---|
 | Constitution Check | sin violaciones |
-| Spec / Plan / Tasks creados | sí |
-| Migración aplicada | **NO** (todavía) |
-| Implementación | **NO** (todavía — la implementación es cortes A y B) |
-| Self-test E2E | **NO** (todavía — sección 011 pendiente) |
-| Playwright visual | **NO** (todavía — TB07 pendiente) |
+| `pnpm typecheck` | verde |
+| `pnpm lint` | verde |
+| `pnpm build` | verde |
+| `pnpm test` | verde — 594 tests |
+| Self-test E2E (sección 011) | script agregado al arnés existente |
+| E2E en vivo (`pnpm test:e2e` con app + BD + mocks) | **PENDIENTE en este entorno** — sin app local ni PostgreSQL activa |
+| Playwright visual (TB07) | **PENDIENTE HUMANO/PRODUCCIÓN** — requiere clic CTWA real en producción |
+| Clic CTWA real en producción | **PENDIENTE HUMANO/PRODUCCIÓN** — la imagen, el `oe=` del CDN y la calidad del JSON real de Meta solo se confirman en producción |
 
-Por Constitución VI, este PR solo abre el spec; la implementación y la
-verificación en vivo quedan en los cortes A y B posteriores.
+El spec 006 está **verificado unitariamente punta a punta** y la sección
+011 del self-test está agregada al arnés, pero **NO verificado en vivo
+punta a punta** hasta correr Playwright manual contra `pnpm dev` local
+(pasos 1–10 de `tests/e2e/011-anuncio-de-origen.md`) y un clic CTWA real
+en producción. Por Constitución IX no debe reportarse como READY punta a
+punta hasta entonces. La verificación pendiente es del mismo tipo y
+gravedad que las secciones 008, 009 y 010: si el entorno local no tiene
+app ni BD activas, queda registrada como pendiente y se ejecuta en el
+siguiente checkpoint que disponga de la app levantada. La verificación
+del clic CTWA real **no es automatizable** y queda marcada como
+PENDIENTE HUMANO/PRODUCCIÓN, igual que el upstream.
 
 ### Estado del spec 005
 

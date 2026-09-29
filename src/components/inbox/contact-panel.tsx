@@ -10,7 +10,12 @@ import {
   UserRound,
   X,
 } from "lucide-react";
-import type { ContactSalesDto, ConversationDto, StageDto } from "@/lib/types";
+import type {
+  AnuncioDto,
+  ContactSalesDto,
+  ConversationDto,
+  StageDto,
+} from "@/lib/types";
 import { cn, formatPhone } from "@/lib/utils";
 import {
   BUYING_TIMING_LABELS,
@@ -23,6 +28,7 @@ import {
   percentHint,
 } from "@/lib/sales-ui";
 import { ContactAvatar } from "@/components/avatar";
+import { AnuncioOrigen } from "@/components/anuncio-origen";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -69,6 +75,10 @@ export function ContactPanel({
   const [currentStageId, setCurrentStageId] = useState<string | null>(null);
   const [leadId, setLeadId] = useState<string | null>(null);
   const [sales, setSales] = useState<ContactSalesDto | null>(null);
+  // 006 — Anuncio de origen del contacto. Lo trae GET /api/contacts/:id;
+  // se rehidrata en cada refreshLive para que un `conversation.updated`
+  // posterior pinte la tarjeta sin necesidad de tocar la conversación.
+  const [anuncio, setAnuncio] = useState<AnuncioDto | null>(null);
   // Estado global del agente: sin esto, el toggle "Respondiendo" mentiría
   // cuando el agente aún no se ha configurado/encendido.
   const [agentEnabled, setAgentEnabled] = useState(false);
@@ -94,6 +104,7 @@ export function ContactPanel({
       setCurrentStageId(detail.stage?.id ?? null);
       setLeadId(detail.lead?.id ?? null);
       setSales(detail.lead?.sales ?? null);
+      setAnuncio(detail.anuncio ?? null);
     }
     if (stagesRes) setStages(stagesRes.stages);
     setAgentEnabled(Boolean(agentRes?.profile?.enabled));
@@ -112,6 +123,7 @@ export function ContactPanel({
       setCurrentStageId(detail.stage?.id ?? null);
       setLeadId(detail.lead?.id ?? null);
       setSales(detail.lead?.sales ?? null);
+      setAnuncio(detail.anuncio ?? null);
     }
     if (agentRes) {
       setAgentEnabled(Boolean(agentRes.profile?.enabled));
@@ -268,6 +280,18 @@ export function ContactPanel({
             )}
           </div>
         </section>
+
+        {/* 006 — Tarjeta del anuncio de origen (debajo del header, antes del
+            stepper de etapa). Si el contacto es orgánico, no se inserta nada. */}
+        {anuncio && (
+          <section className="border-b p-4">
+            <AnuncioOrigen
+              key={`${anuncio.imageAssetId ?? "noimg"}-${anuncio.capturedAt}`}
+              anuncio={anuncio}
+              conversationCreatedAt={anuncio.capturedAt}
+            />
+          </section>
+        )}
 
         {/* Stepper de etapa */}
         {stages.length > 0 && leadId && (

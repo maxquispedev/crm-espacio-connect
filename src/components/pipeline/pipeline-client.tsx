@@ -13,10 +13,11 @@ import {
   type DragEndEvent,
   type DragStartEvent,
 } from "@dnd-kit/core";
-import { MessageSquareText, Settings2, Trophy, XCircle } from "lucide-react";
-import type { AutomationLane, StageDto } from "@/lib/types";
+import { Megaphone, MessageSquareText, Settings2, Trophy, XCircle } from "lucide-react";
+import type { AnuncioListaDto, AutomationLane, StageDto } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { operationalLaneShortLabel } from "@/lib/sales-ui";
+import { etiquetaDeOrigen, titularDeOrigen } from "@/lib/anuncios";
 import { ContactAvatar } from "@/components/avatar";
 import { Button } from "@/components/ui/button";
 import { formatTime } from "@/components/inbox/helpers";
@@ -31,6 +32,11 @@ export type BoardLead = {
   followUpReason: string | null;
   contact: { id: string; name: string; phone: string | null };
   conversationId: string | null;
+  /**
+   * 006 — Origen del anuncio cuando el lead viene de un CTWA. `null` para
+   * orgánicos. Lo pinta la línea secundaria debajo del nombre del lead.
+   */
+  anuncio: AnuncioListaDto | null;
 };
 
 export function PipelineClient() {
@@ -176,6 +182,8 @@ function LeadCard({ lead, overlay = false }: { lead: BoardLead; overlay?: boolea
     lane: lead.automationLane,
     followUpReason: lead.followUpReason,
   });
+  const eti = etiquetaDeOrigen(lead.anuncio?.sourceType);
+  const tit = titularDeOrigen(lead.anuncio?.headline, lead.anuncio?.sourceId);
 
   return (
     <div
@@ -205,8 +213,16 @@ function LeadCard({ lead, overlay = false }: { lead: BoardLead; overlay?: boolea
           </Link>
         )}
       </div>
+      {eti && tit && (
+        <p className="mt-1.5 flex items-center gap-1 truncate text-[11px] text-muted-foreground">
+          <Megaphone className="h-3 w-3 shrink-0" strokeWidth={1.7} />
+          <span className="truncate">
+            {eti} · {tit}
+          </span>
+        </p>
+      )}
       {laneHint && (
-        <p className="mt-2 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+        <p className="mt-1 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
           {laneHint}
         </p>
       )}

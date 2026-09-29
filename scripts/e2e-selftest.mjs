@@ -1871,6 +1871,12 @@ async function main() {
     }),
   });
 
+  // 006 — Sección 011: anuncio de origen. Aditivo: si WA_MOCK_ENABLED=true,
+  // cubre los caminos verdes del spec 006 (orgánica, con referral, primer
+  // anuncio gana, ATRIBUCION off implícita, filtro Anuncios, imagen fallida
+  // sin romper inbound y tenant isolation).
+  await runSection011();
+
   console.log(`\n===== ${checks - failures}/${checks} checks OK, ${failures} fallos =====`);
   process.exit(failures > 0 ? 1 : 0);
 }
@@ -1879,3 +1885,296 @@ main().catch((err) => {
   console.error("ERROR FATAL:", err);
   process.exit(1);
 });
+
+/**
+ * 006 — Sección 011 (anuncio de origen). Conduce la app real con los mocks y
+ * verifica los caminos verdes del spec:
+ *  - inbound orgánico (sin referral) → `anuncio: null` en lista y panel.
+ *  - inbound con referral → fila en `ad_attribution` + `anuncio` no nulo en
+ *    lista, panel y pipeline. El `ctwa_clid` JAMÁS aparece por API.
+ *  - reentrega del mismo `wa_message_id` → idempotente (sigue habiendo UNA fila).
+ *  - inbound con `source_type === "post"` → marca "Publicación" y `sourceType`
+ *    devuelto es "post" (no cuenta para el filtro Anuncios del cliente).
+ *  - filtro Anuncios del cliente: solo `source_type === "ad"`.
+ *  - imagen fuera de la allowlist → `imageAssetId` queda null y el inbound
+ *    no se rompe (el anuncio sigue guardado con su headline).
+ *  - tenant isolation: la fila creada en org A no aparece en el GET de org B.
+ *
+ * NOTA: la verificación visual (clic CTWA real con anuncio en producción)
+ * sigue siendo PENDIENTE HUMANO/PRODUCCIÓN — no se automatiza.
+ */
+async function runSection011() {
+  console.log("\n== 006-anuncio-de-origen: setup ==");
+  const email = "e2e-006@vocero.test";
+  const password = "password-e2e-123";
+  // Org B (para tenant isolation al final): una segunda organización.
+  let reg = await api("/api/auth/sign-up/email", {
+    method: "POST",
+    body: JSON.stringify({ email, password, name: "Operador 006" }),
+  });
+  if (!reg.res.ok) {
+    reg = await api("/api/auth/sign-in/email", {
+      method: "POST",
+      body: JSON.stringify({ email, password }),
+    });
+  }
+  ok("011 · signup/login operador 006", reg.res.ok, JSON.stringify(reg.json));
+
+  const conn = await api("/api/settings/whatsapp", {
+    method: "PUT",
+    body: JSON.stringify({
+      wabaId: "WABA-E2E-006",
+      phoneNumberId: "PN-E2E-006",
+      token: "tok-e2e-006",
+    }),
+  });
+  ok("011 · conexión WhatsApp guardada", conn.res.ok, JSON.stringify(conn.json));
+  await api("/api/dev/wa-mock/outbox", { method: "DELETE" });
+
+  // 1) Orgánica — sin referral → `anuncio: null` en la lista.
+  await api("/api/dev/wa-mock/inbound", {
+    method: "POST",
+    body: JSON.stringify({
+      phoneNumberId: "PN-E2E-006",
+      from: "521555111001",
+      name: "Orgánico 006",
+      text: "Hola sin anuncio",
+      waMessageId: "wamid.e2e.006.organico",
+    }),
+  });
+  await sleep(1000);
+  let convs = (await api("/api/conversations")).json?.conversations ?? [];
+  const convOrganica = convs.find((c) => c.contact.name === "Orgánico 006");
+  ok("011 · inbound orgánico crea conversación", !!convOrganica);
+  ok(
+    "011 · inbound orgánico → anuncio: null",
+    convOrganica?.anuncio === null,
+    JSON.stringify(convOrganica?.anuncio ?? null)
+  );
+
+  // 2) Inbound con referral (CTWA ad).
+  await api("/api/dev/wa-mock/inbound", {
+    method: "POST",
+    body: JSON.stringify({
+      phoneNumberId: "PN-E2E-006",
+      from: "521555111002",
+      name: "Lead de Anuncio 006",
+      text: "Vi su anuncio y quiero info",
+      waMessageId: "wamid.e2e.006.ad",
+      referral: {
+        source_url: "https://www.facebook.com/ads/123",
+        source_id: "ad-006-001",
+        source_type: "ad",
+        headline: "Curso intensivo de cocina 2026",
+        body: "Aprende en 4 semanas. Cupos limitados.",
+        media_type: "image",
+        image_url: "https://scontent.fbcdn.net/v/t45.1600/creativo.jpg",
+        ctwa_clid: "clid-SECRETO-QUE-NUNCA-SALE",
+      },
+    }),
+  });
+  await sleep(1500);
+  convs = (await api("/api/conversations")).json?.conversations ?? [];
+  const convAd = convs.find((c) => c.contact.name === "Lead de Anuncio 006");
+  ok("011 · inbound con referral crea conversación", !!convAd);
+  ok(
+    "011 · conversación de anuncio trae `anuncio` (sourceType=ad, sourceId correcto)",
+    convAd?.anuncio?.sourceType === "ad" &&
+      convAd?.anuncio?.sourceId === "ad-006-001",
+    JSON.stringify(convAd?.anuncio ?? null)
+  );
+  ok(
+    "011 · headline visible en la lista",
+    convAd?.anuncio?.headline === "Curso intensivo de cocina 2026",
+    JSON.stringify(convAd?.anuncio?.headline)
+  );
+
+  // 3) GET /api/contacts/:id devuelve el DTO completo del anuncio.
+  const contacto = await api(`/api/contacts/${convAd.contact.id}`);
+  const dtoCompleto = contacto.json?.anuncio ?? null;
+  ok(
+    "011 · GET /api/contacts/:id trae el AnuncioDto completo",
+    dtoCompleto?.sourceType === "ad" &&
+      dtoCompleto?.sourceId === "ad-006-001" &&
+      dtoCompleto?.headline === "Curso intensivo de cocina 2026",
+    JSON.stringify(dtoCompleto)
+  );
+  ok(
+    "011 · AnuncioDto tiene hasCtwaClid=true (presencia, no valor)",
+    dtoCompleto?.hasCtwaClid === true,
+    `hasCtwaClid=${dtoCompleto?.hasCtwaClid}`
+  );
+  ok(
+    "011 · ctwaClid NUNCA aparece por API",
+    !JSON.stringify(contacto.json).toLowerCase().includes("clid-secreto"),
+    "valor del ctwa_clid filtrado en respuestas"
+  );
+
+  // 4) Pipeline board incluye el anuncio del lead de CTWA.
+  const board = (await api("/api/pipeline/board")).json ?? {};
+  const leadAd = (board.leads ?? []).find(
+    (l) => l.contact.id === convAd.contact.id
+  );
+  ok(
+    "011 · pipeline board incluye el anuncio del lead de CTWA",
+    leadAd?.anuncio?.sourceType === "ad",
+    JSON.stringify(leadAd?.anuncio ?? null)
+  );
+
+  // 5) Reentrega del mismo wa_message_id → idempotente (sigue habiendo UNA fila).
+  const convsAntesRe = (await api("/api/conversations")).json?.conversations
+    .filter((c) => c.contact.id === convAd.contact.id).length;
+  await api("/api/dev/wa-mock/inbound", {
+    method: "POST",
+    body: JSON.stringify({
+      phoneNumberId: "PN-E2E-006",
+      from: "521555111002",
+      name: "Lead de Anuncio 006",
+      text: "Vi su anuncio y quiero info",
+      waMessageId: "wamid.e2e.006.ad", // mismo wamid
+      referral: {
+        source_url: "https://www.facebook.com/ads/OTRO",
+        source_id: "ad-OTRO",
+        source_type: "ad",
+        headline: "Otro headline que NO debe ganar",
+      },
+    }),
+  });
+  await sleep(1500);
+  convs = (await api("/api/conversations")).json?.conversations ?? [];
+  const convAdDespues = convs.find((c) => c.contact.id === convAd.contact.id);
+  ok(
+    "011 · reentrega mismo wa_message_id NO duplica la conversación",
+    (await api("/api/conversations")).json?.conversations.filter(
+      (c) => c.contact.id === convAd.contact.id
+    ).length === convsAntesRe,
+    `antes=${convsAntesRe}`
+  );
+  ok(
+    "011 · reentrega mismo wa_message_id → el primer anuncio gana",
+    convAdDespues?.anuncio?.sourceId === "ad-006-001",
+    `sourceId=${convAdDespues?.anuncio?.sourceId}`
+  );
+
+  // 6) Publicación (source_type=post) — la marca debe ser "Publicación" y la
+  //    fuente efectiva del contacto sigue siendo "desconocida".
+  await api("/api/dev/wa-mock/inbound", {
+    method: "POST",
+    body: JSON.stringify({
+      phoneNumberId: "PN-E2E-006",
+      from: "521555111003",
+      name: "Lead de Publicación 006",
+      text: "Vi la publicación",
+      waMessageId: "wamid.e2e.006.post",
+      referral: {
+        source_url: "https://www.facebook.com/posts/999",
+        source_id: "post-006-001",
+        source_type: "post",
+        headline: "Post orgánico del negocio",
+      },
+    }),
+  });
+  await sleep(1500);
+  convs = (await api("/api/conversations")).json?.conversations ?? [];
+  const convPost = convs.find((c) => c.contact.name === "Lead de Publicación 006");
+  ok(
+    "011 · publicación (source_type=post) trae sourceType=post",
+    convPost?.anuncio?.sourceType === "post",
+    JSON.stringify(convPost?.anuncio ?? null)
+  );
+  const detallePost = await api(`/api/contacts/${convPost.contact.id}`);
+  ok(
+    "011 · publicación deduce fuente='desconocida' (no 'anuncio')",
+    detallePost.json?.contact?.source === "desconocida",
+    `source=${detallePost.json?.contact?.source}`
+  );
+
+  // 7) Imagen fuera de la allowlist → imageAssetId null y el inbound no se rompe.
+  await api("/api/dev/wa-mock/inbound", {
+    method: "POST",
+    body: JSON.stringify({
+      phoneNumberId: "PN-E2E-006",
+      from: "521555111004",
+      name: "Lead Sin Imagen 006",
+      text: "Hola sin imagen del creativo",
+      waMessageId: "wamid.e2e.006.noimg",
+      referral: {
+        source_url: "https://www.facebook.com/ads/456",
+        source_id: "ad-006-noimg",
+        source_type: "ad",
+        headline: "Anuncio con imagen no permitida",
+        image_url: "http://169.254.169.254/latest/meta-data/", // fuera de allowlist
+      },
+    }),
+  });
+  await sleep(1500);
+  convs = (await api("/api/conversations")).json?.conversations ?? [];
+  const convNoImg = convs.find((c) => c.contact.name === "Lead Sin Imagen 006");
+  ok(
+    "011 · inbound con image_url fuera de allowlist ENTRA igual",
+    !!convNoImg,
+  );
+  const dtoNoImg = (await api(`/api/contacts/${convNoImg.contact.id}`)).json
+    ?.anuncio ?? null;
+  ok(
+    "011 · imageAssetId=null cuando la URL está fuera de la allowlist",
+    dtoNoImg?.imageAssetId === null,
+    `imageAssetId=${dtoNoImg?.imageAssetId}`
+  );
+  ok(
+    "011 · el anuncio sigue guardado aunque la imagen falló",
+    dtoNoImg?.sourceType === "ad" && dtoNoImg?.headline ===
+      "Anuncio con imagen no permitida",
+    JSON.stringify(dtoNoImg)
+  );
+
+  // 8) Filtro Anuncios (verificación cliente-mirrored): la lógica del cliente
+  //    usa `sourceType === "ad"` como criterio. Lo verificamos contra los DTOs
+  //    que ya salen por API (el cliente NO calcula el filtro en server).
+  convs = (await api("/api/conversations")).json?.conversations ?? [];
+  const candidatosFiltro = convs.filter(
+    (c) => c.anuncio && c.anuncio.sourceType === "ad"
+  );
+  ok(
+    "011 · filtro Anuncios deja 2 conversaciones (ad-006-001 + ad-006-noimg)",
+    candidatosFiltro.length === 2,
+    `count=${candidatosFiltro.length}, ids=${candidatosFiltro.map((c) => c.anuncio?.sourceId).join(",")}`
+  );
+
+  // 9) Tenant isolation: la fila creada NO debe aparecer al cambiar de org.
+  //    Guardamos cookie A, creamos org B, consultamos /api/conversations y
+  //    verificamos que ninguno de los contactos anteriores aparece.
+  const cookieA = cookie;
+  let regB = await api("/api/auth/sign-up/email", {
+    method: "POST",
+    body: JSON.stringify({
+      email: "e2e-006-orgb@vocero.test",
+      password: "password-e2e-123",
+      name: "Operador 006B",
+    }),
+  });
+  if (!regB.res.ok) {
+    regB = await api("/api/auth/sign-in/email", {
+      method: "POST",
+      body: JSON.stringify({ email: "e2e-006-orgb@vocero.test", password: "password-e2e-123" }),
+    });
+  }
+  ok("011 · signup/login operador 006B", regB.res.ok, JSON.stringify(regB.json));
+  const convsB = (await api("/api/conversations")).json?.conversations ?? [];
+  const hayFuga = convsB.some(
+    (c) =>
+      c.contact.name === "Lead de Anuncio 006" ||
+      c.contact.name === "Lead de Publicación 006" ||
+      c.contact.name === "Lead Sin Imagen 006" ||
+      c.contact.name === "Orgánico 006"
+  );
+  ok(
+    "011 · tenant isolation: la org B NO ve los anuncios de la org A",
+    !hayFuga,
+    `nombres filtrados: ${convsB.map((c) => c.contact.name).join(",")}`
+  );
+
+  // Restauramos cookie de la org A para no contaminar secciones siguientes
+  // (no hay más, pero lo dejamos limpio).
+  cookie = cookieA;
+}

@@ -11,6 +11,47 @@ import type { AnuncioDto, AnuncioListaDto } from "@/lib/types";
  * (el spec 007 cablea la bandera que decide si se guarda o no).
  */
 
+/**
+ * Etiqueta corta de la fuente del anuncio, sin texto del creativo.
+ * - `ad` → "Anuncio"
+ * - `post` → "Publicación"
+ * - `"" | null` → `null` (la marca no se muestra si no hay sourceType)
+ */
+export function etiquetaDeOrigen(sourceType: string | null | undefined): string | null {
+  const t = (sourceType ?? "").toLowerCase();
+  if (t === "ad") return "Anuncio";
+  if (t === "post") return "Publicación";
+  return null;
+}
+
+/**
+ * Titular del anuncio para mostrar en la línea secundaria de la lista.
+ * Si no hay headline, devuelve el sourceId corto entre paréntesis.
+ * Si tampoco hay sourceId, devuelve null (la marca no se renderiza).
+ */
+export function titularDeOrigen(
+  headline: string | null | undefined,
+  sourceId: string | null | undefined
+): string | null {
+  const h = (headline ?? "").trim();
+  if (h) return h;
+  const s = (sourceId ?? "").trim();
+  if (!s) return null;
+  // Mostrar sourceId recortado para que la línea secundaria no se rompa.
+  return s.length > 12 ? `${s.slice(0, 12)}…` : s;
+}
+
+/**
+ * ¿Cuenta como anuncio para el filtro? SOLO `sourceType === "ad"` —
+ * las publicaciones orgánicas NO se cuentan (no es un anuncio pagado).
+ */
+export function cuentaComoAnuncio(
+  anuncio: AnuncioListaDto | null | undefined
+): boolean {
+  if (!anuncio) return false;
+  return (anuncio.sourceType ?? "").toLowerCase() === "ad";
+}
+
 /** Filas del normalizador listas para guardar como `ad_attribution`. */
 export type AnuncioParaGuardar = {
   ctwaClid: string | null;

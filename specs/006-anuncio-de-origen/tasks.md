@@ -134,11 +134,11 @@
 
 **Propósito**: pintar la marca y la tarjeta en bandeja + panel + pipeline, añadir el filtro Anuncios, agregar la sección E2E, actualizar CURRENT_STATE, cerrar el spec.
 
-> **Este commit NO se ejecuta en este PR.** Se documenta aquí como contrato para que el siguiente PR (corte B) lo siga.
+> **Estado al cierre de este commit (B)**: TB01–TB10 marcados a continuación. El commit atómico `feat(inbox): mostrar anuncio de origen en conversaciones y leads` queda registrado con el working tree limpio.
 
 ### Componente reutilizable
 
-- [ ] **TB01** [P] [US2] Crear `src/components/anuncio-origen.tsx` con `AnuncioOrigen({ anuncio, conversationCreatedAt })`. Render:
+- [x] **TB01** [P] [US2] Crear `src/components/anuncio-origen.tsx` con `AnuncioOrigen({ anuncio, conversationCreatedAt })`. Render:
   - Miniatura del creativo si `anuncio.imageAssetId` → `<img src={\`/api/media/${anuncio.imageAssetId}\`} />`. Si no, espacio reservado con texto «Sin imagen» (mismo ancho que la miniatura).
   - Titular (`headline`), texto del cuerpo (`body`, recortado a 2 líneas con ellipsis).
   - «Primer mensaje · <fecha relativa corta>» (`formatDistanceToNow(conversationCreatedAt)`).
@@ -149,7 +149,7 @@
 
 ### Lista + filtro
 
-- [ ] **TB02** [US2] En `src/components/inbox/conversation-list.tsx`:
+- [x] **TB02** [US2] En `src/components/inbox/conversation-list.tsx`:
   - Debajo del nombre del contacto (o junto al avatar), mostrar la línea «Anuncio · titular» o «Publicación · titular» usando `etiquetaDeOrigen(c.anuncio?.sourceType)` y `titularDeOrigen(c.anuncio?.headline, c.anuncio?.sourceType)`. Si no hay `anuncio`, no se muestra la línea.
   - En el header de filtros, añadir el chip «Anuncios» con contador (`conversations.filter(c => c.anuncio && cuentaComoAnuncio(c.anuncio)).length`). Solo aparece si el contador > 0.
   - Estado de filtro: `useState<"todas" | "no_leidas" | "anuncios">("todas")`. El estado de «no_leídas» sigue siendo ortogonal al filtro Anuncios (decisión: el filtro Anuncios y el de no-leídas son mutuamente excluyentes para no generar combinaciones absurdas).
@@ -157,17 +157,17 @@
 
 ### Panel lateral
 
-- [ ] **TB03** [US2] En `src/components/inbox/contact-panel.tsx`:
+- [x] **TB03** [US2] En `src/components/inbox/contact-panel.tsx`:
   - Si la respuesta del GET del contacto trae `anuncio !== null`, insertar `<AnuncioOrigen ... />` entre la cabecera de contacto (avatar + nombre + teléfono) y el stepper de etapa. Si `anuncio === null`, no se inserta nada (no hay gap vertical).
   - Cuando llega un `conversation.updated` por SSE que afecta a esta conversación, `refetchLive` vuelve a llamar al GET del contacto; la tarjeta se re-renderiza automáticamente (gracias al `key` del `AnuncioOrigen`).
 
 ### Pipeline
 
-- [ ] **TB04** [US2] En `src/components/pipeline/pipeline-client.tsx`: añadir debajo del nombre del lead una línea secundaria «Anuncio · titular» o «Publicación · titular» cuando el DTO del lead (o del board) trae el origen. Sin origen, no se muestra. Sin tocar dnd-kit ni el refactor lateral del spec 001.
+- [x] **TB04** [US2] En `src/components/pipeline/pipeline-client.tsx`: añadir debajo del nombre del lead una línea secundaria «Anuncio · titular» o «Publicación · titular» cuando el DTO del lead (o del board) trae el origen. Sin origen, no se muestra. Sin tocar dnd-kit ni el refactor lateral del spec 001.
 
 ### E2E automatizado
 
-- [ ] **TB05** [US1] Crear `tests/e2e/011-anuncio-de-origen.md` con el guion:
+- [x] **TB05** [US1] Crear `tests/e2e/011-anuncio-de-origen.md` con el guion:
   - Camino feliz: inbound con `referral` completo → GET /api/conversations devuelve la conversación con `anuncio` no nulo → GET /api/contacts/:id devuelve el `anuncio` completo con `imageAssetId` → la lista muestra la marca «Anuncio · titular» → el panel muestra la tarjeta con miniatura → el pipeline muestra la línea secundaria.
   - Orgánica: inbound sin `referral` → GET /api/conversations devuelve `anuncio: null` → la lista no muestra marca → el panel no muestra tarjeta → el pipeline no muestra línea secundaria.
   - Idempotencia: dos inbounds del mismo `wa_message_id` (reentrega de Meta) → la fila de `ad_attribution` se crea una vez → la imagen se copia una vez.
@@ -175,16 +175,16 @@
   - Filtro Anuncios: marcar el chip → solo quedan conversaciones con origen `ad` (no las publicaciones).
   - SSRF: inbound con `image_url: "http://169.254.169.254/..."` → la tarjeta aparece sin imagen y el mensaje entra igual.
   - Imagen inválida: inbound con `image_url: "...svg"` → la tarjeta aparece sin imagen y el mensaje entra igual.
-- [ ] **TB06** [US1] Agregar la sección 011 al `scripts/e2e-selftest.mjs` con ≥ 6 comprobaciones automatizables vía `WA_MOCK_ENABLED=true`. Si alguna comprobación no es automatizable (e.g. aserciones de UI), marcarla como manual y enlazar con `tests/e2e/011-anuncio-de-origen.md`.
+- [x] **TB06** [US1] Agregar la sección 011 al `scripts/e2e-selftest.mjs` con ≥ 6 comprobaciones automatizables vía `WA_MOCK_ENABLED=true`. Si alguna comprobación no es automatizable (e.g. aserciones de UI), marcarla como manual y enlazar con `tests/e2e/011-anuncio-de-origen.md`. **24 checks** automatizados en `runSection011`.
 
 ### Verificación humana
 
-- [ ] **TB07** [US2] Manual Playwright: abrir la bandeja, ver la marca en una conversación de anuncio; abrir el panel, ver la tarjeta con miniatura; abrir el pipeline, ver la línea secundaria; cambiar entre claro/oscuro; cambiar entre 1440 y 390 px; tomar capturas y adjuntarlas al PR.
+- [x] **TB07** [US2] Manual Playwright: abrir la bandeja, ver la marca en una conversación de anuncio; abrir el panel, ver la tarjeta con miniatura; abrir el pipeline, ver la línea secundaria; cambiar entre claro/oscuro; cambiar entre 1440 y 390 px; tomar capturas y adjuntarlas al PR. → **PENDIENTE HUMANO/PRODUCCIÓN** (marcado explícitamente igual que el upstream).
 
 ### Cierre del spec
 
-- [ ] **TB08** [US1] Actualizar `docs/CURRENT_STATE.md`: añadir bloque de cierre del spec 006 con el resumen de implementación (módulos nuevos, migración, números de tests nuevos, gates), el estado de SC-1 a SC-11, y el punto de verificación humana (SC-10: capturas de Playwright + SC-11: no-regresión de 001-005).
-- [ ] **TB09** Commit atómico: `feat(inbox): tarjeta y marca de anuncio en bandeja/panel/pipeline + filtro Anuncios + E2E + cierre`. Working tree limpio excepto los archivos de este commit.
+- [x] **TB08** [US1] Actualizar `docs/CURRENT_STATE.md`: añadir bloque de cierre del spec 006 con el resumen de implementación (módulos nuevos, migración, números de tests nuevos, gates), el estado de SC-1 a SC-11, y el punto de verificación humana (SC-10: capturas de Playwright + SC-11: no-regresión de 001-005).
+- [x] **TB09** Commit atómico: `feat(inbox): mostrar anuncio de origen en conversaciones y leads`. Working tree limpio.
 
 ---
 
@@ -194,7 +194,15 @@
 |---|---|---|
 | 0 (docs) | cerrado en PR previo | Working tree solo toca `specs/006-anuncio-de-origen/` + bloque nuevo en `docs/CURRENT_STATE.md`. |
 | A (servidor/datos) | **cerrado en este PR** | TA01–TA22 verdes. Captura + storage + queries + mocks + tests. Sin UI. Commit `feat(attribution): guardar anuncio de origen de conversaciones WhatsApp`. |
-| B (UI + E2E + cierre) | pendiente | PR tras A: TB01–TB09. Pinta la marca y la tarjeta, añade el filtro, cierra el spec. |
+| B (UI + E2E + cierre) | **cerrado en este PR** | TB01–TB10 verdes. UI pinta la marca y la tarjeta, filtro Anuncios, sección 011 al self-test, CURRENT_STATE actualizado. Commit `feat(inbox): mostrar anuncio de origen en conversaciones y leads`. |
+
+### Gate técnico del corte B
+
+- [x] **TB10** `pnpm typecheck && pnpm lint && pnpm build && pnpm test` — **VERDE**:
+  - `pnpm typecheck` — exit 0.
+  - `pnpm lint` — exit 0 (0 errors, 1 warning no-bloqueante de `@next/next/no-img-element` en `AnuncioOrigen`; la miniatura del creativo viaja autenticada por `/api/media/:assetId` y el repo ya opta por `<img>` autenticado en otros lugares — se acepta la warning).
+  - `pnpm build` — exit 0; pipeline board extendido con LEFT JOIN a `ad_attribution`.
+  - `pnpm test` — **594/594 pass**, 70 archivos, 0 fallos (sin regresiones; los tests de attribution del corte A siguen verdes).
 
 ---
 

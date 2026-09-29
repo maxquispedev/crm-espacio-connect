@@ -1,12 +1,17 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { Search, Sparkles, UserRound, X } from "lucide-react";
+import { Megaphone, Search, Sparkles, UserRound, X } from "lucide-react";
 import type { ConversationDto } from "@/lib/types";
 import { matchesQuery } from "@/lib/search";
 import { cn } from "@/lib/utils";
 import { ContactAvatar } from "@/components/avatar";
 import { Button } from "@/components/ui/button";
+import {
+  cuentaComoAnuncio,
+  etiquetaDeOrigen,
+  titularDeOrigen,
+} from "@/lib/anuncios";
 import { formatTime, previewText } from "./helpers";
 
 const STAGE_DOT: Record<string, string> = {
@@ -65,7 +70,7 @@ export function ConversationList({
   onSeeded: () => void;
 }) {
   const [query, setQuery] = useState("");
-  const [filter, setFilter] = useState<"all" | "unread">("all");
+  const [filter, setFilter] = useState<"all" | "unread" | "ads">("all");
   const [stage, setStage] = useState<string>("all");
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -95,8 +100,17 @@ export function ConversationList({
       }) && (stage === "all" || c.stageName === stage)
   );
   const unreadCount = searched.filter((c) => c.unreadCount > 0).length;
+  const adsCount = searched.filter((c) => cuentaComoAnuncio(c.anuncio)).length;
+  // El chip "Anuncios" solo aparece si hay al menos una conversación de
+  // anuncio en la bandeja actual (post-filtro de búsqueda + etapa). El
+  // contador es SIEMPRE sobre `searched` (post-búsqueda y post-etapa) para
+  // que sea coherente con lo que el usuario ya está mirando.
   const visible =
-    filter === "unread" ? searched.filter((c) => c.unreadCount > 0) : searched;
+    filter === "unread"
+      ? searched.filter((c) => c.unreadCount > 0)
+      : filter === "ads"
+        ? searched.filter((c) => cuentaComoAnuncio(c.anuncio))
+        : searched;
 
   // Etapas presentes en la bandeja, en el orden en que llegan del pipeline.
   const stages: string[] = [];
@@ -167,6 +181,31 @@ export function ConversationList({
             </span>
           </button>
         ))}
+
+        {adsCount > 0 && (
+          <button
+            onClick={() => setFilter(filter === "ads" ? "all" : "ads")}
+            aria-label="Filtrar por anuncios"
+            aria-pressed={filter === "ads"}
+            className={cn(
+              "flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full border px-2.5 py-[5px] text-[12.5px] font-medium transition-colors",
+              filter === "ads"
+                ? "border-brand bg-brand text-white"
+                : "bg-background text-text-2 hover:bg-accent"
+            )}
+          >
+            <Megaphone className="h-3.5 w-3.5" strokeWidth={1.7} />
+            Anuncios
+            <span
+              className={cn(
+                "rounded-full px-1.5 text-[11px]",
+                filter === "ads" ? "bg-white/20" : "bg-secondary text-text-3"
+              )}
+            >
+              {adsCount}
+            </span>
+          </button>
+        )}
 
         {stages.length > 0 && (
           <select
@@ -274,6 +313,22 @@ export function ConversationList({
                             Atención humana
                           </span>
                         )}
+                        {(() => {
+                          const eti = etiquetaDeOrigen(c.anuncio?.sourceType);
+                          const tit = titularDeOrigen(
+                            c.anuncio?.headline,
+                            c.anuncio?.sourceId
+                          );
+                          if (!eti || !tit) return null;
+                          return (
+                            <span className="inline-flex max-w-full items-center gap-1 truncate rounded-full border bg-background px-2 py-0.5 text-[11px] text-text-2">
+                              <Megaphone className="h-3 w-3 shrink-0 text-text-3" strokeWidth={1.7} />
+                              <span className="truncate">
+                                {eti} · {tit}
+                              </span>
+                            </span>
+                          );
+                        })()}
                       </span>
                     </span>
                   </button>
