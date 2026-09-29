@@ -10,6 +10,7 @@ import { resolveSalesPlan } from "@/server/sales/resolve-plan";
 import { scheduleNextFollowUp } from "@/server/sales/follow-ups/store";
 import { VENDE_VELOZ_OFFER } from "@/server/sales/vende-veloz";
 import { writeSalesReply } from "@/server/sales/writer";
+import { StageGatewayError, moveLeadStage } from "@/server/leads/stage-gateway";
 
 type Conversation = typeof schema.conversation.$inferSelect;
 type Lead = typeof schema.lead.$inferSelect;
@@ -132,17 +133,16 @@ async function persistDecision(input: {
   snapshot: unknown;
 }): Promise<void> {
   const now = new Date();
-  const patch: Record<string, unknown> = {
+  const basePatch: Record<string, unknown> = {
     automationLane: input.plan.lane,
     lastJevEvaluatedAt: now,
     lastJevDecision: input.snapshot,
     lastJevError: null,
     lastActivityAt: now,
-    updatedAt: now,
   };
 
   if (input.plan.followUpDirective.kind === "schedule") {
-    patch.followUpReason = input.plan.followUpDirective.reason;
+    basePatch.followUpReason = input.plan.followUpDirective.reason;
   }
 
   const nextStageId = await resolveStageId(
@@ -150,9 +150,42 @@ async function persistDecision(input: {
     input.plan.desiredPipelineSemantic,
     input.stage
   );
-  if (nextStageId) patch.stageId = nextStageId;
 
-  await persistLeadPatch(input.organizationId, input.lead.id, patch);
+  if (nextStageId) {
+    // Corte A — Jev deja de escribir `lead.stageId` directo. Conserva la
+    // atomicidad original fusionando lane/facts/snapshot en el mismo UPDATE
+    // a través del gateway. Sin dependencia circular: el gateway no conoce
+    // Jev, Jev solo le pasa `extra` con los campos que ya actualizaba.
+    try {
+      await moveLeadStage({
+        organizationId: input.organizationId,
+        leadId: input.lead.id,
+        toStageId: nextStageId,
+        actor: "agent",
+        reason: `jev:${input.plan.nextAction}`,
+        extra: basePatch,
+      });
+    } catch (err) {
+      if (err instanceof StageGatewayError) {
+        console.warn(`[sales] gateway rechazó move de Jev: ${err.message}`);
+        // Aun así persistimos el resto (lane, snapshot) para no perder el
+        // estado durable: el gateway es estricto, la decisión de Jev no.
+        await persistLeadPatch(input.organizationId, input.lead.id, {
+          ...basePatch,
+          updatedAt: now,
+        });
+      } else {
+        throw err;
+      }
+    }
+  } else {
+    // Sin cambio de etapa: escribe el patch base directamente.
+    await persistLeadPatch(input.organizationId, input.lead.id, {
+      ...basePatch,
+      updatedAt: now,
+    });
+  }
+
   publishConversation(input.organizationId, input.conversationId);
 }
 

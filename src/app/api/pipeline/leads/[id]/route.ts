@@ -2,8 +2,11 @@ import { and, eq } from "drizzle-orm";
 import { z } from "zod";
 import { apiError, parseBody, withAuth } from "@/lib/api";
 import { getDb, schema } from "@/lib/db";
-import { scoped } from "@/lib/db/tenant";
 import { publish } from "@/server/events/bus";
+import {
+  StageGatewayError,
+  moveLeadStage,
+} from "@/server/leads/stage-gateway";
 
 export const dynamic = "force-dynamic";
 
@@ -19,46 +22,41 @@ export const PATCH = withAuth(async (session, req: Request, ctx: Params) => {
   const body = await parseBody(req, patchSchema);
   if (!body.ok) return body.response;
 
-  const db = getDb();
-  const stage = await db
-    .select({ id: schema.pipelineStage.id })
-    .from(schema.pipelineStage)
-    .where(
-      scoped(
-        schema.pipelineStage.organizationId,
-        session.organizationId,
-        eq(schema.pipelineStage.id, body.data.stageId)
-      )
-    )
-    .limit(1);
-  if (!stage[0]) return apiError(422, "invalid_stage", "Etapa inexistente");
-
-  const updated = await db
-    .update(schema.lead)
-    .set({
-      stageId: body.data.stageId,
+  // Corte A — el drag/drop del pipeline pasa por la puerta única de etapa.
+  // La validación de tenant + destino la hace el gateway; aquí solo
+  // traducimos sus errores al contrato HTTP preexistente.
+  let result;
+  try {
+    result = await moveLeadStage({
+      organizationId: session.organizationId,
+      leadId: id,
+      toStageId: body.data.stageId,
       position: body.data.position,
-      updatedAt: new Date(),
-    })
-    .where(
-      scoped(
-        schema.lead.organizationId,
-        session.organizationId,
-        eq(schema.lead.id, id)
-      )
-    )
-    .returning();
-  if (!updated[0]) return apiError(404, "not_found", "Lead no encontrado");
+      actor: "human",
+      reason: "drag_drop",
+    });
+  } catch (err) {
+    if (err instanceof StageGatewayError) {
+      if (err.code === "invalid_stage") {
+        return apiError(422, "invalid_stage", "Etapa inexistente");
+      }
+      if (err.code === "lead_not_found") {
+        return apiError(404, "not_found", "Lead no encontrado");
+      }
+    }
+    throw err;
+  }
 
   // Notifica a la bandeja para que la etapa se refleje en vivo (panel de
   // detalles y punto de etapa de la lista) sin recargar.
+  const db = getDb();
   const convRows = await db
     .select({ id: schema.conversation.id })
     .from(schema.conversation)
     .where(
       and(
         eq(schema.conversation.organizationId, session.organizationId),
-        eq(schema.conversation.contactId, updated[0].contactId),
+        eq(schema.conversation.contactId, result.lead.contactId),
         eq(schema.conversation.isTest, false)
       )
     )
@@ -70,5 +68,5 @@ export const PATCH = withAuth(async (session, req: Request, ctx: Params) => {
     });
   }
 
-  return Response.json({ lead: updated[0] });
+  return Response.json({ lead: result.lead });
 });

@@ -10,6 +10,7 @@ import { matchesHandoffIntent } from "@/server/ai/handoff";
 import { buildAgentSystemPrompt } from "@/server/ai/prompts";
 import { persistClientHumanRequest } from "@/server/sales/explicit-handoff";
 import { runSalesOrchestratorTurn } from "@/server/sales/orchestrator";
+import { StageGatewayError, moveLeadStage } from "@/server/leads/stage-gateway";
 
 /**
  * Turno del agente (FR-021..FR-025).
@@ -185,6 +186,8 @@ export async function runAgentTurn(conversationId: string): Promise<void> {
     if (!stage) {
       action = degradeAction(action);
     } else {
+      // Corte A — la acción move_stage del agente inline pasa por la puerta
+      // única de etapa con actor `agent`. Conserva `lastActivityAt` exacto.
       await moveLeadToStage(organizationId, conversation.contactId, stage.id);
       publish(organizationId, {
         type: "conversation.updated",
@@ -226,10 +229,32 @@ async function moveLeadToStage(
   stageId: string
 ): Promise<void> {
   const db = getDb();
-  await db
-    .update(schema.lead)
-    .set({ stageId, updatedAt: new Date(), lastActivityAt: new Date() })
-    .where(eq(schema.lead.contactId, contactId));
+  // El gateway necesita el leadId; resolvemos por contactId con scope de
+  // tenant. Si el contacto no tiene lead todavía, el agente no puede mover
+  // etapa: lo deja en manos del Laboratorio / de la próxima inbound.
+  const rows = await db
+    .select({ id: schema.lead.id })
+    .from(schema.lead)
+    .where(eq(schema.lead.contactId, contactId))
+    .limit(1);
+  const lead = rows[0];
+  if (!lead) return;
+  try {
+    await moveLeadStage({
+      organizationId,
+      leadId: lead.id,
+      toStageId: stageId,
+      lastActivityAt: new Date(),
+      actor: "agent",
+      reason: "ai_move_stage",
+    });
+  } catch (err) {
+    if (err instanceof StageGatewayError) {
+      console.warn(`[ai/pipeline] move_stage rechazado: ${err.message}`);
+      return;
+    }
+    throw err;
+  }
 }
 
 async function appendLeadNote(

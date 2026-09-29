@@ -109,9 +109,19 @@ const CONVERSATION = {
 };
 
 function queueHappyPath(nextAction: string, laneWas = "auto") {
+  // SELECTs consumidos en el happy path (orden estricto):
+  //  1) loadLeadContext (lead + current stage joined)
+  //  2) resolveStageId (stages para match semántico)
+  //  3) moveLeadStage: SELECT current lead (gateway A)
+  //  4) moveLeadStage: SELECT destination stage (gateway B) — solo si hay move
+  //  5) loadKb (entradas de KB para el writer) — irrelevante cuando shouldWrite=false
+  //  6) scheduleNextFollowUp → loadAgentProfile (null → no-op)
   selectQueue.push(
     [{ lead: { ...LEAD, automationLane: laneWas }, stage: STAGES[0] }],
     STAGES,
+    [{ id: "ld_1", organizationId: "org_1", stageId: "st_new" }],
+    STAGES,
+    [],
     []
   );
   evaluateJev.mockResolvedValue({

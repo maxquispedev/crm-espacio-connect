@@ -1,9 +1,13 @@
-import { and, eq } from "drizzle-orm";
+import { and, asc, eq } from "drizzle-orm";
 import { z } from "zod";
 import { getDb, schema } from "@/lib/db";
 import { apiError, parseBody } from "@/lib/api";
 import { requireBotKey, resolveInstanceOrg } from "@/server/bot/auth";
 import { publish } from "@/server/events/bus";
+import {
+  StageGatewayError,
+  moveLeadStage,
+} from "@/server/leads/stage-gateway";
 
 export const dynamic = "force-dynamic";
 
@@ -57,12 +61,16 @@ export async function POST(req: Request) {
     .where(eq(schema.conversation.id, conv.id));
 
   // Etapa al inicio del funnel (best-effort: sin etapas no revienta el reset).
+  // Corte A — el reset pasa por la puerta única de etapa. Conserva el
+  // actor `system` y el motivo legible para futuras trazas.
   try {
-    const stages = await db
-      .select()
+    const stageRows = await db
+      .select({ id: schema.pipelineStage.id })
       .from(schema.pipelineStage)
-      .where(eq(schema.pipelineStage.organizationId, organizationId));
-    const first = [...stages].sort((a, b) => a.position - b.position)[0];
+      .where(eq(schema.pipelineStage.organizationId, organizationId))
+      .orderBy(asc(schema.pipelineStage.position))
+      .limit(1);
+    const first = stageRows[0];
     const leadRows = await db
       .select({ id: schema.lead.id })
       .from(schema.lead)
@@ -74,13 +82,20 @@ export async function POST(req: Request) {
       )
       .limit(1);
     if (first && leadRows[0]) {
-      await db
-        .update(schema.lead)
-        .set({ stageId: first.id, updatedAt: new Date() })
-        .where(eq(schema.lead.id, leadRows[0].id));
+      await moveLeadStage({
+        organizationId,
+        leadId: leadRows[0].id,
+        toStageId: first.id,
+        actor: "system",
+        reason: "bot_reset",
+      });
     }
   } catch (err) {
-    console.warn(`[bot/reset] reinicio de etapa falló: ${err}`);
+    if (err instanceof StageGatewayError) {
+      console.warn(`[bot/reset] reinicio de etapa falló: ${err.message}`);
+    } else {
+      console.warn(`[bot/reset] reinicio de etapa falló: ${err}`);
+    }
   }
 
   publish(organizationId, {

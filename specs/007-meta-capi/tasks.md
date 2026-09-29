@@ -17,45 +17,101 @@
 > Migrar los 6 callsites runtime conservando `updatedAt`/`lastActivityAt`/
 > `position` y los hechos/lanes de Jev.
 
-- [ ] A1. Auditar los 6 callsites runtime de `lead.stageId`
+- [x] A1. Auditar los 6 callsites runtime de `lead.stageId`
   (pipeline/leads/[id], pipeline/stages/[id], bot/reset, ai/pipeline,
   sales/orchestrator, inbox/lead-activity) y confirmar que el seed
-  (`server/seed/demo.ts`) queda fuera del scope del gateway.
-- [ ] A2. Crear `src/server/leads/stage-gateway.ts` con
+  (`server/seed/demo.ts`) queda fuera del scope del gateway. — **2026-09-29**:
+  auditoría completa. Los 6 callsites runtime están listados en el
+  `plan.md` y el gateway está escrito asumiendo ese inventario.
+- [x] A2. Crear `src/server/leads/stage-gateway.ts` con
   `moveLeadStage(input: { organizationId, leadId, toStageId, actor,
   reason? })`. Validar tenant y etapa destino del mismo tenant
   (`scoped()`); aceptar `position` opcional; actualizar `stageId`,
   `position`, `updatedAt`, `lastActivityAt` igual que los writes
-  actuales; sin emitir eventos externos.
-- [ ] A3. Migrar `app/api/pipeline/leads/[id]/route.ts` al gateway
-  (drag/drop). Misma respuesta HTTP, mismo SQL efectivo.
-- [ ] A4. Migrar `app/api/pipeline/stages/[id]/route.ts` al gateway en
+  actuales; sin emitir eventos externos. — **2026-09-29**:
+  `src/server/leads/stage-gateway.ts` expone `moveLeadStage`,
+  `bulkMoveLeadsToStage`, `createLeadInStage` y `findFirstOpenStage`;
+  errores tipados con `StageGatewayError { code, message }` para que las
+  rutas traduzcan al contrato HTTP preexistente. Acepta `extra` para que
+  Jev conserve su atomicidad sin acoplar el gateway al Sales Orchestrator.
+- [x] A3. Migrar `app/api/pipeline/leads/[id]/route.ts` al gateway
+  (drag/drop). Misma respuesta HTTP, mismo SQL efectivo. — **2026-09-29**:
+  la ruta ahora resuelve la operación por `moveLeadStage` con
+  `actor: "human"`, `reason: "drag_drop"`. `invalid_stage` →
+  422 `invalid_stage`; `lead_not_found` → 404 `not_found`. Mismo
+  shape de respuesta `{ lead }`.
+- [x] A4. Migrar `app/api/pipeline/stages/[id]/route.ts` al gateway en
   bucle (bulk move al eliminar/mover etapa). Misma respuesta, mismas
-  filas afectadas.
-- [ ] A5. Migrar `app/api/bot/reset/route.ts` al gateway (reset de
-  conversación → primer stage). Conservar el `actor: 'system'`.
-- [ ] A6. Migrar `src/server/ai/pipeline.ts` al gateway (acciones del
+  filas afectadas. — **2026-09-29**: la reasignación masiva al eliminar
+  una etapa (`?moveTo=`) pasa por `bulkMoveLeadsToStage` con
+  `actor: "human"`, `reason: "bulk_stage_delete"`. La validación de
+  `moveTo === id` queda en la ruta antes del gateway.
+- [x] A5. Migrar `app/api/bot/reset/route.ts` al gateway (reset de
+  conversación → primer stage). Conservar el `actor: 'system'`. —
+  **2026-09-29**: el `try/catch` best-effort del reset ahora envuelve
+  `moveLeadStage` con `actor: "system"`, `reason: "bot_reset"`.
+- [x] A6. Migrar `src/server/ai/pipeline.ts` al gateway (acciones del
   agente inline). `actor: 'agent'`. Conservar `lastActivityAt` y
-  `updatedAt` exactamente como hoy.
-- [ ] A7. Migrar `src/server/sales/orchestrator.ts` al gateway
+  `updatedAt` exactamente como hoy. — **2026-09-29**: `moveLeadToStage`
+  (helper interno) resuelve el `leadId` por `contactId` dentro del
+  tenant y delega al gateway con `lastActivityAt: new Date()`,
+  `actor: "agent"`, `reason: "ai_move_stage"`. Si el contacto aún no
+  tiene lead, no falla: lo deja en manos del Laboratorio / próxima
+  inbound. Si el gateway rechaza (`StageGatewayError`), se loguea
+  como warning sin romper el turno.
+- [x] A7. Migrar `src/server/sales/orchestrator.ts` al gateway
   (Jev/Sales Orchestrator). `actor: 'agent'`. **Crítico**: el patch
   `stageId = nextStageId` desaparece como write directo; Jev llama al
-  gateway. Conservar lanes y hechos (`decision.facts`) intactos.
-- [ ] A8. Migrar `src/server/inbox/lead-activity.ts` al gateway para la
+  gateway. Conservar lanes y hechos (`decision.facts`) intactos. —
+  **2026-09-29**: `persistDecision` arma un `basePatch` (lane, snapshot,
+  `lastJevError`, `lastActivityAt`, `followUpReason` cuando schedule) y
+  lo pasa al gateway vía `extra`. El UPDATE sale con `stageId`,
+  `updatedAt` y los hechos de Jev en el mismo SET, conservando la
+  atomicidad original. Si el gateway rechaza, se persiste el resto del
+  patch para no perder estado durable: el gateway es estricto, la
+  decisión de Jev no. **No existe ya ningún write directo de
+  `lead.stageId` en `server/sales/`.**
+- [x] A8. Migrar `src/server/inbox/lead-activity.ts` al gateway para la
   asignación del primer stage al crear lead por inbound. `actor:
-  'system'`.
-- [ ] A9. Tests del gateway:
+  'system'`. — **2026-09-29**: la asignación del primer inbound usa
+  `findFirstOpenStage(organizationId)` + `createLeadInStage({ ...,
+  actor: "system", reason: "first_inbound", lastActivityAt: at })`.
+  El gateway calcula `position = max+1` del destino y conserva el
+  `onConflictDoNothing` original.
+- [x] A9. Tests del gateway:
   - tenant isolation (cross-tenant access → rechazo);
   - no-op mismo stage (no escribe);
   - operador/API (drag/drop devuelve mismo response);
   - movimiento producido por Jev (lane/facts intactos);
   - `kind = "won"` y `kind = "lost"` aceptados;
   - regresión del Sales Orchestrator (comparar salida del turno antes
-    y después del refactor).
-- [ ] A10. Gate técnico: `pnpm typecheck && pnpm lint && pnpm build &&
-  pnpm test`. Sin cambios observables en UI ni en respuestas de API.
-- [ ] A11. Working tree limpio. Un commit:
-  `refactor(pipeline): centralizar cambios de etapa del lead`.
+    y después del refactor). — **2026-09-29**: `tests/unit/stage-gateway.test.ts`
+    cubre los 6 ángulos con un mock de BD que valida los SET/UPDATE.
+  Cobertura efectiva:
+  - `moveLeadStage`: 11 tests (mueve, posición explícita, tenant
+    isolation, lead inexistente, no-op mismo stage, `extra` con mismo
+    stage, Jev lane/facts, won, lost, open, `lastActivityAt` explícito);
+  - `bulkMoveLeadsToStage`: 3 tests (cross-tenant, no-op mismo,
+    reasignación masiva);
+  - `createLeadInStage`: 4 tests (crea con timestamp, cross-tenant,
+    idempotencia `onConflictDoNothing`, position auto `max+1`);
+  - `findFirstOpenStage`: 2 tests (primera open, ignora won/lost).
+  Regresión del Sales Orchestrator cubierta por
+  `tests/unit/sales-orchestrator.test.ts` (que sigue verde tras la
+  migración, con un ajuste mínimo del mock para proveer los SELECTs
+  adicionales que el gateway ahora hace explícitos).
+- [x] A10. Gate técnico: `pnpm typecheck && pnpm lint && pnpm build &&
+  pnpm test`. Sin cambios observables en UI ni en respuestas de API. —
+  **2026-09-29**:
+  | Gate | Estado |
+  |---|---|
+  | `pnpm typecheck` | verde |
+  | `pnpm lint` | verde (1 warning preexistente en `anuncio-origen.tsx`, no relacionado) |
+  | `pnpm build` | verde |
+  | `pnpm test` | verde — 614 tests, 71 archivos |
+  | E2E en vivo | **PENDIENTE** — sin app local ni PostgreSQL activa en este entorno (igual que en el cierre de 006 y los cortes previos de follow-ups). El self-test del Corte C cubrirá los caminos con `ATRIBUCION=on` y apagada. |
+- [x] A11. Working tree limpio. Un commit:
+  `refactor(pipeline): centralizar cambios de etapa del lead`. — **2026-09-29**.
 
 ## Corte B — CAPI core + schema + APIs (sin UI final)
 

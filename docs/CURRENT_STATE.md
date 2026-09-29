@@ -1,6 +1,6 @@
 # CURRENT STATE — Espacio Connect
 
-**Actualizado:** 2026-09-29 (spec 007 ABIERTO: Meta CAPI para leads Click-to-WhatsApp — gate de etapa primero)
+**Actualizado:** 2026-09-29 (spec 007 — Corte A cerrado: puerta única de etapa del lead; Corte B y C pendientes)
 **Branch:** `main`
 **Baseline funcional previo a esta sincronización documental:** `bbae7cd1dfd98d5006cfd26440a8acf1def2c1bb`
 **Propósito:** checkpoint técnico rápido. Las decisiones de negocio viven en el cerebro de Obsidian; la implementación y la historia SDD viven aquí.
@@ -442,11 +442,76 @@ en el spec) · VIII (foco vertical: dos eventos, una pantalla, cero
 dashboards) · IX (verificación en vivo: self-test con mocks en ambas
 configuraciones antes de declarar Hecho).
 
-**Estado actual (este commit):** spec/plan/tasks abiertos. Ningún
-cambio de código. La implementación se ejecutará en tres commits
-secuenciales (`refactor(pipeline)`, `feat(attribution)`, `feat(attribution)`)
-siguiendo `.ai/tasks/vendeveloz-launch/06-007-stage-gateway.md`,
-`07-007-capi-core.md` y `08-007-settings-ui-close.md`.
+**Estado actual (este commit):** Corte A cerrado en commit
+`refactor(pipeline): centralizar cambios de etapa del lead`. Los 6 callsites
+runtime de `lead.stageId` ya pasan por el gateway
+`src/server/leads/stage-gateway.ts`, incluido el Sales Orchestrator (Jev)
+que dejó de escribir `stageId` directamente. Sin CAPI todavía, sin cambios
+observables, lanes/facts/follow-ups intactos. Tests del gateway verdes
+(20 casos específicos en `tests/unit/stage-gateway.test.ts`) y la regresión
+del Sales Orchestrator sigue verde. Faltan los Cortes B (CAPI core + schema
++ APIs) y C (UI + E2E + cierre), que se ejecutarán en commits
+secuenciales (`feat(attribution)`, `feat(attribution)`) siguiendo
+`.ai/tasks/vendeveloz-launch/07-007-capi-core.md` y
+`08-007-settings-ui-close.md`.
+
+### Corte A — puerta única de etapa (refactor neutro)
+
+**Cerrado el 2026-09-29** en commit
+`refactor(pipeline): centralizar cambios de etapa del lead` antes de tocar
+CAPI. Piezas entregadas:
+
+- **Helper/servicio único `src/server/leads/stage-gateway.ts`** con
+  `moveLeadStage(...)`, `bulkMoveLeadsToStage(...)`, `createLeadInStage(...)`
+  y `findFirstOpenStage(...)`. Errores tipados con `StageGatewayError {
+  code, message }` para que las rutas traduzcan al contrato HTTP preexistente.
+  Acepta `actor` opcional (`human`/`agent`/`bot`/`system`) y `extra` para que
+  Jev conserve su atomicidad sin acoplar el gateway al Sales Orchestrator.
+- **6 callsites runtime migrados** al gateway, con el `actor` y `reason`
+  legible que cada camino necesita:
+  - `app/api/pipeline/leads/[id]/route.ts` — drag/drop (`actor: "human"`,
+    `reason: "drag_drop"`). `invalid_stage` → 422, `lead_not_found` → 404.
+  - `app/api/pipeline/stages/[id]/route.ts` — bulk-move al eliminar/mover
+    etapa (`actor: "human"`, `reason: "bulk_stage_delete"`).
+  - `app/api/bot/reset/route.ts` — reset de conversación de pruebas
+    (`actor: "system"`, `reason: "bot_reset"`) dentro del `try/catch`
+    best-effort que ya tenía la ruta.
+  - `src/server/ai/pipeline.ts` — acción `move_stage` del agente inline
+    (`actor: "agent"`, `reason: "ai_move_stage"`). Si el contacto aún no
+    tiene lead, no falla; si el gateway rechaza, se loguea sin romper el
+    turno.
+  - `src/server/sales/orchestrator.ts` — Jev/Sales Orchestrator
+    (`actor: "agent"`, `reason: "jev:<nextAction>"`). **El patch
+    `stageId = nextStageId` desapareció como write directo.** La
+    atomicidad original (lane + facts + snapshot + stageId en el mismo
+    UPDATE) se conserva pasando `basePatch` como `extra` al gateway.
+  - `src/server/inbox/lead-activity.ts` — asignación del primer stage al
+    crear lead por inbound (`actor: "system"`, `reason: "first_inbound"`).
+    El gateway calcula `position = max+1` y conserva el
+    `onConflictDoNothing` original.
+- **Seed fuera del scope** (`server/seed/demo.ts` sigue escribiendo
+  `lead.stageId` directo, como antes — es un script de demo, no runtime).
+- **Tests del gateway** en `tests/unit/stage-gateway.test.ts` (20 casos):
+  tenant isolation, lead inexistente, no-op mismo stage, `extra` con mismo
+  stage, movimiento a etapa won/lost/open, `position` explícita,
+  `lastActivityAt` explícito, Jev lane/facts preservados, bulk move
+  cross-tenant rechazado, bulk no-op mismo origen/destino, bulk reasignación
+  masiva, `createLeadInStage` con timestamp, cross-tenant, idempotencia
+  `onConflictDoNothing`, position auto `max+1`, `findFirstOpenStage`
+  primera open / ignora won/lost.
+- **Regresión del Sales Orchestrator** en `tests/unit/sales-orchestrator.test.ts`
+  sigue verde (con un ajuste mínimo del mock para proveer los SELECTs
+  adicionales que el gateway ahora hace explícitos: 1 lead + 1 stage por
+  cada move real, y KB/profile vacíos para los caminos best-effort).
+- **Verificación del Corte A**:
+
+  | Gate | Estado |
+  |---|---|
+  | `pnpm typecheck` | verde |
+  | `pnpm lint` | verde (1 warning preexistente en `anuncio-origen.tsx`, no relacionado) |
+  | `pnpm build` | verde |
+  | `pnpm test` | verde — 614 tests, 71 archivos |
+  | E2E en vivo | **PENDIENTE** — sin app local ni PostgreSQL activa en este entorno (mismo PENDIENTE registrado en el cierre de 006). El self-test del Corte C cubrirá los caminos con `ATRIBUCION=on` y apagada. |
 
 ### Estado del spec 005
 

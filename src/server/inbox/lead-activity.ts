@@ -1,8 +1,12 @@
-import { and, asc, eq, sql } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import { getDb, schema } from "@/lib/db";
-import { newId } from "@/lib/db/ids";
 import { scoped } from "@/lib/db/tenant";
 import { resetFollowUpsOnInbound } from "@/server/sales/follow-ups/store";
+import {
+  StageGatewayError,
+  createLeadInStage,
+  findFirstOpenStage,
+} from "@/server/leads/stage-gateway";
 
 /**
  * Actividad de lead al recibir un mensaje (US2): si el contacto no tiene lead,
@@ -46,38 +50,26 @@ export async function onLeadActivity(
     return;
   }
 
-  const firstStage = await db
-    .select({ id: schema.pipelineStage.id })
-    .from(schema.pipelineStage)
-    .where(
-      and(
-        eq(schema.pipelineStage.organizationId, organizationId),
-        eq(schema.pipelineStage.kind, "open")
-      )
-    )
-    .orderBy(asc(schema.pipelineStage.position))
-    .limit(1);
-  if (!firstStage[0]) return; // pipeline sin etapas abiertas: no hay dónde crear
+  // Corte A — la asignación inicial del lead al detectar primer inbound pasa
+  // por la puerta única de etapa. El gateway valida la primera etapa del
+  // tenant, calcula la posición y conserva `lastActivityAt` exacto.
+  const first = await findFirstOpenStage(organizationId);
+  if (!first) return; // pipeline sin etapas abiertas: no hay dónde crear
 
-  const maxPos = await db
-    .select({ max: sql<number>`coalesce(max(${schema.lead.position}), -1)` })
-    .from(schema.lead)
-    .where(
-      and(
-        eq(schema.lead.organizationId, organizationId),
-        eq(schema.lead.stageId, firstStage[0].id)
-      )
-    );
-
-  await db
-    .insert(schema.lead)
-    .values({
-      id: newId("lead"),
+  try {
+    await createLeadInStage({
       organizationId,
       contactId,
-      stageId: firstStage[0].id,
-      position: (maxPos[0]?.max ?? -1) + 1,
+      toStageId: first.id,
       lastActivityAt: at,
-    })
-    .onConflictDoNothing({ target: [schema.lead.contactId] });
+      actor: "system",
+      reason: "first_inbound",
+    });
+  } catch (err) {
+    if (err instanceof StageGatewayError) {
+      console.warn(`[inbox/lead-activity] create falló: ${err.message}`);
+      return;
+    }
+    throw err;
+  }
 }

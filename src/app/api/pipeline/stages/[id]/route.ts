@@ -3,6 +3,10 @@ import { z } from "zod";
 import { apiError, parseBody, withAuth } from "@/lib/api";
 import { getDb, schema } from "@/lib/db";
 import { scoped } from "@/lib/db/tenant";
+import {
+  StageGatewayError,
+  bulkMoveLeadsToStage,
+} from "@/server/leads/stage-gateway";
 
 export const dynamic = "force-dynamic";
 
@@ -86,30 +90,25 @@ export const DELETE = withAuth(async (session, req: Request, ctx: Params) => {
         "La etapa tiene tarjetas: indica ?moveTo=<etapa destino> para reasignarlas"
       );
     }
-    const dest = await db
-      .select({ id: schema.pipelineStage.id })
-      .from(schema.pipelineStage)
-      .where(
-        scoped(
-          schema.pipelineStage.organizationId,
-          session.organizationId,
-          eq(schema.pipelineStage.id, moveTo)
-        )
-      )
-      .limit(1);
-    if (!dest[0] || moveTo === id) {
+    if (moveTo === id) {
       return apiError(422, "invalid_move_to", "Etapa destino inválida");
     }
-    await db
-      .update(schema.lead)
-      .set({ stageId: moveTo, updatedAt: new Date() })
-      .where(
-        scoped(
-          schema.lead.organizationId,
-          session.organizationId,
-          eq(schema.lead.stageId, id)
-        )
-      );
+    // Corte A — la reasignación masiva al eliminar una etapa pasa por la
+    // puerta única. La validación de tenant + destino la hace el gateway.
+    try {
+      await bulkMoveLeadsToStage({
+        organizationId: session.organizationId,
+        fromStageId: id,
+        toStageId: moveTo,
+        actor: "human",
+        reason: "bulk_stage_delete",
+      });
+    } catch (err) {
+      if (err instanceof StageGatewayError && err.code === "invalid_stage") {
+        return apiError(422, "invalid_move_to", "Etapa destino inválida");
+      }
+      throw err;
+    }
   }
 
   await db
