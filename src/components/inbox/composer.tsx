@@ -416,10 +416,16 @@ export function Composer({
     setDragFilesHint(count > 0 ? count : null);
   }
   function handleDragOver(e: React.DragEvent<HTMLDivElement>) {
-    if (sending) return;
-    // Necesario para permitir el drop; sin preventDefault, el navegador
-    // cancela el drop y abre el archivo en una pestaña.
+    // 004 (FIX-3 follow-up) — `preventDefault` para drags de Files debe
+    // ejecutarse SIEMPRE, incluso durante `sending=true`. Sin él, el
+    // navegador descarta el cursor "drop" y, al soltar, abre el archivo
+    // en una pestaña nueva en lugar de disparar `drop`. Por eso este check
+    // va ANTES del short-circuit de `sending`: queremos consumir el evento
+    // nativo pero NO modificar la cola ni mostrar el overlay (lo segundo
+    // se cubre con la rama `sending` más abajo; `handleDrop` ya no añade
+    // archivos durante un envío).
     if (e.dataTransfer.types.includes("Files")) e.preventDefault();
+    if (sending) return;
   }
   function handleDragLeave(e: React.DragEvent<HTMLDivElement>) {
     e.preventDefault();
