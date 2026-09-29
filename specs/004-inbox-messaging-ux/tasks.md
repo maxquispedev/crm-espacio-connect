@@ -46,23 +46,23 @@
 
 ### Tests primero (escribir, ver fallar — aunque en este repo el flujo suele ser write-test-then-impl, los tests pueden ir junto a la impl)
 
-- [ ] **T101** [P] [US1] Test unit `src/components/inbox/__tests__/classifyForQueue.test.ts` cubriendo: image ≤5MB, audio ≤16MB, video ≤16MB, video >16MB y ≤100MB → document con `application/octet-stream`, cualquier tipo ≤100MB → document, >100MB → null, MIME vacío → document.
-- [ ] **T102** [P] [US1] Test unit `src/components/inbox/__tests__/attachment-queue.test.tsx` cubriendo el hook `useAttachmentQueue`: `addFiles` añade adjuntos válidos y reporta rechazados, `remove` revoca Object URL, `updateStatus` transita pending→sending→sent/failed, cleanup de URLs al desmontar.
+- [ ] **T101** [P] [US1] Tests unit de la lógica separable de `classifyForQueue` y compañía: image ≤5MB, audio ≤16MB, video ≤16MB, video >16MB y ≤100MB → document con `application/octet-stream`, cualquier tipo ≤100MB → document, >100MB → null, MIME vacío → document. **Ubicación:** `tests/unit/attachment-queue-classify.test.ts` (vitest está en entorno `node` y solo recoge `tests/unit/**/*.test.ts`, sin `.tsx`).
+- [ ] **T102** [P] [US1] Tests unit del reducer puro de la cola (exportado desde `attachment-queue.tsx` como `queueReducer` para poder testearlo sin React): `addFiles` añade adjuntos válidos, deduplica por nombre+tamaño+lastModified, reporta rechazados con motivo; `remove` y `clear` devuelven lista actualizada. La lógica de Object URLs se prueba mediante un mock `URL.createObjectURL`/`revokeObjectURL` que cuenta llamadas.
 
 ### Implementación — helpers y tipos
 
-- [ ] **T103** [P] [US1] En `src/components/inbox/helpers.ts`, añadir tipo exportado `AttachStatus`, `PendingAttachment`, y funciones `classifyForQueue(file)`, `formatAttachStatus(s)`, `humanAttachType(k)`. Constantes `VIDEO_MAX_AS_VIDEO` y `DOC_MAX`. **No** reutilizar `MEDIA_LIMITS` del servidor (mantener el límite del cliente explícito y pequeño; el servidor sigue siendo la fuente de verdad).
+- [ ] **T103** [P] [US1] En `src/components/inbox/helpers.ts`, añadir tipo exportado `AttachKind`, `AttachStatus`, `PendingAttachment`, y funciones `classifyForQueue(file)`, `formatAttachStatus(s)`, `humanAttachType(k)`. Constantes `VIDEO_MAX_AS_VIDEO` y `DOC_MAX`. **No** reutilizar `MEDIA_LIMITS` del servidor (mantener el límite del cliente explícito y pequeño; el servidor sigue siendo la fuente de verdad).
 
 ### Implementación — componentes presentacionales
 
-- [ ] **T104** [P] [US1] Crear `src/components/inbox/attachment-item.tsx` (componente presentacional): recibe `{ attachment, onRemove, onRetry }`. Renderiza preview según `kind` (img / video controls / audio controls / tarjeta documento). Indicador de estado (spinner / check / AlertTriangle). Botón X (si pending) o botón Reintentar (si failed). Badge "Se envía como documento (NN MB)" cuando `willSendAsDocument`. `aria-label` dinámico.
-- [ ] **T105** [P] [US1] Crear `src/components/inbox/attachment-queue.tsx`: contiene el hook `useAttachmentQueue(initial?)` con estado `attachments`, `addFiles(File[])`, `remove(id)`, `retry(id)`, `updateStatus(id, status, error?)`, `revokeIfUrl(att)`, `clearSent()`. Cleanup de URLs en `useEffect` cleanup al desmontar. Exporta también el componente `AttachmentQueueList` (presentacional, row horizontal con `role="list"` y `aria-live="polite"`).
-- [ ] **T106** [P] [US6] En `attachment-item.tsx`, asegurar `min-h-[44px] min-w-[44px]` en X y Retry; `role="listitem"` + `aria-label` dinámico; `focus-visible:ring-2 focus-visible:ring-brand` en los botones.
+- [ ] **T104** [P] [US1] Crear `src/components/inbox/attachment-item.tsx` (componente presentacional): recibe `{ attachment, selected, onSelect, onRemove }`. Renderiza preview según `kind` (img / video controls / audio controls / tarjeta documento). Borde resaltado cuando `selected`. Botón X siempre visible (en este corte el reintento y los estados terminales llegan con el commit 2; `aria-label` dinámico). Badge "Se envía como documento (NN MB)" cuando `willSendAsDocument`.
+- [ ] **T105** [P] [US1] Crear `src/components/inbox/attachment-queue.tsx`: exporta el reducer puro `queueReducer(state, action)` (testable sin React) y el hook `useAttachmentQueue(initial?)` que envuelve el reducer más el ciclo de vida de Object URLs. API: `attachments`, `selectedId`, `addFiles(File[])`, `remove(id)`, `clear()`, `select(id)`. Cleanup de URLs en `useEffect` cleanup al desmontar. Exporta también el componente `AttachmentQueueList` (presentacional, fila horizontal con `role="list"` y `aria-live="polite"`).
+- [ ] **T106** [P] [US6] En `attachment-item.tsx`, asegurar `min-h-[44px] min-w-[44px]` en X; `role="listitem"` + `aria-label` dinámico; `focus-visible:ring-2 focus-visible:ring-brand` en los botones.
 
 ### Verificación del commit
 
 - [ ] **T107** Correr `pnpm typecheck && pnpm lint && pnpm build && pnpm test` — **debe quedar verde**. La introducción de los componentes nuevos no debe romper el composer actual porque aún no se usa en él.
-- [ ] **T108** Verificar manualmente (devtools): importar `AttachmentItem` y `useAttachmentQueue` en una story rápida o test interactivo y renderizar 3 adjuntos (mock `File`s); los previews cargan, los estados cambian, el cleanup de URLs funciona.
+- [ ] **T108** Verificar manualmente (devtools): el composer carga; seleccionar 3 archivos en el picker produce 3 tarjetas con preview; arrastrar 1 archivo sobre el composer muestra el overlay y al soltarlo se añade a la cola; pegar una imagen con Ctrl+V la añade; eliminar un adjunto revoca su Object URL; al cambiar de conversación, las URLs del composer anterior están revocadas.
 
 **Checkpoint**: el modelo de cola existe, está testeado y es presentacionalmente correcto. El composer sigue sin usar la cola — eso ocurre en el commit 2.
 
