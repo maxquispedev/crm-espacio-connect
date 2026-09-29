@@ -4,19 +4,18 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { cn } from "@/lib/utils";
 
-const TABS = [
-  { href: "/settings/whatsapp", label: "WhatsApp" },
-  { href: "/settings/branding", label: "Marca" },
-  { href: "/settings/appearance", label: "Apariencia" },
-  { href: "/settings/templates", label: "Plantillas" },
-  { href: "/settings/team", label: "Equipo" },
-] as const;
+type Tab = { href: string; label: string };
 
-export function SettingsNav() {
+/**
+ * 007 — La pestaña "Anuncios" se inyecta desde el layout server component
+ * (que lee `isCapiEnabled()`), no se decide dentro de este client component,
+ * porque no hay manera limpia de leer process.env del lado del cliente.
+ */
+export function SettingsNav({ tabs }: { tabs: readonly Tab[] }) {
   const pathname = usePathname();
   return (
     <nav className="w-44 shrink-0 space-y-1 border-r p-3">
-      {TABS.map((t) => (
+      {tabs.map((t) => (
         <Link
           key={t.href}
           href={t.href}

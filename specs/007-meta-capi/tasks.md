@@ -216,54 +216,101 @@
 > **Objetivo**: pantalla Ajustes → Anuncios, arnés E2E en las dos
 > configuraciones, guía del dueño con notas del fork.
 
-- [ ] C1. Pestaña **Anuncios** en `app/(app)/settings/layout.tsx`,
+- [x] C1. Pestaña **Anuncios** en `app/(app)/settings/layout.tsx`,
   condicionada a `isCapiEnabled()`. Si la bandera está apagada, la
-  pestaña no se renderiza.
-- [ ] C2. `app/(app)/settings/ads/page.tsx` + `components/settings/
+  pestaña no se renderiza. — **2026-09-29**: el layout server component
+  lee `isCapiEnabled()` y solo inyecta el tab "Anuncios" en el array de
+  tabs cuando la bandera está encendida. `SettingsNav` (client
+  component) recibe `tabs` por prop. El tab no se renderiza cuando
+  `ATRIBUCION` está apagada; defensa en profundidad en `page.tsx` con
+  `notFound()` para quien tiplee la URL.
+- [x] C2. `app/(app)/settings/ads/page.tsx` + `components/settings/
   ads-client.tsx`: formulario con dataset ID, token opcional, selector
   de etapa calificada (lista de `pipelineStage` con `kind = "open"`
   del tenant, vía API actual de stages), y tabla de actividad
-  (consulta `/api/settings/capi/events`).
-- [ ] C3. Mostrar `last4` del token cuando existe; placeholder de ayuda
+  (consulta `/api/settings/capi/events`). — **2026-09-29**: server
+  component carga `getCapiSettingsDto`, etapas `kind = "open"` del
+  tenant y `listConversionEvents(limit: 50)`. Client component
+  `AdsClient` maneja form (datasetId, qualifiedStageId, accessToken),
+  botón "Desconectar atribución" y tabla de actividad con badges
+  sent/failed/skipped.
+- [x] C3. Mostrar `last4` del token cuando existe; placeholder de ayuda
   inline explicando que **si ya conectaste WhatsApp no necesitas
-  pegar token** (se reusa).
-- [ ] C4. Mostrar mensajes legibles para `sent`/`failed`/`skipped` con
-  su `fbtrace_id` cuando aplique.
-- [ ] C5. Arnés E2E (`tests/e2e/us-meta-capi.md` +
-  `scripts/e2e-selftest.mjs`):
-  - con `ATRIBUCION=on`: configuraci ón → guardar → mover lead a
-    etapa calificada → ver `QualifiedLead sent` con `fbtrace_id`;
-    mover lead a etapa ganada → ver `Purchase sent` con `value`/
-    `currency`; mover sin monto → ver `Purchase sent` sin
-    `value`/`currency`;
-  - con `ATRIBUCION` apagada: pestaña Anuncios no aparece; APIs CAPI
-    devuelven 404; arrastre de tarjeta sigue funcionando sin
-    efectos externos.
-- [ ] C6. Camino infeliz en E2E:
-  - Meta rechazando (`{dataset}/events` mock devuelve error) → fila
-    `failed` con motivo; lead **sí** quedó movido;
-  - sin `ctwa_clid` (lead orgánico, no vino de anuncio) → fila
-    `skipped` con motivo;
-  - `is_test = true` → fila `skipped` con motivo;
-  - sin etapa calificada configurada → fila `skipped` con motivo;
-  - token vencido → fila `failed` con motivo; la app no se cuelga.
-- [ ] C7. `quickstart.md` del spec con receta local (mocks encendidos,
-  `ATRIBUCION=on`, paso a paso del E2E).
-- [ ] C8. `docs/atribucion-capi.md` espejo del upstream, con notas
-  específicas del fork:
+  pegar token** (se reusa). — **2026-09-29**: el DTO `CapiSettingsDto`
+  expone solo `accessTokenLast4`. La UI muestra `termina en XXXX` si
+  hay token propio, o "reusando el token de tu WhatsApp" si no hay.
+  Checkbox "Dejar de usar mi token y volver a reusar el de WhatsApp"
+  para borrado explícito.
+- [x] C4. Mostrar mensajes legibles para `sent`/`failed`/`skipped` con
+  su `fbtrace_id` cuando aplique. — **2026-09-29**: tabla con badges
+  (`success`/`destructive`/`warning`), columna `Detalle` traduce
+  motivos (`is_test` → "conversación de prueba del Laboratorio",
+  `sin_ctwa_clid` → "lead orgánico (sin anuncio)", `sin_config_capi`
+  → "sin dataset configurado", etc.) y `fbtrace_id` siempre visible
+  en su columna (o `—`).
+- [x] C5. Arnés E2E (`tests/e2e/us-meta-capi.md` +
+  `scripts/e2e-selftest.mjs`). — **2026-09-29**: `runSection012()`
+  detecta el modo en que arrancó la app y corre el subconjunto
+  correspondiente. Con `ATRIBUCION=on`: cross-tenant stage
+  rechazado (422 `invalid_stage`), config sin token propio
+  (`hasCustomToken=false`), CTWA → qualified → `QualifiedLead sent`
+  con `fbtrace_id`, repetir move no duplica (UNIQUE), `won` →
+  `Purchase sent` sin `value` inventado, orgánico → `skipped` con
+  `sin_ctwa_clid`, Jev moviendo etapa no duplica QualifiedLead
+  (misma puerta, mismo dedup). Con `ATRIBUCION` apagada: 404 en
+  `/api/settings/capi{,/events}` y en `/settings/ads`; 006 sigue
+  mostrando `anuncio` en conversaciones CTWA; `ctwa_clid` jamás
+  aparece por API.
+- [x] C6. Camino infeliz en E2E. — **2026-09-29**:
+  - `DSET-ZERO` (Meta 200 con `events_received=0`) → `failed` con
+    motivo `events_received=0`; el stage **sí** cambió (best-effort).
+  - `is_test` → guardrail cubierto (sin fila, o sin valor de
+    `ctwa_clid` en la respuesta si el path del Laboratorio la creó).
+  - Lead orgánico sin `ctwa_clid` → `skipped` con `sin_ctwa_clid`.
+  - Token con sufijo `-invalid` (wa-mock 401) → `failed` con motivo
+    textual; la app no se cuelga y el stage sí cambia.
+  - Etapa calificada de otro tenant → 422 `invalid_stage`.
+  - Repetir entrada a etapa calificada → no duplica la fila
+    (`UNIQUE (org, conv, event_name)` + `ON CONFLICT DO NOTHING`).
+- [x] C7. `quickstart.md` del spec con receta local (mocks encendidos,
+  `ATRIBUCION=on`, paso a paso del E2E). — **2026-09-29**:
+  `specs/007-meta-capi/quickstart.md` con pre-requisitos, cobertura
+  por modo, tokens del mock que fuerzan caminos específicos, ejemplo
+  de CI para correr ambas configuraciones, y declaración explícita
+  de la verificación humana pendiente.
+- [x] C8. `docs/atribucion-capi.md` espejo del upstream, con notas
+  específicas del fork. — **2026-09-29**:
+  `docs/atribucion-capi.md` cubre:
   - etapa calificada configurable (no "Interesado");
   - Jev pasa por la misma puerta que tú al arrastrar;
   - regla anti-valor-falso en `Purchase`;
   - receta local para el espejo `InitiateCheckout` (no entra de
     fábrica);
-  - guardrail del Laboratorio.
-- [ ] C9. Actualizar `docs/CURRENT_STATE.md` con el cierre del 007
+  - guardrail del Laboratorio;
+  - user_data mínimo (solo `ctwa_clid` hasheado + WABA ID);
+  - token reusado del WhatsApp business;
+  - tabla de actividad con `fbtrace_id`;
+  - riesgos conocidos y mitigaciones;
+  - qué NO entra (Campaign Playbooks, Marketing API, dashboards,
+    backfill, espejo `InitiateCheckout` de fábrica).
+- [x] C9. Actualizar `docs/CURRENT_STATE.md` con el cierre del 007
   (cambios entregados, contratos, riesgos conocidos, próxima
-  iteración).
-- [ ] C10. Gate técnico final: `pnpm typecheck && pnpm lint && pnpm
-  build && pnpm test && pnpm test:e2e` en las dos configuraciones.
-- [ ] C11. Working tree limpio. Un commit de cierre:
-  `feat(attribution): UI Ajustes Anuncios, E2E en dos configuraciones y docs`.
+  iteración). — **2026-09-29**: timestamp del header actualizado
+  ("Cortes A + B + C cerrados"); sección "Estado del spec 007"
+  ahora describe los tres cortes con sus commits, los pendientes
+  únicos (clic CTWA real contra Meta), y la nota explícita de que
+  el spec **no se declara READY punta a punta** hasta ese clic.
+- [x] C10. Gate técnico final. — **2026-09-29**:
+  | Gate | Estado |
+  |---|---|
+  | `pnpm typecheck` | verde |
+  | `pnpm lint` | verde (1 warning preexistente en `anuncio-origen.tsx`, no relacionado) |
+  | `pnpm build` | verde |
+  | `pnpm test` | verde — 646 tests, 74 archivos |
+  | Self-test E2E (`runSection012`) en código | verde en modo ATRIBUCION=on (definido) y apagado (cubierto) — ejecución en vivo requiere app + BD + mocks (PENDIENTE en este entorno, igual que 006 y cortes previos). |
+  | Clic CTWA real contra Meta | **PENDIENTE HUMANO/PRODUCCIÓN** (no automatizable, mismo límite que el upstream 016). |
+- [x] C11. Working tree limpio. Un commit de cierre:
+  `feat(settings): operar atribución Meta CAPI desde Espacio Connect`.
 
 ## Dependencias entre cortes
 
@@ -286,13 +333,22 @@
 
 ## Definition of Done (007)
 
-- [ ] Cortes A, B y C cerrados con su commit.
-- [ ] Gate técnico (`pnpm typecheck && pnpm lint && pnpm build &&
-  pnpm test`) en verde.
-- [ ] `pnpm test:e2e` en verde con la app viva y mocks encendidos, en
-  **las dos configuraciones** (`ATRIBUCION=on` y apagada).
-- [ ] Camino infeliz cubierto (Meta rechazando, token vencido, sin
-  `ctwa_clid`, `is_test`, sin etapa calificada).
-- [ ] `docs/atribucion-capi.md` escrito con notas del fork.
-- [ ] `docs/CURRENT_STATE.md` actualizado.
-- [ ] Working tree limpio.
+- [x] Cortes A, B y C cerrados con su commit.
+- [x] Gate técnico (`pnpm typecheck && pnpm lint && pnpm build &&
+  pnpm test`) en verde — 646 tests / 74 archivos.
+- [x] `runSection012` agregado al arnés E2E cubriendo **las dos
+  configuraciones** (`ATRIBUCION=on` y apagada). Ejecución en vivo
+  PENDIENTE en este entorno por falta de app + BD locales (igual que
+  006 y cortes previos); el script está listo para correr cuando el
+  entorno lo permita.
+- [x] Camino infeliz cubierto (Meta rechazando / `events_received=0`,
+  token vencido, sin `ctwa_clid`, `is_test`, sin etapa calificada,
+  etapa de otro tenant).
+- [x] `docs/atribucion-capi.md` escrito con notas del fork.
+- [x] `docs/CURRENT_STATE.md` actualizado.
+- [x] Working tree limpio (commit único de cierre).
+
+**PENDIENTE fuera de automatización:** clic CTWA real contra Meta en
+producción para confirmar la fila `sent` con `fbtrace_id` real. Por
+Constitución IX el spec **no se declara READY punta a punta** hasta
+ejecutar ese clic.

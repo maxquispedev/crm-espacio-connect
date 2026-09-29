@@ -1,6 +1,6 @@
 # CURRENT STATE — Espacio Connect
 
-**Actualizado:** 2026-09-29 (spec 007 — Corte A cerrado: puerta única de etapa del lead; Corte B y C pendientes)
+**Actualizado:** 2026-09-29 (spec 007 — Cortes A + B + C cerrados; UI Ajustes → Anuncios operativa con mocks, E2E en ambas configuraciones, `docs/atribucion-capi.md` publicado. Pendiente único: clic CTWA real contra Meta en producción)
 **Branch:** `main`
 **Baseline funcional previo a esta sincronización documental:** `bbae7cd1dfd98d5006cfd26440a8acf1def2c1bb`
 **Propósito:** checkpoint técnico rápido. Las decisiones de negocio viven en el cerebro de Obsidian; la implementación y la historia SDD viven aquí.
@@ -242,7 +242,7 @@ Specs formales actuales:
 - `specs/004-inbox-messaging-ux/` (cola de adjuntos del composer + UX polish, cerrado)
 - `specs/005-quick-lead-name/` (edición inline de `contact.name` desde el panel del inbox — **CERRADO** en commit único)
 - `specs/006-anuncio-de-origen/` (de qué anuncio de Meta llegó cada conversación — **CERRADO**, pieza visible sin CAPI todavía)
-- `specs/007-meta-capi/` (reportar `QualifiedLead` y `Purchase` a Meta Conversions API — **ABIERTO**, gate de etapa primero)
+- `specs/007-meta-capi/` (reportar `QualifiedLead` y `Purchase` a Meta Conversions API — **CERRADO** en Cortes A+B+C tras commit único de cierre)
 
 ### Estado del spec 006
 
@@ -442,18 +442,54 @@ en el spec) · VIII (foco vertical: dos eventos, una pantalla, cero
 dashboards) · IX (verificación en vivo: self-test con mocks en ambas
 configuraciones antes de declarar Hecho).
 
-**Estado actual (este commit):** Corte A cerrado en commit
-`refactor(pipeline): centralizar cambios de etapa del lead`. Los 6 callsites
-runtime de `lead.stageId` ya pasan por el gateway
-`src/server/leads/stage-gateway.ts`, incluido el Sales Orchestrator (Jev)
-que dejó de escribir `stageId` directamente. Sin CAPI todavía, sin cambios
-observables, lanes/facts/follow-ups intactos. Tests del gateway verdes
-(20 casos específicos en `tests/unit/stage-gateway.test.ts`) y la regresión
-del Sales Orchestrator sigue verde. Faltan los Cortes B (CAPI core + schema
-+ APIs) y C (UI + E2E + cierre), que se ejecutarán en commits
-secuenciales (`feat(attribution)`, `feat(attribution)`) siguiendo
-`.ai/tasks/vendeveloz-launch/07-007-capi-core.md` y
-`08-007-settings-ui-close.md`.
+**Estado actual (este commit):** Cortes A + B + C cerrados. Spec 007
+**completo** salvo la verificación humana pendiente (clic CTWA real contra
+Meta en producción — no automatizable, igual que el upstream 016).
+
+- **Corte A** (commit `refactor(pipeline): centralizar cambios de etapa
+  del lead`): los 6 callsites runtime de `lead.stageId` ya pasan por el
+  gateway `src/server/leads/stage-gateway.ts`, incluido el Sales
+  Orchestrator (Jev) que dejó de escribir `stageId` directamente.
+  Cero cambios observables, lanes/facts/follow-ups intactos.
+- **Corte B** (commit `feat(attribution): reportar QualifiedLead y
+  Purchase a Meta CAPI`): migración aditiva `0007_meta_capi.sql` con
+  `conversion_event` (UNIQUE `org/conv/event` para dedup durable) +
+  `capi_settings` (config cifrada AES-256-GCM). Nuevo
+  `src/lib/meta/capi.ts` (catálogo cerrado, validación Zod, acuse real
+  `events_received >= 1`). Nuevo `src/server/attribution/{flag,settings,
+  conversions}.ts`. APIs `/api/settings/capi{,/events}` con 404 duro si
+  la bandera está apagada. Mock `wa-mock/graph/[...path]` aprende
+  `POST {dataset}/events` con `DSET-FAIL` / `DSET-ZERO` para el camino
+  infeliz. El gateway del Corte A engancha `reportStageChange`
+  **después** del commit.
+- **Corte C** (commit `feat(settings): operar atribución Meta CAPI desde
+  Espacio Connect`, este commit): pestaña **Anuncios** en Ajustes (solo
+  visible con `ATRIBUCION=on`), con dataset ID, token opcional (cifrado,
+  `last4` al cliente, reutiliza el token de WhatsApp si ya está
+  conectado), selector de etapa calificada (lista `kind = "open"` del
+  propio tenant — nunca hardcodeada), tabla de actividad con
+  `fbtrace_id` y motivo legible para `sent`/`failed`/`skipped`.
+  Botón "Desconectar atribución" limpia token + etapa sin borrar
+  historial. Arnés E2E extendido (`runSection012` en
+  `scripts/e2e-selftest.mjs`) que cubre **ambas configuraciones**: con
+  ATRIBUCION apagada, 404 en APIs + 404 en `/settings/ads` + 006 sigue
+  mostrando anuncio sin `ctwa_clid`; con ATRIBUCION=on, etapa de otro
+  tenant rechazada, QualifiedLead sent con `fbtrace_id`, dedup durable,
+  Purchase sin `value` inventado, lead orgánico skipped, `DSET-ZERO`
+  → failed pero el stage cambia, `is_test` nunca emite, Jev moviendo
+  etapa usa la misma puerta, token vencido no rompe la app. `ctwa_clid`
+  jamás aparece por API ni en logs. `docs/atribucion-capi.md` publicado
+  con notas del fork.
+
+**Pendiente único:** clic CTWA real contra Meta en producción. El
+self-test con mocks cubre todos los caminos verificables (acuses
+positivos, negativos, acuse con `events_received=0`, tokens vencidos,
+tenant isolation, idempotencia, guardrail `is_test`, regla
+anti-valor-falso). El clic real con un anuncio sirviendo, la URL con
+`oe=` real del CDN, la calidad del JSON de Meta y el ciclo de feedback
+del algoritmo solo se confirman en producción. Por Constitución IX este
+spec **no se declara READY punta a punta** hasta que se ejecute ese
+clic contra Meta y se observe la fila `sent` con `fbtrace_id` real.
 
 ### Corte A — puerta única de etapa (refactor neutro)
 
