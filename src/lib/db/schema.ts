@@ -580,3 +580,62 @@ export const integrationEvent = pgTable(
     index("integration_event_org_idx").on(t.organizationId, t.createdAt),
   ]
 );
+
+/**
+ * 006 — Origen del anuncio de Meta que trajo la conversación.
+ * Una sola fila por (organization_id, conversation_id); el segundo referral
+ * posterior no pisa el primero (ON CONFLICT DO NOTHING).
+ *
+ * El `ctwa_clid` se trata como si la futura bandera ATRIBUCION estuviera
+ * apagada (mientras el spec 007 no la cablee): la columna se guarda NULL y el
+ * `raw` no contiene la clave. La promesa "una instancia que no atribuye no
+ * acumula identificadores de clic" se respeta desde el primer despliegue.
+ *
+ * El `image_asset_id` apunta al `media_asset` copiado del creativo (con
+ * sesión vía `/api/media/[assetId]`). NULL hasta que la descarga best-effort
+ * termina.
+ */
+export const adAttribution = pgTable(
+  "ad_attribution",
+  {
+    id: text("id").primaryKey(),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organization.id, { onDelete: "cascade" }),
+    contactId: text("contact_id")
+      .notNull()
+      .references(() => contact.id, { onDelete: "cascade" }),
+    conversationId: text("conversation_id")
+      .notNull()
+      .references(() => conversation.id, { onDelete: "cascade" }),
+    /** Identificador de clic CTWA. NULL mientras ATRIBUCION no exista cableada. */
+    ctwaClid: text("ctwa_clid"),
+    /** ID estable del creativo que da Meta en `referral.source_id`. */
+    sourceId: text("source_id"),
+    /** "ad" o "post" (publicación orgánica del propio negocio). */
+    sourceType: text("source_type"),
+    sourceUrl: text("source_url"),
+    headline: text("headline"),
+    body: text("body"),
+    mediaType: text("media_type"),
+    /** Subset crudo del `referral` de Meta (claves acotadas, max 8 KB). */
+    raw: jsonb("raw").notNull().default(sql`'{}'::jsonb`),
+    /** Asset de la imagen del creativo, NULL si la descarga aún no terminó. */
+    imageAssetId: text("image_asset_id").references(() => mediaAsset.id, {
+      onDelete: "set null",
+    }),
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+  },
+  (t) => [
+    // Una fila por conversación (UNIQUE principal, idempotencia).
+    uniqueIndex("ad_attribution_org_conversation_uq").on(
+      t.organizationId,
+      t.conversationId
+    ),
+    // Acelera la reutilización de imagen por (org, source_id). NO UNIQUE:
+    // muchas conversaciones pueden compartir el mismo anuncio.
+    index("ad_attribution_org_source_idx").on(t.organizationId, t.sourceId),
+    // Listados por organización, más reciente primero.
+    index("ad_attribution_org_created_idx").on(t.organizationId, t.createdAt),
+  ]
+);

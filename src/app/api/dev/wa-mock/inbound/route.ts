@@ -26,6 +26,20 @@ const schema = z
     caption: z.string().optional(),
     filename: z.string().optional(),
     location: z.record(z.unknown()).optional(),
+    // 006 — referral CTWA simulado. Si se omite, no se adjunta referral.
+    referral: z
+      .object({
+        source_url: z.string().url().optional(),
+        source_id: z.string().optional(),
+        source_type: z.string().optional(),
+        headline: z.string().optional(),
+        body: z.string().optional(),
+        media_type: z.string().optional(),
+        image_url: z.string().url().optional(),
+        thumbnail_url: z.string().url().optional(),
+        ctwa_clid: z.string().optional(),
+      })
+      .optional(),
   })
   .refine((v) => v.from || v.fromUserId, {
     message: "Se requiere from o fromUserId",

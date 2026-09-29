@@ -1,4 +1,4 @@
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { eq } from "drizzle-orm";
 import { getDb, schema } from "@/lib/db";
@@ -156,6 +156,34 @@ export async function readMediaFile(
   assetId: string
 ): Promise<Buffer> {
   return readFile(mediaFilePath(organizationId, assetId));
+}
+
+/**
+ * 006 — Borrado idempotente del archivo en disco. Se usa en cleanup cuando
+ * la persistencia del creativo falla a medias o cuando se reemplaza una fila
+ * de `ad_attribution`. No toca la BD: eso lo hace el caller (delete + update).
+ *
+ * Errores de FS se loguean y se devuelven como `false`; la operación no
+ * lanza. Esto es importante porque `deleteMediaFile` se llama desde caminos
+ * best-effort que no deben romper el flujo del mensaje.
+ */
+export async function deleteMediaFile(
+  organizationId: string,
+  assetId: string
+): Promise<boolean> {
+  try {
+    await rm(mediaFilePath(organizationId, assetId), {
+      force: true,
+      recursive: false,
+    });
+    return true;
+  } catch (err) {
+    console.warn(
+      `[media] no se pudo borrar ${assetId}:`,
+      err instanceof Error ? err.message : String(err)
+    );
+    return false;
+  }
 }
 
 /* ---------- Descarga desde Graph (entrantes y echoes) ---------- */

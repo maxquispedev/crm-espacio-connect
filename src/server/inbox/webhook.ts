@@ -78,6 +78,30 @@ export type WebhookMessage = {
   contacts?: unknown[];
   /** Solo historial de coexistence: estado de entrega en el dispositivo. */
   history_context?: { status?: string };
+  /**
+   * 006 — Origen del anuncio CTWA. Solo presente en el PRIMER mensaje de
+   * una conversación que llega desde un anuncio o publicación de Meta. La
+   * normalización vive en `src/server/attribution/referral.ts`.
+   */
+  referral?: WebhookReferral;
+};
+
+/**
+ * 006 — Subconjunto del `messages[].referral` de Meta que el CRM soporta.
+ * Los campos no listados aquí se descartan al normalizar.
+ * https://developers.facebook.com/docs/whatsapp/cloud-api/webhooks/components#referral-object
+ */
+export type WebhookReferral = {
+  source_url?: string;
+  source_id?: string;
+  source_type?: string;
+  headline?: string;
+  body?: string;
+  media_type?: string;
+  image_url?: string;
+  video_url?: string;
+  thumbnail_url?: string;
+  ctwa_clid?: string;
 };
 
 export type WebhookStatus = {

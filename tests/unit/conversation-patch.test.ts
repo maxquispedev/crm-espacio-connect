@@ -27,6 +27,7 @@ function conv(
     windowOpen: true,
     windowRemainingMs: 1000,
     preview: "hola",
+    anuncio: null,
     ...overrides,
   };
 }

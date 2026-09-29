@@ -1,8 +1,9 @@
 import { and, desc, eq, gt, sql } from "drizzle-orm";
 import { getDb, schema } from "@/lib/db";
 import { scoped } from "@/lib/db/tenant";
-import type { ConversationDto } from "@/lib/types";
+import type { AnuncioListaDto, ConversationDto } from "@/lib/types";
 import { isWindowOpen, windowRemainingMs } from "@/server/inbox/window";
+import { listaDesdeRow } from "@/lib/anuncios";
 
 export type { ConversationDto };
 
@@ -31,11 +32,22 @@ export async function listConversations(
       contact: schema.contact,
       preview: previewSql,
       stageName: stageSql,
+      ad: schema.adAttribution,
     })
     .from(schema.conversation)
     .innerJoin(
       schema.contact,
       eq(schema.conversation.contactId, schema.contact.id)
+    )
+    // 006 — LEFT JOIN para añadir el origen del anuncio a la lista.
+    // La restricción UNIQUE (org, conversation) garantiza una fila como
+    // mucho, así que el N+1 queda cerrado de raíz.
+    .leftJoin(
+      schema.adAttribution,
+      and(
+        eq(schema.adAttribution.conversationId, schema.conversation.id),
+        eq(schema.adAttribution.organizationId, organizationId)
+      )
     )
     .where(
       scoped(
@@ -48,7 +60,13 @@ export async function listConversations(
     .orderBy(desc(sql`coalesce(${schema.conversation.lastMessageAt}, ${schema.conversation.createdAt})`));
 
   return rows.map((r) =>
-    serializeConversation(r.conversation, r.contact, r.preview, r.stageName)
+    serializeConversation(
+      r.conversation,
+      r.contact,
+      r.preview,
+      r.stageName,
+      listaDesdeRow(r.ad ?? null)
+    )
   );
 }
 
@@ -58,11 +76,22 @@ export async function getConversation(
 ) {
   const db = getDb();
   const rows = await db
-    .select({ conversation: schema.conversation, contact: schema.contact })
+    .select({
+      conversation: schema.conversation,
+      contact: schema.contact,
+      ad: schema.adAttribution,
+    })
     .from(schema.conversation)
     .innerJoin(
       schema.contact,
       eq(schema.conversation.contactId, schema.contact.id)
+    )
+    .leftJoin(
+      schema.adAttribution,
+      and(
+        eq(schema.adAttribution.conversationId, schema.conversation.id),
+        eq(schema.adAttribution.organizationId, organizationId)
+      )
     )
     .where(
       scoped(
@@ -72,7 +101,13 @@ export async function getConversation(
       )
     )
     .limit(1);
-  return rows[0] ?? null;
+  const r = rows[0];
+  if (!r) return null;
+  return {
+    conversation: r.conversation,
+    contact: r.contact,
+    anuncio: listaDesdeRow(r.ad ?? null),
+  };
 }
 
 export async function listMessages(
@@ -103,7 +138,8 @@ export function serializeConversation(
   c: typeof schema.conversation.$inferSelect,
   contact: typeof schema.contact.$inferSelect,
   preview: string | null = null,
-  stageName: string | null = null
+  stageName: string | null = null,
+  anuncio: AnuncioListaDto | null = null
 ): ConversationDto {
   return {
     id: c.id,
@@ -118,6 +154,7 @@ export function serializeConversation(
     windowOpen: isWindowOpen(c.lastInboundAt),
     windowRemainingMs: windowRemainingMs(c.lastInboundAt),
     preview,
+    anuncio,
   };
 }
 

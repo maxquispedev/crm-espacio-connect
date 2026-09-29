@@ -21,6 +21,13 @@ import { applyStatusUpdate } from "@/server/inbox/status";
 import { onLeadActivity } from "@/server/inbox/lead-activity";
 import { maybeRunAgentTurn } from "@/server/ai/trigger";
 import { cancelFollowUpsOnManualReply } from "@/server/sales/follow-ups/store";
+import { anuncioDeWhatsapp } from "@/server/attribution/referral";
+import {
+  registrarAnuncioDeOrigen,
+  yaExisteAnuncio,
+  anuncioPorSourceId,
+} from "@/server/attribution/store";
+import { guardarCreativo } from "@/server/attribution/creativo";
 
 /** Tipos de contenido soportados; el resto se ignora sin error. */
 const SUPPORTED_TYPES = new Set([
@@ -235,6 +242,7 @@ export async function processMessagesValue(value: WebhookValue): Promise<void> {
       text: msg.text?.body ?? null,
       timestamp: msg.timestamp,
       media: mediaInputFrom(msg),
+      referral: msg.referral ?? null,
     });
   }
 }
@@ -374,6 +382,8 @@ export async function ingestInboundMessage(input: {
   text: string | null;
   timestamp: string;
   media?: MediaInput | null;
+  /** 006 — Referral crudo del webhook (entrada). */
+  referral?: unknown;
 }): Promise<void> {
   const db = getDb();
   const { organizationId } = input;
@@ -423,6 +433,41 @@ export async function ingestInboundMessage(input: {
     .where(eq(schema.conversation.id, conversation.id));
 
   await onLeadActivity(organizationId, contact.id, waTimestamp);
+
+  // 006 — Origen del anuncio de Meta. Best-effort:
+  //   1) Normaliza; si no hay identificador, se ignora sin error.
+  //   2) Si ya existe fila para esta conversación, NO pisa (primer referral gana).
+  //   3) Descarga/guarda el creativo SOLO si (org, sourceId) no tiene asset aún.
+  //   4) Ningún fallo rompe el flujo del mensaje.
+  const normalizado = anuncioDeWhatsapp(input.referral ?? null);
+  if (normalizado) {
+    const existe = await yaExisteAnuncio(organizationId, conversation.id);
+    if (!existe) {
+      let imageAssetId: string | null = null;
+      if (normalizado.imageUrl) {
+        try {
+          imageAssetId = await guardarCreativo({
+            organizationId,
+            url: normalizado.imageUrl,
+            sourceId: normalizado.sourceId,
+            reusar: async (sid) => {
+              const row = await anuncioPorSourceId(organizationId, sid);
+              return row?.imageAssetId ?? null;
+            },
+          });
+        } catch {
+          // ignore — guardián best-effort
+        }
+      }
+      await registrarAnuncioDeOrigen({
+        organizationId,
+        contactId: contact.id,
+        conversationId: conversation.id,
+        normalizado,
+        imageAssetId,
+      });
+    }
+  }
 
   await publishMessageNew({
     organizationId,

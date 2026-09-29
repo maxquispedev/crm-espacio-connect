@@ -53,6 +53,34 @@ export type ConversationDto = {
   windowOpen: boolean;
   windowRemainingMs: number;
   preview: string | null;
+  /**
+   * 006 — Origen del anuncio de Meta cuando llegó desde un CTWA. Aditivo.
+   * Subset reducido para la lista: solo lo que el badge necesita.
+   */
+  anuncio: AnuncioListaDto | null;
+};
+
+/**
+ * 006 — Origen del anuncio, subset reducido para la bandeja y el pipeline.
+ * Sin `ctwa_clid`, sin `body`, sin `imageAssetId` — eso vive en `AnuncioDto`.
+ */
+export type AnuncioListaDto = {
+  headline: string | null;
+  sourceId: string | null;
+  sourceType: string | null;
+};
+
+/**
+ * 006 — DTO completo del origen del anuncio (panel del contacto).
+ * El `ctwaClid` NUNCA sale por API: se reduce a `hasCtwaClid: boolean`.
+ */
+export type AnuncioDto = AnuncioListaDto & {
+  sourceUrl: string | null;
+  body: string | null;
+  mediaType: string | null;
+  imageAssetId: string | null;
+  hasCtwaClid: boolean;
+  capturedAt: string;
 };
 
 /** 008 — Adjunto de un mensaje, para previsualización en el hilo. */
@@ -159,4 +187,10 @@ export type ContactDto = {
   /** Etapa del embudo del lead asociado; null si el contacto no tiene lead. */
   stageName: string | null;
   archivedAt: string | null;
+  /**
+   * 006 — Fuente efectiva del contacto ("anuncio" / "publicacion" /
+   * "desconocida" / lo capturado a mano). Backwards compatible: si no se
+   * calcula, queda `null`.
+   */
+  source: string | null;
 };

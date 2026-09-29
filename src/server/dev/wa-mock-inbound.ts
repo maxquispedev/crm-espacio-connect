@@ -41,7 +41,7 @@ const MOCK_BINARY_TYPES = new Set(["image", "video", "audio", "document", "stick
 function applyMockContent(
   message: Record<string, unknown>,
   type: string,
-  input: { text?: string } & MockMediaInput
+  input: { text?: string } & MockMediaInput & MockReferralInput
 ): void {
   if (type === "text") {
     message.text = { body: input.text ?? "hola" };
@@ -61,7 +61,30 @@ function applyMockContent(
     if (input.filename) media.filename = input.filename;
     message[type] = media;
   }
+  // 006 — Referral CTWA. Si se pasa, lo pega al mensaje para que el webhook
+  // lo propague a `attribution/referral.ts`.
+  if (input.referral) {
+    message.referral = input.referral;
+  }
 }
+
+/**
+ * 006 — Subset del `messages[].referral` que el mock acepta. Cualquier clave
+ * fuera de esta lista se filtra en el normalizador (`anuncioDeWhatsapp`).
+ */
+type MockReferralInput = {
+  referral?: {
+    source_url?: string;
+    source_id?: string;
+    source_type?: string;
+    headline?: string;
+    body?: string;
+    media_type?: string;
+    image_url?: string;
+    thumbnail_url?: string;
+    ctwa_clid?: string;
+  };
+};
 
 export function buildInboundPayload(input: {
   wabaId: string;
@@ -75,7 +98,7 @@ export function buildInboundPayload(input: {
   text?: string;
   waMessageId?: string;
   timestamp?: number;
-} & MockMediaInput) {
+} & MockMediaInput & MockReferralInput) {
   const type = input.type ?? "text";
   const message: Record<string, unknown> = {
     id: input.waMessageId ?? `wamid.mock.in.${nextN()}`,

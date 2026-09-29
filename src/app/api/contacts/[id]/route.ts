@@ -9,6 +9,9 @@ import {
   serializeContact,
 } from "@/server/contacts";
 import { serializeLeadSalesState } from "@/server/sales/serialize-ui";
+import { anuncioDelContacto } from "@/server/attribution/store";
+import { anuncioDesdeRow } from "@/lib/anuncios";
+import { effectiveSource } from "@/server/contact-source";
 
 export const dynamic = "force-dynamic";
 
@@ -19,8 +22,16 @@ export const GET = withAuth(async (session, _req: Request, ctx: Params) => {
   const contact = await getContactById(session.organizationId, id);
   if (!contact) return apiError(404, "not_found", "Contacto no encontrado");
   const stageRow = await getContactStage(session.organizationId, id);
+
+  // 006 — Origen del anuncio de Meta (anuncioDelContacto = el más viejo).
+  const anuncioContacto = await anuncioDelContacto(session.organizationId, id);
+  const source = effectiveSource(
+    null, // `contact.source` aún no existe como columna — se enchufa en spec 008+
+    anuncioContacto
+  );
+
   return Response.json({
-    contact: serializeContact(contact),
+    contact: serializeContact(contact, stageRow?.stage.name ?? null, source),
     stage: stageRow
       ? {
           id: stageRow.stage.id,
@@ -35,6 +46,13 @@ export const GET = withAuth(async (session, _req: Request, ctx: Params) => {
           sales: serializeLeadSalesState(stageRow.lead),
         }
       : null,
+    /**
+     * 006 — DTO completo del anuncio de origen (lo que consume el panel
+     * del contacto cuando el spec 007 pinte la UI). Si el caller quiere
+     * el anuncio de una conversación específica, debe llamar a
+     * `GET /api/conversations/[id]` y leer `anuncio` en su `conversation`.
+     */
+    anuncio: anuncioDesdeRow(anuncioContacto),
   });
 });
 

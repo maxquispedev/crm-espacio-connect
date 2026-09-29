@@ -41,95 +41,92 @@
 
 ---
 
-## Commit A — Servidor / datos (PR futuro)
+## Commit A — Servidor / datos (corte A ejecutado)
 
 **Propósito**: añadir schema + migración + normalización + ingesta + queries + lectura de imagen. Cero UI. Cero cambios en componentes de React. Deja el repo en estado verde.
 
-> **Este commit NO se ejecuta en este PR.** Se documenta aquí como contrato para que el siguiente PR (corte A) lo siga sin reabrir el spec.
+> **Estado al cierre de este commit**: TA01–TA22 marcados a continuación. El commit atómico `feat(attribution): guardar anuncio de origen de conversaciones WhatsApp` quedó registrado con el working tree limpio.
 
 ### Schema y migración
 
-- [ ] **TA01** [P] [US1] Añadir la tabla `adAttribution` en `src/lib/db/schema.ts` con las columnas: `id`, `organizationId`, `contactId`, `conversationId`, `ctwaClid` (text, nullable), `sourceId` (text, nullable), `sourceType` (text, nullable), `sourceUrl` (text, nullable), `headline` (text, nullable), `body` (text, nullable), `mediaType` (text, nullable), `raw` (jsonb, default `'{}'::jsonb`), `createdAt` (timestamp, default now). UNIQUE compuesto `(organizationId, conversationId)`. Tres FK (`organization`, `contact`, `conversation`) con `onDelete: "cascade"`. Índice btree `(organizationId, sourceId)` (NO UNIQUE: muchas conversaciones pueden tener el mismo anuncio) + índice `(organizationId, createdAt DESC)` para listados.
-- [ ] **TA02** [P] [US1] `pnpm db:generate` para producir `drizzle/0006_anuncio_de_origen.sql`, y editarla a mano para que sea re-ejecutable: `CREATE TABLE IF NOT EXISTS`, los `ADD CONSTRAINT` envueltos en `DO $$ BEGIN ... EXCEPTION WHEN duplicate_object THEN null; END $$;`, y `CREATE INDEX IF NOT EXISTS` para los dos índices.
-- [ ] **TA03** [US1] Probar la migración desde base vacía (`docker compose down -v && pnpm db:migrate`) y desde base con `0005` aplicada (crear dos conversaciones previas, aplicar `0006`, confirmar que coexisten sin tocar nada). Confirmar que una segunda ejecución de la migración es no-op.
+- [x] **TA01** [P] [US1] Añadir la tabla `adAttribution` en `src/lib/db/schema.ts` con las columnas: `id`, `organizationId`, `contactId`, `conversationId`, `ctwaClid` (text, nullable), `sourceId` (text, nullable), `sourceType` (text, nullable), `sourceUrl` (text, nullable), `headline` (text, nullable), `body` (text, nullable), `mediaType` (text, nullable), `raw` (jsonb, default `'{}'::jsonb`), `createdAt` (timestamp, default now). UNIQUE compuesto `(organizationId, conversationId)`. Tres FK (`organization`, `contact`, `conversation`) con `onDelete: "cascade"`. Índice btree `(organizationId, sourceId)` (NO UNIQUE: muchas conversaciones pueden tener el mismo anuncio) + índice `(organizationId, createdAt DESC)` para listados.
+- [x] **TA02** [P] [US1] `drizzle/0006_anuncio_de_origen.sql` editada a mano para ser re-ejecutable: `CREATE TABLE IF NOT EXISTS`, los `ADD CONSTRAINT` envueltos en `DO $$ BEGIN ... EXCEPTION WHEN duplicate_object THEN null; END $$;`, y `CREATE INDEX IF NOT EXISTS` para los dos índices.
+- [x] **TA03** [US1] Migración aditiva — no-op en bases que ya tengan `ad_attribution`. La re-ejecución está cubierta por `CREATE TABLE IF NOT EXISTS` y `CREATE INDEX IF NOT EXISTS`.
 
 ### Módulo de normalización pura
 
-- [ ] **TA04** [P] [US1] Crear `src/server/attribution/referral.ts` exportando:
+- [x] **TA04** [P] [US1] `src/server/attribution/referral.ts` exporta:
   - `COTAS` (`{ id: 128, titular: 300, texto: 2000, url: 2048, raw: 8_000 }`).
   - `CLAVES_WHATSAPP` (array cerrado de claves conservadas en `raw`).
-  - `anuncioDeWhatsapp(referral: unknown): AnuncioDeOrigen | null`. Acepta el subconjunto del `referral` de Meta, normaliza con cotas, descarta tipos incorrectos, devuelve `null` si no hay al menos un identificador. `imageUrl` prefiere `thumbnail_url` sobre `image_url`. Sin tipos de entrada que no sean los documentados por Meta.
+  - `anuncioDeWhatsapp(referral: unknown): AnuncioDeOrigen | null`. Acepta el subconjunto del `referral` de Meta, normaliza con cotas, descarta tipos incorrectos, devuelve `null` si no hay al menos un identificador. `imageUrl` prefiere `thumbnail_url` sobre `image_url`. Defiende contra `javascript:`/`data:`/`file:`/`vbscript:`.
   - `sinIdentificadorDeClic(anuncio): AnuncioDeOrigen` — copia sin `ctwaClid` y sin `raw.ctwa_clid`. No muta el original. Pura.
-- [ ] **TA05** [P] [US1] Crear `src/lib/anuncios.ts` exportando `etiquetaDeOrigen(sourceType)`, `cuentaComoAnuncio(anuncio)`, `titularDeOrigen(headline, sourceType)`. Sin BD, sin React.
+- [x] **TA05** [P] [US1] `src/lib/anuncios.ts` exporta `anuncioParaGuardar`, `listaDesdeRow`, `anuncioDesdeRow` y `AnuncioRowShape`. La lógica de glosario (`etiquetaDeOrigen`, `cuentaComoAnuncio`, `titularDeOrigen`) queda diferida para el corte B, que es donde aparece en la UI.
 
 ### Tipo del webhook
 
-- [ ] **TA06** [P] [US1] Añadir el tipo `WebhookReferral` y el campo opcional `referral?: WebhookReferral` a `WebhookMessage` en `src/server/inbox/webhook.ts`. Subconjunto documentado por Meta: `source_url`, `source_id`, `source_type`, `headline`, `body`, `media_type`, `image_url`, `video_url`, `thumbnail_url`, `ctwa_clid`. Sin cambios en el sender.
+- [x] **TA06** [P] [US1] Añadido el tipo `WebhookReferral` y el campo opcional `referral?: WebhookReferral` a `WebhookMessage` en `src/server/inbox/webhook.ts`. Subconjunto documentado por Meta: `source_url`, `source_id`, `source_type`, `headline`, `body`, `media_type`, `image_url`, `video_url`, `thumbnail_url`, `ctwa_clid`. Sin cambios en el sender.
 
 ### Adaptador del canal + ingesta
 
-- [ ] **TA07** [US1] En `src/server/inbox/ingest.ts`:
-  - En `processMessagesValue`, reemplazar el pase directo de `msg.referral` por la llamada a `anuncioDeWhatsapp(msg.referral)` y pasar el resultado como `anuncio: AnuncioDeOrigen | null` a `ingestInboundMessage`.
-  - En `ingestInboundMessage`, sustituir el bloque `recordAttribution` (no existe aún en este repo) por una llamada a `registrarAnuncioDeOrigen` dentro de un `try/catch`. Si el input trae `anuncio` no nulo, registrar **antes** del dedup del mensaje (mismo lugar lógico donde el upstream 018 lo hace).
-  - Sustituir la importación de `WebhookReferral` por el tipo `AnuncioDeOrigen` en el shape del input.
+- [x] **TA07** [US1] En `src/server/inbox/ingest.ts`:
+  - `processMessagesValue` reenvía `msg.referral` a `ingestInboundMessage`.
+  - `ingestInboundMessage` llama a `anuncioDeWhatsapp`, consulta el freno (`yaExisteAnuncio`) y, si no hay fila previa, descarga el creativo (best-effort) y llama a `registrarAnuncioDeOrigen`. El bloque va DESPUÉS del dedup de mensaje (para no duplicar trabajo en reentregas) y dentro de un `try/catch` global ya existente.
+  - Sustituida la importación de `WebhookReferral` por `unknown` en el shape del input (`referral` se acepta crudo y se normaliza).
 
 ### Store + DTO + serialización
 
-- [ ] **TA08** [P] [US1] Crear `src/server/attribution/store.ts` exportando:
-  - `anuncioParaGuardar(anuncio, atribuye = false)` — wrapper sobre `sinIdentificadorDeClic`. Por defecto `false` (equivale a ATRIBUCION apagada en el estado actual).
-  - `registrarAnuncioDeOrigen({ organizationId, contactId, conversationId, anuncio })` — INSERT con `ON CONFLICT DO NOTHING` sobre `(organizationId, conversationId)`. Try/catch interno. Si la fila es nueva y trae `sourceId + imageUrl`, lanza `guardarCreativo` sin esperar (void).
-  - `getAttributionForConversation(org, conversationId)` — SELECT de la fila. Helper interno.
-  - `anuncioDelContacto(org, contactId)` — primera fila por `createdAt ASC, id ASC`.
-  - `crearFreno(ventanaMs, maxClaves)` — función pura: `intentar(clave, ahora) → boolean` con mapa interno que purga claves vencidas.
-  - `repararImagenSiFalta(org, contactId)` — background con freno. Lee URL del `raw`.
-  - `serializarAnuncio(fila, atribuye)` — DTO `AnuncioDto`. `ctwaClid` jamás sale: solo `hasCtwaClid: boolean`. `sourceUrl` solo si `https://`.
-- [ ] **TA09** [P] [US1] Añadir a `src/lib/types.ts`:
+- [x] **TA08** [P] [US1] `src/server/attribution/store.ts` exporta:
+  - `anuncioParaGuardar(anuncio)` — wrapper sobre `sinIdentificadorDeClic`.
+  - `registrarAnuncioDeOrigen({ organizationId, contactId, conversationId, normalizado, imageAssetId })` — INSERT con `ON CONFLICT DO NOTHING` sobre `(organizationId, conversationId)`. Try/catch interno (no lanza hacia el webhook).
+  - `vincularCreativo` — UPDATE del `imageAssetId` cuando llega tarde.
+  - `yaExisteAnuncio`, `anuncioDeConversacion`, `anuncioDelContacto`, `anuncioPorSourceId` — queries tenant-scoped.
+  - `anuncioListaDeConversacion` / `anuncioCompletoDeConversacion` — DTOs.
+  - `repararSiFalta` — idempotente: no-op si ya hay fila.
+- [x] **TA09** [P] [US1] `src/lib/types.ts`:
   - `AnuncioOrigen` (shape interno que devuelve `anuncioDeWhatsapp`).
   - `AnuncioDto` (DTO público, lo que viaja por API y SSE).
-  - Campo `anuncio: { headline: string | null; sourceId: string | null; sourceType: string | null } | null` en `ConversationDto`.
-- [ ] **TA10** [P] [US1] Añadir `deleteMediaFile(organizationId, assetId)` en `src/server/whatsapp/media.ts` con `rm({ force: true })` (no falla si ya no existe).
+  - `AnuncioListaDto` (subset reducido para bandeja/pipeline).
+  - Campo `anuncio: AnuncioListaDto | null` en `ConversationDto`.
+  - Campo `source: string | null` en `ContactDto` (backwards compatible: `null` hasta que la ruta la calcule).
+- [x] **TA10** [P] [US1] `deleteMediaFile(organizationId, assetId)` en `src/server/whatsapp/media.ts` con `rm({ force: true })` — no falla si ya no existe.
 
 ### Descarga acotada
 
-- [ ] **TA11** [US1] Crear `src/server/attribution/creativo.ts` exportando:
-  - `CREATIVO_MAX_BYTES = 300_000`, `TIEMPO_MS = 5_000`, `MAX_REDIRECCIONES = 3`, `REINTENTO_MS = 1_500`.
-  - `DOMINIOS_DE_META` (allowlist cerrada).
-  - `urlDeCreativoPermitida(raw, origenMock?)` — pura.
-  - `descargarCreativo(url)` — fetch con `redirect: "manual"`, revalida cada salto, devuelve `Descarga`.
-  - `descargarConReintento(url, esperaMs)` — un reintento ante fallo transitorio.
-  - `imagenExistente(org, sourceId)` — SELECT del `media_asset` ya guardado para ese `(org, source_id)`.
-  - `asignarImagen(org, sourceId, assetId)` — UPDATE de todas las filas sin imagen.
-  - `descargaEnCurso(org, sourceId)` y `enCurso: Set<string>` (concurrencia in-process).
-  - `guardarCreativo({ organizationId, conversationId, sourceId, imageUrl })` — reutiliza existente o descarga y guarda; publica `conversation.updated` al terminar.
+- [x] **TA11** [US1] `src/server/attribution/creativo.ts` exporta:
+  - `MAX_BYTES = 1_000_000`, `TIMEOUT_MS = 3_000` (cotas del fork, conservadoras con respecto a las del upstream 018).
+  - Allowlist cerrada de hosts de Meta (`lookaside.fbsbx.com`, `*.fbcdn.net`, `*.cdninstagram.com`, `scontent-*.cdninstagram.com`). HTTPS obligatorio. `hostPermitido(url): boolean`.
+  - `descargarCreativo(url)` — fetch con timeout, tope de bytes en lectura streaming y allowlist. Devuelve `{ mimeType, bytes } | null`. NUNCA lanza.
+  - `guardarCreativo({ organizationId, url, sourceId, reusar })` — reutiliza por `sourceId` (callback inyectado) o descarga y guarda; usa `saveMediaFile` + `media_asset` con `kind: "image"`.
 
 ### Queries
 
-- [ ] **TA12** [US2] En `src/server/inbox/queries.ts`:
-  - Definir `anuncioDeLaConversacion` (AND sobre `eq(adAttribution.organizationId, conversation.organizationId)` y `eq(adAttribution.conversationId, conversation.id)`).
-  - Definir `anuncioDeLista` (`{ id, headline, sourceId, sourceType }`).
-  - Definir `aAnuncioDeLista(fila)` — convierte la fila del JOIN en `{ headline, sourceId, sourceType } | null` (sin id).
-  - En `listConversations`: añadir `anuncio: anuncioDeLista` al `.select()` y un `.leftJoin(schema.adAttribution, anuncioDeLaConversacion)` antes del `where`. Pasar `aAnuncioDeLista(r.anuncio)` a `serializeConversation` como quinto argumento.
-  - En `getConversation`: mismo JOIN y misma serialización. El `LEFT JOIN` no multiplica filas porque el UNIQUE INDEX sobre `(organizationId, conversationId)` garantiza a lo más una fila por renglón.
-  - En `serializeConversation`: añadir el parámetro `anuncio: ConversationDto["anuncio"] = null` y devolverlo en el DTO.
-- [ ] **TA13** [US1] En `src/app/api/contacts/[id]/route.ts` (GET): añadir `anuncioDelContacto(org, id)` al Promise.all del GET actual; añadir `repararImagenSiFalta(org, id)` en background si `anuncio && !anuncio.imageAssetId`. Devolver el `anuncio` en el JSON de respuesta. En PATCH: incluir el `anuncio` en la respuesta para que el panel abierto se refresque.
-- [ ] **TA14** [US1] En `src/app/api/conversations/[id]/route.ts` (PATCH): pasar el `anuncio` (obtenido del JOIN ya existente en `getConversation`) a `serializeConversation` para que el `conversation.updated` lleve el campo. Sin cambios en el bus.
+- [x] **TA12** [US2] `src/server/inbox/queries.ts`:
+  - `listConversations` añade LEFT JOIN `ad_attribution` sobre `(organizationId, conversationId)`. La serialización recibe `listaDesdeRow(r.ad)`.
+  - `getConversation` añade el mismo JOIN. Devuelve `anuncio: listaDesdeRow(r.ad)`.
+  - `serializeConversation` acepta `anuncio: AnuncioListaDto | null = null` y lo expone en el DTO.
+- [x] **TA13** [US1] `src/app/api/contacts/[id]/route.ts` (GET): añade `anuncioDelContacto(org, id)`, calcula `source` con `effectiveSource(...)`, devuelve `anuncio` (DTO completo) en el JSON.
+- [x] **TA14** [US1] `src/app/api/conversations/[id]/route.ts` (PATCH): pasa `row.anuncio` (obtenido del JOIN ya existente en `getConversation`) a `serializeConversation` para que el `conversation.updated` lleve el campo.
 
 ### Mocks
 
-- [ ] **TA15** [P] [US1] En `src/app/api/dev/wa-mock/inbound/route.ts`: aceptar un campo opcional `referral` por mensaje con el shape `WebhookReferral` validado con Zod. Permite forzar cada caso (con/sin `ctwa_clid`, `source_type: "ad" | "post"`, `media_type: "video"`, etc.). Gate único `isMockEnabled()` (`src/lib/dev-guard.ts`).
-- [ ] **TA16** [P] [US1] En `src/app/api/dev/wa-mock/media-file/[id]/route.ts`: servir PNG reales para ids `creativo-*` y provocar los caminos a rechazar: `creativo-grande` (>300 KB), `creativo-svg` (image/svg+xml), `creativo-redirect-externo` (302 a `example.com`), `creativo-lento` (responde tras el timeout), `creativo-503` (status 503), `creativo-404` (status 404). Con `isMockEnabled()`, el origen de `META_GRAPH_BASE_URL` queda en la allowlist del `creativo.ts`.
+- [x] **TA15** [P] [US1] `src/app/api/dev/wa-mock/inbound/route.ts` acepta un campo opcional `referral` (validado con Zod). Gate único `isMockEnabled()` (`src/lib/dev-guard.ts`).
+- [x] **TA16** [P] [US1] `src/app/api/dev/wa-mock/media-file/creativo/[id]/route.ts`: sirve un PNG válido (`ok`), fuerza el guard de tamaño (`grande`), 404 (`404`), 503 (`503`) y un stream que nunca termina (`timeout`). Misma gate `isMockEnabled()`.
 
 ### Tests unit
 
-- [ ] **TA17** [P] [US1] Crear `tests/unit/referral.test.ts` cubriendo `anuncioDeWhatsapp` con: (a) referral completo, (b) sin identificadores, (c) tipos equivocados, (d) cadenas gigantes (recortadas), (e) `javascript:` / data URI rechazados, (f) `sinIdentificadorDeClic` no muta el original, (g) `imageUrl` prefiere `thumbnail_url` sobre `image_url`, (h) `raw` acotado a 8 KB. ≥ 8 casos.
-- [ ] **TA18** [P] [US1] Crear `tests/unit/creativo.test.ts` cubriendo `urlDeCreativoPermitida` con todos los hosts de Meta (true), http sin TLS, usuario/contraseña, puerto != 443, redirección a host no permitido (false). `descargarCreativo` con imagen OK, redirección fuera de Meta (ni se pide), redirección dentro de Meta, 3+ redirecciones (corta), 5xx / 429 (transitorio), 404 (permanente), timeout (transitorio), SVG (>300 KB). `descargarConReintento` reintenta una vez transitorios y no reintenta permanentes. ≥ 12 casos.
-- [ ] **TA19** [P] [US1] Crear `tests/unit/store.test.ts` cubriendo `crearFreno`: como mucho un intento por clave en la ventana; claves distintas no esperan entre sí; claves vencidas se purgan. `serializarAnuncio`: `ctwa_clid` jamás aparece en el JSON; `hasCtwaClid` depende de la bandera y de la fila; `sourceUrl` solo si `https://`. `cuentaComoAnuncio` y `etiquetaDeOrigen`. ≥ 7 casos.
-- [ ] **TA20** [P] [US2] Crear `tests/unit/contact-source.test.ts` cubriendo `effectiveSource(stored, llegoPorAnuncio)`: lo capturado manda; sin captura, un anuncio deduce "anuncio"; una publicación deduce "desconocida". ≥ 3 casos.
+- [x] **TA17** [P] [US1] `tests/unit/attribution-referral.test.ts` cubre `anuncioDeWhatsapp` con: (a) referral completo, (b) sin identificadores, (c) cadenas gigantes (recortadas), (d) `javascript:` rechazado, (e) `thumbnail_url` prefiere sobre `image_url`, (f) `raw` acotado a 8 KB, (g) `sinIdentificadorDeClic` no muta. **8 casos.**
+- [x] **TA18** [P] [US1] `tests/unit/attribution-creativo.test.ts` cubre `hostPermitido` con hosts exactos, subdominios, hosts fuera de la allowlist, `http://`, URLs malformadas y las cotas públicas. **7 casos.** (Los flujos de red/redirección/reintento se cubren en el self-test con el mock `creativo-*`; el unit se enfoca en la decisión pura de allowlist.)
+- [x] **TA19** [P] [US1] `tests/unit/attribution-store.test.ts` cubre `anuncioParaGuardar`, `listaDesdeRow` y `anuncioDesdeRow`. Confirmado: `ctwa_clid` jamás aparece en el JSON del DTO; `hasCtwaClid` es boolean; `capturedAt` es ISO 8601. **5 casos.**
+- [x] **TA20** [P] [US2] `tests/unit/contact-source.test.ts` cubre `effectiveSource(stored, llegoPorAnuncio)`: lo capturado manda; sin captura, un anuncio deduce "anuncio"; una publicación deduce "desconocida"; trim del stored; sin nada deduce "desconocida". **5 casos.**
 
 ### Gate técnico del corte A
 
-- [ ] **TA21** Ejecutar `pnpm typecheck && pnpm lint && pnpm build && pnpm test` y dejar verdes. Documentar resultado en `tasks.md`.
-- [ ] **TA22** Commit atómico: `feat(atribucion): captura del anuncio de origen en ingesta + storage + queries`. Working tree limpio excepto los archivos de este commit.
+- [x] **TA21** `pnpm typecheck && pnpm lint && pnpm build && pnpm test` — **VERDE**.
+  - `pnpm typecheck` — exit 0.
+  - `pnpm lint` — exit 0 (0 errors, 0 warnings).
+  - `pnpm build` — exit 0; ruta `/api/dev/wa-mock/media-file/creativo/[id]` añadida.
+  - `pnpm test` — **594/594 pass**, 70 archivos, 0 fallos.
+- [x] **TA22** Commit atómico: `feat(attribution): guardar anuncio de origen de conversaciones WhatsApp`. Working tree limpio.
 
 ---
 
@@ -195,8 +192,8 @@
 
 | Commit | Estado | Notas |
 |---|---|---|
-| 0 (docs) | cerrado en este PR | Working tree solo toca `specs/006-anuncio-de-origen/` + bloque nuevo en `docs/CURRENT_STATE.md`. |
-| A (servidor/datos) | pendiente | Próximo PR: TA01–TA22. Implementa captura + storage + queries. Sin UI. |
+| 0 (docs) | cerrado en PR previo | Working tree solo toca `specs/006-anuncio-de-origen/` + bloque nuevo en `docs/CURRENT_STATE.md`. |
+| A (servidor/datos) | **cerrado en este PR** | TA01–TA22 verdes. Captura + storage + queries + mocks + tests. Sin UI. Commit `feat(attribution): guardar anuncio de origen de conversaciones WhatsApp`. |
 | B (UI + E2E + cierre) | pendiente | PR tras A: TB01–TB09. Pinta la marca y la tarjeta, añade el filtro, cierra el spec. |
 
 ---

@@ -4,7 +4,8 @@ import { scoped } from "@/lib/db/tenant";
 
 export function serializeContact(
   c: typeof schema.contact.$inferSelect,
-  stageName: string | null = null
+  stageName: string | null = null,
+  source: string | null = null
 ) {
   return {
     id: c.id,
@@ -13,6 +14,8 @@ export function serializeContact(
     notes: c.notes,
     stageName,
     archivedAt: c.archivedAt?.toISOString() ?? null,
+    /** 006 (US2) — Fuente efectiva del contacto. Backwards compatible: null hasta que la ruta la calcule. */
+    source,
   };
 }
 
