@@ -165,22 +165,68 @@ No toca drag&drop/paste/dropzone (ya entregados en el commit 1). Mantiene intact
 
 ### Self-test E2E (sección 009)
 
-- [ ] **T211** [P] [US1, US3, US4] Añadir sección 009 a `scripts/e2e-selftest.mjs` (justo después de la sección 008 existente) que ejercita el **contrato backend** que asume la cola:
+- [x] **T211** [P] [US1, US3, US4] Añadir sección 009 a `scripts/e2e-selftest.mjs` (justo después de la sección 008 existente) que ejercita el **contrato backend** que asume la cola:
   - **AC-1**: cola de 3 adjuntos (jpeg, mp4 30 MB forzado a document con mime `application/octet-stream`, pdf) enviados secuencialmente → 3 mensajes salientes en orden, todos con asset disponible.
   - **AC-2**: en una cola de 3 adjuntos, el segundo falla por exceder 16 MB como video (forzando el caso `willSendAsDocument=false` mal aplicado) → primero `sent`, segundo `failed`, tercero `sent`. Verifica que la cola continúa tras el fallo.
   - **AC-3**: el caption solo aparece en el primero de los 3 (verificable inspeccionando el body en `wa-mock/outbox`).
   - **AC-4**: video de 120 MB → 413 desde el servidor (NO se relaja el límite duro).
-  - **AC-5**: conversación `is_test` con cola → todos los adjuntos fallan con `sandbox_violation`, ningún asset en disco, ningún `graphRequest`.
-- [ ] **T212** [P] [US1, US2, US4, US6] Crear `tests/e2e/009-inbox-messaging-ux.md` (guion Playwright manual): pasos visuales para arrastrar 3 archivos, pegar con Ctrl+V, ver cola y overlay, eliminar uno, enviar, forzar un fallo y reintentar, verificar cleanup de Object URLs en devtools. Cita los AC de la sección 009.
+  - **AC-5**: conversación `is_test` con cola → todos los adjuntos fallan con `sandbox_violation`. **Cubierto por tests/unit/send-sandbox.test.ts + media-send.test.ts**; no en selftest porque no hay endpoint dev para setear `is_test` sin disparar el lab (fuera de scope 004).
+- [x] **T212** [P] [US1, US2, US4, US6] Crear `tests/e2e/009-inbox-messaging-ux.md` (guion Playwright manual): pasos visuales para arrastrar 3 archivos, pegar con Ctrl+V, ver cola y overlay, eliminar uno, enviar, forzar un fallo y reintentar, verificar cleanup de Object URLs en devtools. Cita los AC de la sección 009.
 
 ### Verificación del commit
 
-- [ ] **T213** Correr `pnpm typecheck && pnpm lint && pnpm build && pnpm test` — verde. Tests nuevos añadidos en `src/components/inbox/__tests__/`.
-- [ ] **T214** Levantar app + PostgreSQL + mocks (`WA_MOCK_ENABLED=true`, `MEDIA_DIR` local). Correr `pnpm test:e2e` — sección 009 verde. Reglas duras del PrincipIO IX: destinatarios en allowlist (los mismos del spec 003), sin ráfaga (gap de ~80 ms entre envíos en `submitQueue`), volumen mínimo.
-- [ ] **T215** Playwright manual siguiendo `tests/e2e/009-inbox-messaging-ux.md`. Confirmar visualmente drag, paste, retry, cleanup, responsive (375 px y 1280 px).
-- [ ] **T216** Verificar que **no se rompió nada** del spec 003 cerrado: re-correr la sección 008 de `e2e-selftest.mjs` completa (incluye: echoes de coexistence, sandbox, ventana 24 h, descarga in-process de media entrante, etc.) — sigue verde.
+- [x] **T213** Correr `pnpm typecheck && pnpm lint && pnpm build && pnpm test` — verde. Tests nuevos añadidos en `src/components/inbox/__tests__/`.
+- [ ] **T214** Levantar app + PostgreSQL + mocks (`WA_MOCK_ENABLED=true`, `MEDIA_DIR` local). Correr `pnpm test:e2e` — sección 009 verde. **PENDIENTE en este entorno** (sin app local ni BD PostgreSQL activa; gates unitarios verdes no equivalen a E2E punta a punta — Constitución IX).
+- [ ] **T215** Playwright manual siguiendo `tests/e2e/009-inbox-messaging-ux.md`. Confirmar visualmente drag, paste, retry, cleanup, responsive (375 px y 1280 px). **PENDIENTE en este entorno** (idem T214).
+- [ ] **T216** Verificar que **no se rompió nada** del spec 003 cerrado: re-correr la sección 008 de `e2e-selftest.mjs` completa (incluye: echoes de coexistence, sandbox, ventana 24 h, descarga in-process de media entrante, etc.) — sigue verde. **PENDIENTE en este entorno** (idem T214).
 
-**Checkpoint**: la feature cumple todas las US del spec. El composer es usable para enviar varios adjuntos con la experiencia de WhatsApp Web, sin tocar el sender ni el endpoint.
+**Checkpoint**: la feature cumple todas las US del spec en código y tests unit. **E2E live pendiente** — el entorno actual no tiene app + mocks + BD levantados; este handoff debe correr `pnpm test:e2e` localmente antes de declarar READY punta a punta.
+
+---
+
+## Commit 2b — UX polish del composer y la cola (este commit, post-cierre)
+
+**Propósito**: corte final de pulido de UX sin agregar capacidades nuevas.
+Mejoras sobre la base cerrada en commits 0/1/2/2a para acercar la experiencia
+diaria al nivel WhatsApp Web **manteniendo la identidad visual Atlas**.
+
+- [x] **T2b01** [US6] Tarjeta horizontal compacta (160×112 px) con preview 88× a
+  la izquierda e info + acciones a la derecha; mejor jerarquía visual.
+- [x] **T2b02** [US1] Header de la cola con conteo inline ("3 adjuntos · 12 MB ·
+  1/3 enviados") y `CheckCircle2` cuando todo está enviado.
+- [x] **T2b03** [US5] Acción nueva `clearSent` para limpiar solo los `sent`
+  preservando `pending`/`failed`. Botón "Limpiar enviados" visible cuando
+  aplica.
+- [x] **T2b04** [US4] Resumen `summarize(attachments)` puro y testeable:
+  `total`, `sent`, `failed`, `pending`, `sending`, `blocked`. Label
+  `progressLabel` para mostrar inline (3 variantes: pendiente / en curso /
+  completo / con-error).
+- [x] **T2b05** [US6] Navegación por teclado entre tarjetas: ←/→ cambia
+  selección; Delete/Backspace elimina el adjunto (no en `sent`).
+  Botones chevron visibles al hover/focus con área cliqueable ≥ 44 px.
+- [x] **T2b06** [US2] Drop overlay con `UploadCloud` y conteo animado
+  (`dragFilesHint`) + transición `animate-in fade-in zoom-in-95`.
+- [x] **T2b07** [US4] Indicadores de estado mejorados: spinner con label
+  "Enviando", check con label "Enviado" (no solo icono). Texto más
+  explícito reduce ambigüedad del operador.
+- [x] **T2b08** [US6] Toolbar buttons con `h-11 w-11` (≥ 44×44 px touch).
+  Send button también 44×44. Foco del textarea se restaura al enviar.
+- [x] **T2b09** [US1] Esc con textarea vacío y cola pendiente: limpia
+  toda la cola (Object URLs revocadas). Con texto: no toca la cola.
+- [x] **T2b10** [US1] Auto-focus del textarea tras `addFiles` (cuando
+  el operador añade un archivo, el foco salta al textarea para que
+  escriba el caption sin tab extra).
+- [x] **T2b11** [US6] `aria-current="true"` en la tarjeta seleccionada;
+  posición "1 de 3" en el aria-label para mejor lectura de pantalla.
+- [x] **T2b12** Tests añadidos a `tests/unit/attachment-queue-reducer.test.ts`:
+  `clearSent` (4 tests), `summarize` (3 tests), `progressLabel` (5 tests).
+  Total tests del spec 004 ahora: 500.
+- [x] **T2b13** `pnpm typecheck && pnpm lint && pnpm build && pnpm test`
+  verdes tras el corte 2b.
+
+**PENDIENTE fuera del entorno actual**:
+- `pnpm test:e2e` (sección 009) en vivo con app + mocks + BD.
+- Playwright visual con `tests/e2e/009-inbox-messaging-ux.md`.
 
 ---
 

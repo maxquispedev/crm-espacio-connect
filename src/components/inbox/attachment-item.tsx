@@ -3,6 +3,8 @@
 import {
   AlertTriangle,
   Check,
+  ChevronLeft,
+  ChevronRight,
   FileText,
   Loader2,
   Music2,
@@ -24,6 +26,9 @@ import {
  * callbacks. La previsualización usa el Object URL guardado en
  * `attachment.previewUrl`; ese Object URL se libera fuera de aquí (en
  * `useAttachmentQueue` al remover/vaciar/desmontar).
+ *
+ * Layout horizontal compacto (preview izquierda + info derecha) para que la
+ * tarjeta comunique estado y acciones incluso a 100 px de ancho en móvil.
  */
 export function AttachmentItem({
   attachment,
@@ -32,6 +37,9 @@ export function AttachmentItem({
   onRemove,
   onConfirmVideoAsDocument,
   onRetry,
+  onPrev,
+  onNext,
+  positionLabel,
 }: {
   attachment: PendingAttachment;
   selected: boolean;
@@ -41,6 +49,11 @@ export function AttachmentItem({
   onConfirmVideoAsDocument?: () => void;
   /** Cuando `status="failed"`, ofrece reintento del envío. */
   onRetry?: () => void;
+  /** Navegación explícita por teclado. */
+  onPrev?: () => void;
+  onNext?: () => void;
+  /** "1 de 3" opcional, para que el lector de pantalla anounce contexto. */
+  positionLabel?: string;
 }) {
   const {
     file,
@@ -59,37 +72,64 @@ export function AttachmentItem({
           ? ", requiere confirmación para enviar como documento"
           : ""
       }`;
-  const ariaLabel = `Adjuntar ${labelType}, ${file.name}, ${formatBytes(
-    file.size
-  )}, ${stateLabel}`;
+  const ariaLabel = positionLabel
+    ? `Adjuntar ${labelType} ${positionLabel}, ${file.name}, ${formatBytes(
+        file.size
+      )}, ${stateLabel}`
+    : `Adjuntar ${labelType}, ${file.name}, ${formatBytes(
+        file.size
+      )}, ${stateLabel}`;
 
   // Bloqueado = aún no confirmado por el operador (video >16MB en cola).
   const isBlocked = needsVideoAsDocumentConfirm && status === "pending";
+
+  // Variant ring por estado: clarity > decoración.
+  const stateRing =
+    status === "failed"
+      ? "ring-1 ring-danger/60 border-danger"
+      : status === "sent"
+        ? "border-success/50 bg-success/5"
+        : selected
+          ? "border-brand ring-2 ring-brand-soft"
+          : "border-border hover:border-text-3/40";
 
   return (
     <li
       role="listitem"
       aria-label={ariaLabel}
+      aria-current={selected ? "true" : undefined}
       onClick={onSelect}
       onKeyDown={(e) => {
         if (e.key === "Enter" || e.key === " ") {
           e.preventDefault();
           onSelect();
+          return;
+        }
+        if (e.key === "ArrowLeft" && onPrev) {
+          e.preventDefault();
+          onPrev();
+          return;
+        }
+        if (e.key === "ArrowRight" && onNext) {
+          e.preventDefault();
+          onNext();
+          return;
+        }
+        if ((e.key === "Delete" || e.key === "Backspace") && status !== "sent") {
+          // No permite borrar lo ya enviado (estado terminal; evita pérdidas).
+          e.preventDefault();
+          onRemove();
         }
       }}
       tabIndex={0}
       className={cn(
-        "group relative flex w-[120px] shrink-0 cursor-pointer flex-col gap-1 rounded-md border bg-secondary/40 p-2 transition-colors",
-        selected
-          ? "border-brand ring-2 ring-brand-soft"
-          : "border-border hover:border-text-3/40",
-        status === "failed" && "border-danger",
-        status === "sent" && "border-success/60 bg-success/5",
+        "group relative flex h-[112px] w-[160px] shrink-0 cursor-pointer gap-2 rounded-md border bg-secondary/40 p-2 transition-colors",
+        stateRing,
         status === "sending" && "opacity-70"
       )}
     >
       {/* Preview */}
-      <div className="relative h-[72px] w-full overflow-hidden rounded bg-background/60">
+      <div className="relative h-full w-[88px] shrink-0 overflow-hidden rounded bg-background/60">
         {previewUrl && kind === "image" && (
           // eslint-disable-next-line @next/next/no-img-element
           <img
@@ -126,56 +166,67 @@ export function AttachmentItem({
           </div>
         )}
 
-        {/* Indicadores de tipo sobre el preview */}
+        {/* Indicadores de tipo sobre el preview (esquina superior derecha) */}
         {kind === "video" && (
-          <div className="pointer-events-none absolute right-1 top-1 rounded bg-black/60 px-1 py-0.5 text-[10px] font-medium text-white">
+          <div
+            className="pointer-events-none absolute right-1 top-1 rounded bg-black/60 px-1 py-0.5 text-[10px] font-medium text-white"
+            aria-hidden="true"
+          >
             <Video className="inline h-3 w-3" strokeWidth={2} />
           </div>
         )}
         {kind === "audio" && (
-          <div className="pointer-events-none absolute right-1 top-1 rounded bg-black/60 px-1 py-0.5 text-[10px] font-medium text-white">
+          <div
+            className="pointer-events-none absolute right-1 top-1 rounded bg-black/60 px-1 py-0.5 text-[10px] font-medium text-white"
+            aria-hidden="true"
+          >
             <Music2 className="inline h-3 w-3" strokeWidth={2} />
           </div>
         )}
 
-        {/* Indicadores de estado (esquina izquierda) */}
+        {/* Indicadores de estado (esquina superior izquierda) */}
         {status === "sending" && (
           <div
-            className="pointer-events-none absolute left-1 top-1 flex items-center gap-1 rounded bg-black/60 px-1 py-0.5 text-[10px] font-medium text-white"
+            className="pointer-events-none absolute left-1 top-1 flex items-center gap-1 rounded bg-black/70 px-1 py-0.5 text-[10px] font-medium text-white shadow-sm"
             aria-hidden="true"
           >
             <Loader2 className="h-3 w-3 animate-spin" strokeWidth={2} />
+            <span>Enviando</span>
           </div>
         )}
         {status === "sent" && (
           <div
-            className="pointer-events-none absolute left-1 top-1 flex items-center gap-1 rounded bg-success/85 px-1 py-0.5 text-[10px] font-medium text-white"
+            className="pointer-events-none absolute left-1 top-1 flex items-center gap-1 rounded bg-success px-1 py-0.5 text-[10px] font-medium text-white shadow-sm"
             aria-hidden="true"
           >
             <Check className="h-3 w-3" strokeWidth={2.5} />
+            <span>Enviado</span>
           </div>
         )}
       </div>
 
-      {/* Nombre + tamaño */}
-      <div className="min-w-0">
-        <p
-          className="truncate text-xs font-medium text-foreground"
-          title={file.name}
-        >
-          {file.name}
-        </p>
-        <p className="text-[10px] text-text-3">{formatBytes(file.size)}</p>
-      </div>
-
-      {/* 004 — Confirmación explícita video→documento. */}
-      {needsVideoAsDocumentConfirm && status === "pending" && (
-        <div className="flex flex-col gap-1 rounded border border-warning-border bg-warning-soft p-1.5 text-[10px] text-warning-text">
-          <p className="leading-snug">
-            Excede el límite de video (16 MB). ¿Enviarlo como documento?
+      {/* Info + acciones (derecha) */}
+      <div className="flex min-w-0 flex-1 flex-col justify-between">
+        <div className="min-w-0">
+          <p
+            className="line-clamp-2 break-all text-[11px] font-medium leading-tight text-foreground"
+            title={file.name}
+          >
+            {file.name}
           </p>
-          {onConfirmVideoAsDocument && (
-            <div className="flex items-center gap-1">
+          <p className="mt-0.5 text-[10px] text-text-3">{formatBytes(file.size)}</p>
+          <p className="mt-0.5 text-[10px] uppercase tracking-wide text-text-4">
+            {labelType}
+          </p>
+        </div>
+
+        {/* 004 — Confirmación explícita video→documento. */}
+        {needsVideoAsDocumentConfirm && status === "pending" && (
+          <div className="mt-1 flex flex-col gap-1 rounded border border-warning-border bg-warning-soft p-1 text-[10px] text-warning-text">
+            <p className="leading-tight">
+              Excede 16 MB de video. ¿Enviar como documento?
+            </p>
+            {onConfirmVideoAsDocument && (
               <button
                 type="button"
                 onClick={(e) => {
@@ -183,63 +234,101 @@ export function AttachmentItem({
                   onConfirmVideoAsDocument();
                 }}
                 aria-label={`Enviar ${file.name} como documento`}
-                className="flex min-h-[28px] flex-1 items-center justify-center rounded bg-warning-text px-1.5 py-0.5 text-[10px] font-medium text-warning-soft transition-opacity hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-warning-text"
+                className="flex min-h-[28px] flex-1 items-center justify-center rounded bg-warning-text px-1.5 py-0.5 text-[10px] font-semibold text-warning-soft transition-opacity hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-warning-text"
               >
                 Enviar como documento
               </button>
-            </div>
-          )}
-        </div>
-      )}
+            )}
+          </div>
+        )}
 
-      {/* Badge "se envía como documento" cuando ya está confirmado o es doc nativo */}
-      {willSendAsDocument && !needsVideoAsDocumentConfirm && (
-        <p className="flex items-center gap-1 rounded bg-warning-soft px-1 py-0.5 text-[10px] font-medium text-warning-text">
-          <AlertTriangle className="h-3 w-3 shrink-0" strokeWidth={1.7} />
-          Se envía como documento
-        </p>
-      )}
+        {/* Badge "se envía como documento" cuando ya está confirmado o es doc nativo */}
+        {willSendAsDocument && !needsVideoAsDocumentConfirm && status !== "sent" && (
+          <p className="mt-1 flex items-center gap-1 rounded bg-warning-soft px-1 py-0.5 text-[10px] font-medium text-warning-text">
+            <AlertTriangle className="h-3 w-3 shrink-0" strokeWidth={1.7} />
+            Como documento
+          </p>
+        )}
 
-      {/* 004 — Botón de reintento para estado `failed`. */}
-      {status === "failed" && onRetry && (
-        <div className="flex flex-col gap-1">
-          {error && (
-            <p
-              className="line-clamp-2 text-[10px] leading-tight text-danger"
-              title={error}
+        {/* 004 — Botón de reintento para estado `failed`. */}
+        {status === "failed" && onRetry && (
+          <div className="mt-1 flex flex-col gap-1">
+            {error && (
+              <p
+                className="line-clamp-2 break-all text-[10px] leading-tight text-danger"
+                title={error}
+              >
+                {error}
+              </p>
+            )}
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                onRetry();
+              }}
+              aria-label={`Reintentar envío de ${file.name}`}
+              className="flex min-h-[28px] items-center justify-center gap-1 rounded bg-danger/10 px-1.5 py-0.5 text-[10px] font-medium text-danger transition-colors hover:bg-danger/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-danger"
             >
-              {error}
-            </p>
-          )}
-          <button
-            type="button"
-            onClick={(e) => {
-              e.stopPropagation();
-              onRetry();
-            }}
-            aria-label={`Reintentar envío de ${file.name}`}
-            className="flex min-h-[28px] items-center justify-center gap-1 rounded bg-danger/10 px-1.5 py-0.5 text-[10px] font-medium text-danger transition-colors hover:bg-danger/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-danger"
-          >
-            <RotateCcw className="h-3 w-3" strokeWidth={2} />
-            Reintentar
-          </button>
-        </div>
-      )}
+              <RotateCcw className="h-3 w-3" strokeWidth={2} />
+              Reintentar
+            </button>
+          </div>
+        )}
+      </div>
 
-      {/* Botón X — oculto si está bloqueado (la confirmación tiene su propio botón)
-          y oculto si está `sent` (estado terminal; eliminar es válido pero el
-          operador suele querer conservarlo para verificar el preview). */}
-      {!isBlocked && status !== "sent" && (
+      {/* Botón X — visible siempre que la tarjeta sea interactiva
+          (oculto si está bloqueado porque la confirmación tiene su propio botón;
+          oculto si está sent porque es estado terminal, salvo que sea la única
+          tarjeta, donde sigue mostrándose para limpiar). */}
+      {!isBlocked && (
         <button
           type="button"
           onClick={(e) => {
             e.stopPropagation();
             onRemove();
           }}
-          aria-label={`Quitar ${file.name}`}
-          className="absolute right-1 top-1 flex min-h-[44px] min-w-[44px] items-center justify-center rounded-full bg-background/90 p-1 text-text-2 opacity-0 transition-opacity hover:text-foreground focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand group-hover:opacity-100 group-focus-within:opacity-100"
+          aria-label={`Quitar ${file.name} de la cola`}
+          className={cn(
+            "absolute right-1 top-1 z-10 flex h-6 w-6 items-center justify-center rounded-full bg-background/90 text-text-2 shadow-sm transition-opacity hover:text-foreground focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand",
+            // Estado sent: opacity baja para no distraer; sigue siendo focable.
+            status === "sent"
+              ? "opacity-50 group-hover:opacity-100"
+              : "opacity-100"
+          )}
         >
           <X className="h-3.5 w-3.5" strokeWidth={2} />
+        </button>
+      )}
+
+      {/* Botones de navegación explícita por teclado (visibles al hover/focus).
+          Cubren 44×44 px reales (área cliqueable extendida con padding). */}
+      {onPrev && (
+        <button
+          type="button"
+          tabIndex={-1}
+          onClick={(e) => {
+            e.stopPropagation();
+            onPrev();
+          }}
+          aria-label="Adjunto anterior"
+          className="absolute -left-3 top-1/2 z-10 hidden h-11 w-6 -translate-y-1/2 items-center justify-center rounded-r bg-background/85 text-text-2 opacity-0 shadow-sm transition-opacity hover:text-foreground group-hover:opacity-100 group-focus-within:opacity-100 focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand sm:flex"
+        >
+          <ChevronLeft className="h-3.5 w-3.5" strokeWidth={2} />
+        </button>
+      )}
+      {onNext && (
+        <button
+          type="button"
+          tabIndex={-1}
+          onClick={(e) => {
+            e.stopPropagation();
+            onNext();
+          }}
+          aria-label="Adjunto siguiente"
+          className="absolute -right-3 top-1/2 z-10 hidden h-11 w-6 -translate-y-1/2 items-center justify-center rounded-l bg-background/85 text-text-2 opacity-0 shadow-sm transition-opacity hover:text-foreground group-hover:opacity-100 group-focus-within:opacity-100 focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand sm:flex"
+        >
+          <ChevronRight className="h-3.5 w-3.5" strokeWidth={2} />
         </button>
       )}
     </li>

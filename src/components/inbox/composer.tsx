@@ -6,6 +6,7 @@ import {
   MapPin,
   Paperclip,
   Send,
+  UploadCloud,
   UserRound,
   X,
 } from "lucide-react";
@@ -55,6 +56,7 @@ export function Composer({
   const [contactPhone, setContactPhone] = useState("");
   const [dragOver, setDragOver] = useState(false);
   const [rejected, setRejected] = useState<string | null>(null);
+  const [dragFilesHint, setDragFilesHint] = useState<number | null>(null);
   const taRef = useRef<HTMLTextAreaElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const dragCounter = useRef(0);
@@ -99,6 +101,8 @@ export function Composer({
       setError(null);
       // Auto-seleccionar el primero para feedback visual inmediato.
       if (!queue.selectedId) queue.select(accepted[0]!.id);
+      // Lleva el foco al textarea para que el operador escriba el caption.
+      requestAnimationFrame(() => taRef.current?.focus());
     }
     if (rej.length > 0) {
       setRejected(
@@ -186,8 +190,9 @@ export function Composer({
    * se conecta con React state (refs, refs de queue, fetch real, onSent).
    *
    * Si el bucle termina con TODO enviado (sin errores y sin bloqueos),
-   * limpiamos el textarea. Si algo falló, conservamos el textarea para que
-   * el operador pueda reintentar los fallidos con el mismo caption.
+   * limpiamos el textarea y devolvemos el foco al textarea. Si algo falló,
+   * conservamos el textarea para que el operador pueda reintentar los
+   * fallidos con el mismo caption.
    */
   async function submitQueue() {
     if (submitInFlight.current) return; // anti-doble-envío (capa lógica)
@@ -211,7 +216,11 @@ export function Composer({
       const allDone = result.failed === 0 && !stillBlocked && result.sent > 0;
       if (allDone) {
         setText("");
-        if (taRef.current) taRef.current.style.height = "auto";
+        if (taRef.current) {
+          taRef.current.style.height = "auto";
+          // Devolvemos el foco al textarea para que el operador siga escribiendo.
+          taRef.current.focus();
+        }
       }
       if (result.sent > 0) onSent();
     } finally {
@@ -244,7 +253,10 @@ export function Composer({
         return;
       }
       setText("");
-      if (taRef.current) taRef.current.style.height = "auto";
+      if (taRef.current) {
+        taRef.current.style.height = "auto";
+        taRef.current.focus();
+      }
     } finally {
       submitInFlight.current = false;
       setSending(false);
@@ -343,6 +355,8 @@ export function Composer({
     e.preventDefault();
     dragCounter.current += 1;
     setDragOver(true);
+    const count = e.dataTransfer.items?.length ?? 0;
+    setDragFilesHint(count > 0 ? count : null);
   }
   function handleDragOver(e: React.DragEvent<HTMLDivElement>) {
     // Necesario para permitir el drop; sin preventDefault, el navegador
@@ -352,12 +366,16 @@ export function Composer({
   function handleDragLeave(e: React.DragEvent<HTMLDivElement>) {
     e.preventDefault();
     dragCounter.current = Math.max(0, dragCounter.current - 1);
-    if (dragCounter.current === 0) setDragOver(false);
+    if (dragCounter.current === 0) {
+      setDragOver(false);
+      setDragFilesHint(null);
+    }
   }
   function handleDrop(e: React.DragEvent<HTMLDivElement>) {
     e.preventDefault();
     dragCounter.current = 0;
     setDragOver(false);
+    setDragFilesHint(null);
     const files = Array.from(e.dataTransfer.files ?? []);
     if (files.length > 0) ingestFiles(files);
   }
@@ -372,16 +390,23 @@ export function Composer({
       role="region"
       aria-label="Área del composer; arrastra archivos para adjuntar"
     >
-      {/* Overlay de drop — solo visible mientras hay un drag activo. */}
+      {/* Overlay de drop — animado, con conteo de archivos. */}
       {dragOver && (
         <div
-          className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center border-2 border-dashed border-brand bg-brand/10"
+          className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center border-2 border-dashed border-brand bg-brand/15 backdrop-blur-[2px] transition-opacity"
           role="status"
           aria-live="polite"
         >
-          <p className="rounded-md bg-background px-3 py-2 text-sm font-medium text-foreground shadow-sm">
-            Suelta para adjuntar archivos
-          </p>
+          <div className="flex flex-col items-center gap-1.5 rounded-lg border border-brand bg-background px-4 py-3 text-sm font-medium text-foreground shadow-pop animate-in fade-in zoom-in-95 duration-150">
+            <UploadCloud className="h-5 w-5 text-brand" strokeWidth={1.7} />
+            <p>Suelta para adjuntar</p>
+            {dragFilesHint !== null && (
+              <p className="text-[11px] text-text-3">
+                {dragFilesHint} archivo{dragFilesHint === 1 ? "" : "s"} detectado
+                {dragFilesHint === 1 ? "" : "s"}
+              </p>
+            )}
+          </div>
         </div>
       )}
 
@@ -412,8 +437,11 @@ export function Composer({
         onSelect={queue.select}
         onRemove={queue.remove}
         onClearAll={queue.clear}
+        onClearSent={queue.clearSent}
         onConfirmVideoAsDocument={queue.confirmVideoAsDocument}
         onRetry={queue.retry}
+        onSelectNext={queue.selectNext}
+        onSelectPrev={queue.selectPrev}
       />
 
       {queue.needsVideoAsDocumentConfirmCount > 0 && (
@@ -501,7 +529,7 @@ export function Composer({
         </div>
       )}
 
-      <div className="flex items-end gap-2 rounded-md border bg-background px-3 py-2 transition-shadow focus-within:border-brand focus-within:ring-[3px] focus-within:ring-brand-soft">
+      <div className="flex items-end gap-1.5 rounded-md border bg-background px-2 py-1.5 transition-shadow focus-within:border-brand focus-within:ring-[3px] focus-within:ring-brand-soft">
         <input
           ref={fileRef}
           type="file"
@@ -517,7 +545,7 @@ export function Composer({
             onClick={() => fileRef.current?.click()}
             aria-label="Adjuntar archivo"
             title="Adjuntar imagen, video, audio o documento"
-            className="rounded p-1.5 text-text-3 transition-colors hover:bg-secondary hover:text-foreground"
+            className="flex h-11 w-11 items-center justify-center rounded text-text-3 transition-colors hover:bg-secondary hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand"
           >
             <Paperclip className="h-[18px] w-[18px]" strokeWidth={1.7} />
           </button>
@@ -526,7 +554,7 @@ export function Composer({
             aria-label="Enviar ubicación"
             title="Enviar ubicación"
             className={cn(
-              "rounded p-1.5 text-text-3 transition-colors hover:bg-secondary hover:text-foreground",
+              "flex h-11 w-11 items-center justify-center rounded text-text-3 transition-colors hover:bg-secondary hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand",
               panel === "location" && "bg-secondary text-brand"
             )}
           >
@@ -537,7 +565,7 @@ export function Composer({
             aria-label="Compartir contacto"
             title="Compartir contacto"
             className={cn(
-              "rounded p-1.5 text-text-3 transition-colors hover:bg-secondary hover:text-foreground",
+              "flex h-11 w-11 items-center justify-center rounded text-text-3 transition-colors hover:bg-secondary hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand",
               panel === "contact" && "bg-secondary text-brand"
             )}
           >
@@ -574,31 +602,48 @@ export function Composer({
             if (e.key === "Enter" && !e.shiftKey) {
               e.preventDefault();
               void submit();
+              return;
+            }
+            // Esc con textarea vacío y cola con adjuntos no enviados: limpia
+            // la cola completa (UX similar a "cancelar"). Si hay texto, sale
+            // del textarea sin tocar la cola.
+            if (
+              e.key === "Escape" &&
+              !text &&
+              queue.attachments.length > 0 &&
+              !sending
+            ) {
+              e.preventDefault();
+              queue.clear();
             }
           }}
-          className="max-h-[120px] w-full resize-none bg-transparent text-sm leading-relaxed outline-none placeholder:text-text-3"
+          className="max-h-[120px] w-full resize-none bg-transparent px-1 text-sm leading-relaxed outline-none placeholder:text-text-3"
         />
         <button
           onClick={() => void submit()}
           disabled={sending || !canSubmit}
           aria-label="Enviar"
+          title="Enviar (Enter)"
           className={cn(
-            "flex h-[34px] w-[34px] shrink-0 items-center justify-center rounded-[9px] bg-brand text-white transition-opacity hover:bg-brand-hover",
+            "flex h-11 w-11 shrink-0 items-center justify-center rounded-md bg-brand text-white transition-opacity hover:bg-brand-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand disabled:cursor-not-allowed",
             (sending || !canSubmit) && "opacity-40"
           )}
         >
           <Send className="h-4 w-4" strokeWidth={1.7} />
         </button>
       </div>
-      <div className="mt-1.5 flex items-center justify-between">
+      <div className="mt-1.5 flex items-center justify-between gap-2">
         {error || rejected ? (
-          <p className="text-xs text-destructive">
+          <p
+            className="truncate text-xs text-destructive"
+            title={error ?? rejected ?? undefined}
+          >
             {error ?? rejected}
           </p>
         ) : (
           <span />
         )}
-        <p className="text-[11px] text-text-3">
+        <p className="shrink-0 text-[11px] text-text-3">
           {hasQueue ? (
             <>
               {queue.attachments.length} adjunto

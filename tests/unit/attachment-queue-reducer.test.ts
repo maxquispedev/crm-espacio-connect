@@ -7,7 +7,9 @@
 import { describe, expect, it } from "vitest";
 import {
   filterDuplicates,
+  progressLabel,
   queueReducer,
+  summarize,
   type QueueState,
 } from "../../src/components/inbox/attachment-queue";
 import type { PendingAttachment } from "../../src/components/inbox/helpers";
@@ -242,5 +244,166 @@ describe("filterDuplicates", () => {
     const fc = fakeFile("c.jpg", 300, "image/jpeg", 3);
     const result = filterDuplicates([], [fc, fa, fb]);
     expect(result.map((f) => f.name)).toEqual(["c.jpg", "a.jpg", "b.jpg"]);
+  });
+});
+
+describe("queueReducer — clearSent", () => {
+  it("elimina solo los adjuntos en estado `sent`, preserva `pending` y `failed`", () => {
+    const sent = att("att_1", fakeFile("a.jpg", 100, "image/jpeg"), {
+      status: "sent",
+    });
+    const pending = att("att_2", fakeFile("b.jpg", 100, "image/jpeg"), {
+      status: "pending",
+    });
+    const failed = att("att_3", fakeFile("c.jpg", 100, "image/jpeg"), {
+      status: "failed",
+      error: "boom",
+    });
+    const s1 = queueReducer(empty, { type: "add", items: [sent, pending, failed] });
+    const s2 = queueReducer(s1, { type: "clearSent" });
+    expect(s2.attachments.map((x) => x.id)).toEqual(["att_2", "att_3"]);
+    expect(s2.attachments.map((x) => x.status)).toEqual(["pending", "failed"]);
+  });
+
+  it("limpia `selectedId` si el seleccionado era un `sent`", () => {
+    const sent = att("att_1", fakeFile("a.jpg", 100, "image/jpeg"), {
+      status: "sent",
+    });
+    const pending = att("att_2", fakeFile("b.jpg", 100, "image/jpeg"));
+    const s1 = queueReducer(empty, { type: "add", items: [sent, pending] });
+    const s2 = queueReducer(s1, { type: "select", id: "att_1" });
+    const s3 = queueReducer(s2, { type: "clearSent" });
+    expect(s3.selectedId).toBeNull();
+    expect(s3.attachments).toHaveLength(1);
+  });
+
+  it("preserva `selectedId` si el seleccionado NO era `sent`", () => {
+    const sent = att("att_1", fakeFile("a.jpg", 100, "image/jpeg"), {
+      status: "sent",
+    });
+    const pending = att("att_2", fakeFile("b.jpg", 100, "image/jpeg"));
+    const s1 = queueReducer(empty, { type: "add", items: [sent, pending] });
+    const s2 = queueReducer(s1, { type: "select", id: "att_2" });
+    const s3 = queueReducer(s2, { type: "clearSent" });
+    expect(s3.selectedId).toBe("att_2");
+  });
+
+  it("vacía la lista si todos estaban en `sent`", () => {
+    const sent1 = att("att_1", fakeFile("a.jpg", 100, "image/jpeg"), {
+      status: "sent",
+    });
+    const sent2 = att("att_2", fakeFile("b.jpg", 100, "image/jpeg"), {
+      status: "sent",
+    });
+    const s1 = queueReducer(empty, { type: "add", items: [sent1, sent2] });
+    const s2 = queueReducer(s1, { type: "clearSent" });
+    expect(s2.attachments).toEqual([]);
+  });
+});
+
+describe("summarize", () => {
+  it("cuenta los adjuntos por estado", () => {
+    const a = att("att_1", fakeFile("a.jpg", 100, "image/jpeg"));
+    const b = att("att_2", fakeFile("b.jpg", 100, "image/jpeg"), {
+      status: "sending",
+    });
+    const c = att("att_3", fakeFile("c.jpg", 100, "image/jpeg"), {
+      status: "sent",
+    });
+    const d = att("att_4", fakeFile("d.jpg", 100, "image/jpeg"), {
+      status: "failed",
+      error: "x",
+    });
+    const blocked = att(
+      "att_5",
+      fakeFile("clip.mp4", 30 * 1024 * 1024, "video/mp4"),
+      { needsVideoAsDocumentConfirm: true }
+    );
+    const s = summarize([a, b, c, d, blocked]);
+    // `blocked` también cuenta como `pending` mientras su status sigue siendo
+    // `pending`. Las dos métricas son ortogonales (estado terminal vs bloqueo
+    // de confirmación) y se reportan por separado.
+    expect(s).toEqual({
+      total: 5,
+      sent: 1,
+      failed: 1,
+      pending: 2,
+      sending: 1,
+      blocked: 1,
+    });
+  });
+
+  it("cuenta un adjunto bloqueado aunque su status sea `pending`", () => {
+    const blocked = att(
+      "att_1",
+      fakeFile("clip.mp4", 30 * 1024 * 1024, "video/mp4"),
+      { needsVideoAsDocumentConfirm: true, status: "pending" }
+    );
+    const s = summarize([blocked]);
+    expect(s).toEqual({
+      total: 1,
+      sent: 0,
+      failed: 0,
+      pending: 1,
+      sending: 0,
+      blocked: 1,
+    });
+  });
+
+  it("devuelve contadores en cero para una lista vacía", () => {
+    const sum = summarize([]);
+    expect(sum).toEqual({
+      total: 0,
+      sent: 0,
+      failed: 0,
+      pending: 0,
+      sending: 0,
+      blocked: 0,
+    });
+  });
+});
+
+describe("progressLabel", () => {
+  it("muestra conteo inicial cuando todo está pendiente", () => {
+    const s = summarize([
+      att("a", fakeFile("a.jpg", 100, "image/jpeg")),
+      att("b", fakeFile("b.jpg", 100, "image/jpeg")),
+    ]);
+    expect(progressLabel(s)).toBe("2 adjuntos en cola");
+  });
+
+  it("muestra progreso cuando hay envíos en curso", () => {
+    const s = summarize([
+      att("a", fakeFile("a.jpg", 100, "image/jpeg"), { status: "sent" }),
+      att("b", fakeFile("b.jpg", 100, "image/jpeg"), { status: "sending" }),
+      att("c", fakeFile("c.jpg", 100, "image/jpeg")),
+    ]);
+    expect(progressLabel(s)).toBe("1/3 enviados");
+  });
+
+  it("muestra éxito completo sin error", () => {
+    const s = summarize([
+      att("a", fakeFile("a.jpg", 100, "image/jpeg"), { status: "sent" }),
+      att("b", fakeFile("b.jpg", 100, "image/jpeg"), { status: "sent" }),
+    ]);
+    expect(progressLabel(s)).toBe("2/2 enviados");
+  });
+
+  it("muestra el conteo de fallos cuando nada se envió", () => {
+    const s = summarize([
+      att("a", fakeFile("a.jpg", 100, "image/jpeg"), {
+        status: "failed",
+        error: "x",
+      }),
+      att("b", fakeFile("b.jpg", 100, "image/jpeg"), {
+        status: "failed",
+        error: "y",
+      }),
+    ]);
+    expect(progressLabel(s)).toBe("0/2 enviados · 2 con error");
+  });
+
+  it("devuelve vacío si la cola está vacía", () => {
+    expect(progressLabel(summarize([]))).toBe("");
   });
 });

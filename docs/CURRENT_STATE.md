@@ -1,8 +1,8 @@
 # CURRENT STATE — Espacio Connect
 
-**Actualizado:** 2026-09-29  
-**Branch:** `main`  
-**Baseline funcional previo a esta sincronización documental:** `bbae7cd1dfd98d5006cfd26440a8acf1def2c1bb`  
+**Actualizado:** 2026-09-29 (sync técnico tras spec 004 polish)
+**Branch:** `main`
+**Baseline funcional previo a esta sincronización documental:** `bbae7cd1dfd98d5006cfd26440a8acf1def2c1bb`
 **Propósito:** checkpoint técnico rápido. Las decisiones de negocio viven en el cerebro de Obsidian; la implementación y la historia SDD viven aquí.
 
 ---
@@ -187,6 +187,7 @@ Specs formales actuales:
 - `specs/001-vocero-core/`
 - `specs/002-diseno-atlas-white-label/`
 - `specs/003-paridad-inbox-whatsapp/`
+- `specs/004-inbox-messaging-ux/` (cola de adjuntos del composer + UX polish)
 
 Trabajo posterior documentado antes de exigir Spec Kit completo:
 
@@ -194,9 +195,42 @@ Trabajo posterior documentado antes de exigir Spec Kit completo:
 - Sales Orchestrator: `docs/SALES_ORCHESTRATOR.md`.
 - Follow-ups: `docs/SALES_FOLLOW_UPS.md`.
 
-No crear specs retroactivos falsos solo para “cumplir”. **Desde el próximo
+No crear specs retroactivos falsos solo para "cumplir". **Desde el próximo
 cambio observable**, abrir un nuevo `specs/NNN-...` y mantener `tasks.md`
 como estado durable.
+
+### Estado del spec 004
+
+Implementado a través de commits atómicos `0 → 1 → 2 → 2a → 2b`:
+
+- Commit 0 (`275f457`): docs SDD (spec/plan/tasks).
+- Commit 1 (`b3cc38f`): cola de adjuntos, helpers puros, componentes
+  presentacionales, drag&drop/paste, submitQueue, retry, a11y base.
+- Commit 2a (`de12265`): bucle de envío `runQueueSend`, anti-doble-envío,
+  retry por adjunto, confirmación explícita video→document, override
+  tipado `kind=document` server-side.
+- Commit 2b (este checkpoint): corte final de UX/pulido — header de
+  cola con conteo inline, `clearSent`, `summarize`+`progressLabel`,
+  navegación por teclado (←/→, Delete/Backspace, Esc), drop overlay
+  animado con conteo, indicadores de estado con texto explícito,
+  toolbar buttons ≥ 44 px, auto-focus textarea, `aria-current`.
+
+**Verificación actual:**
+
+| Gate | Estado |
+|---|---|
+| `pnpm typecheck` | verde |
+| `pnpm lint` | verde |
+| `pnpm build` | verde |
+| `pnpm test` | verde — **500 tests** (488 baseline + 12 nuevos: 4 `clearSent`, 3 `summarize`, 5 `progressLabel`) |
+| `pnpm test:e2e` (sección 009) | **PENDIENTE en este entorno** — sin app local ni PostgreSQL activa |
+| Playwright visual `tests/e2e/009-inbox-messaging-ux.md` | **PENDIENTE en este entorno** |
+| Sección 008 (regresión spec 003 cerrado) | pendiente de re-correr con la app levantada |
+
+El spec 004 está **verificado unitariamente punta a punta** pero **NO
+verificado en vivo punta a punta** hasta correr `pnpm test:e2e` local y
+re-correr la sección 008 para regresión. Por Constitución IX no debe
+reportarse como READY punta a punta hasta entonces.
 
 ---
 
@@ -210,6 +244,7 @@ como estado durable.
 | 2026-09-20/21 | follow-ups, phases 15–22 |
 | 2026-09-21 | último commit funcional auditado: `bbae7cd1dfd9` |
 | 2026-09-29 | sincronización de memoria técnica + disciplina SDD |
+| 2026-09-29 | spec 004 cerrado: cola de adjuntos + UX polish (commits 0→1→2→2a→2b, 500 tests) |
 
 ---
 
@@ -218,10 +253,14 @@ como estado durable.
 Antes de añadir otra feature grande:
 
 1. levantar app + PostgreSQL + mocks;
-2. correr el self-test E2E del Sales Orchestrator/follow-ups;
-3. registrar evidencia en el doc correspondiente y aquí;
-4. para cualquier comportamiento nuevo, abrir el siguiente spec numerado;
-5. mantener commits atómicos y actualizar `tasks.md` al cerrar cada corte.
+2. correr `pnpm test:e2e` para validar:
+   - sección 008 (regresión spec 003 cerrado);
+   - sección 009 (contrato backend del spec 004 — cola de adjuntos);
+   - secciones existentes del Sales Orchestrator/follow-ups;
+3. correr Playwright visual con `tests/e2e/009-inbox-messaging-ux.md`;
+4. registrar evidencia en el doc correspondiente y aquí;
+5. para cualquier comportamiento nuevo, abrir el siguiente spec numerado;
+6. mantener commits atómicos y actualizar `tasks.md` al cerrar cada corte.
 
 ---
 

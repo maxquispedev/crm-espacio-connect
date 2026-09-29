@@ -8,6 +8,7 @@ import {
   useRef,
 } from "react";
 import { customAlphabet } from "nanoid";
+import { CheckCircle2, ListChecks } from "lucide-react";
 import {
   type AttachStatus,
   type PendingAttachment,
@@ -27,6 +28,7 @@ export type QueueAction =
     }
   | { type: "remove"; id: string }
   | { type: "clear" }
+  | { type: "clearSent" }
   | { type: "select"; id: string | null }
   | { type: "updateStatus"; id: string; status: AttachStatus; error?: string | null }
   /** Acepta el re-tag video→document y desbloquea el envío. */
@@ -59,6 +61,18 @@ export function queueReducer(state: QueueState, action: QueueAction): QueueState
       };
     case "clear":
       return { attachments: [], selectedId: null };
+    case "clearSent":
+      return {
+        ...state,
+        attachments: state.attachments.filter((a) => a.status !== "sent"),
+        selectedId:
+          state.selectedId &&
+          state.attachments.find(
+            (a) => a.id === state.selectedId && a.status === "sent"
+          )
+            ? null
+            : state.selectedId,
+      };
     case "select":
       return { ...state, selectedId: action.id };
     case "updateStatus":
@@ -153,6 +167,56 @@ export function filterDuplicates(
 }
 
 /* ------------------------------------------------------------------ */
+/* Resumen de progreso (helper puro, testeable)                       */
+/* ------------------------------------------------------------------ */
+
+export type QueueSummary = {
+  total: number;
+  sent: number;
+  failed: number;
+  pending: number;
+  sending: number;
+  blocked: number;
+};
+
+/** Cuenta cuántos adjuntos están en cada estado. */
+export function summarize(attachments: PendingAttachment[]): QueueSummary {
+  let sent = 0;
+  let failed = 0;
+  let pending = 0;
+  let sending = 0;
+  let blocked = 0;
+  for (const a of attachments) {
+    if (a.needsVideoAsDocumentConfirm) blocked += 1;
+    if (a.status === "sent") sent += 1;
+    else if (a.status === "failed") failed += 1;
+    else if (a.status === "sending") sending += 1;
+    else if (a.status === "pending") pending += 1;
+  }
+  return {
+    total: attachments.length,
+    sent,
+    failed,
+    pending,
+    sending,
+    blocked,
+  };
+}
+
+/** Texto corto del progreso para mostrar inline. */
+export function progressLabel(s: QueueSummary): string {
+  if (s.total === 0) return "";
+  if (s.failed > 0 && s.sent + s.failed === s.total) {
+    return `${s.sent}/${s.total} enviados · ${s.failed} con error`;
+  }
+  if (s.sent === s.total) return `${s.sent}/${s.total} enviados`;
+  if (s.sent > 0 || s.sending > 0) {
+    return `${s.sent}/${s.total} enviados`;
+  }
+  return `${s.total} adjunto${s.total === 1 ? "" : "s"} en cola`;
+}
+
+/* ------------------------------------------------------------------ */
 /* Hook                                                              */
 /* ------------------------------------------------------------------ */
 
@@ -174,7 +238,10 @@ export function useAttachmentQueue(): {
   addFiles: (files: File[]) => AddFilesResult;
   remove: (id: string) => void;
   clear: () => void;
+  clearSent: () => void;
   select: (id: string | null) => void;
+  selectNext: () => void;
+  selectPrev: () => void;
   /** Acepta el re-tag video→document; desbloquea el envío del adjunto. */
   confirmVideoAsDocument: (id: string) => void;
   /** Transita `failed → pending` para reintentar el envío. */
@@ -189,6 +256,8 @@ export function useAttachmentQueue(): {
   readyToSend: PendingAttachment[];
   /** Adjuntos bloqueados por `needsVideoAsDocumentConfirm`. */
   needsVideoAsDocumentConfirmCount: number;
+  /** Resumen agregado para mostrar progreso. */
+  summary: QueueSummary;
 } {
   const [state, dispatch] = useReducer(queueReducer, {
     attachments: [],
@@ -254,9 +323,34 @@ export function useAttachmentQueue(): {
     dispatch({ type: "clear" });
   }, [state.attachments]);
 
+  const clearSent = useCallback(() => {
+    for (const a of state.attachments) {
+      if (a.status === "sent") revokePreviewUrl(a);
+    }
+    dispatch({ type: "clearSent" });
+  }, [state.attachments]);
+
   const select = useCallback((id: string | null) => {
     dispatch({ type: "select", id });
   }, []);
+
+  const selectNext = useCallback(() => {
+    const ids = state.attachments.map((a) => a.id);
+    if (ids.length === 0) return;
+    const cur = state.selectedId;
+    const idx = cur ? ids.indexOf(cur) : -1;
+    const next = ids[(idx + 1) % ids.length];
+    if (next) dispatch({ type: "select", id: next });
+  }, [state.attachments, state.selectedId]);
+
+  const selectPrev = useCallback(() => {
+    const ids = state.attachments.map((a) => a.id);
+    if (ids.length === 0) return;
+    const cur = state.selectedId;
+    const idx = cur ? ids.indexOf(cur) : ids.length;
+    const prev = ids[(idx - 1 + ids.length) % ids.length];
+    if (prev) dispatch({ type: "select", id: prev });
+  }, [state.attachments, state.selectedId]);
 
   const confirmVideoAsDocument = useCallback((id: string) => {
     dispatch({ type: "confirmVideoAsDocument", id });
@@ -286,18 +380,27 @@ export function useAttachmentQueue(): {
     [state.attachments]
   );
 
+  const summary = useMemo<QueueSummary>(
+    () => summarize(state.attachments),
+    [state.attachments]
+  );
+
   return {
     attachments: state.attachments,
     selectedId: state.selectedId,
     addFiles,
     remove,
     clear,
+    clearSent,
     select,
+    selectNext,
+    selectPrev,
     confirmVideoAsDocument,
     retry,
     updateStatus,
     readyToSend,
     needsVideoAsDocumentConfirmCount,
+    summary,
   };
 }
 
@@ -379,39 +482,109 @@ export async function runQueueSend(
 /* Presentación                                                      */
 /* ------------------------------------------------------------------ */
 
-/** Cola horizontal con scroll, pensada para mostrarse sobre el textarea. */
+/**
+ * Cola horizontal con scroll, pensada para mostrarse sobre el textarea.
+ * Muestra un header con el conteo y progreso inline ("3 adjuntos · 12 MB ·
+ * 1/3 enviados") y ofrece "Limpiar enviados" cuando aplica.
+ */
 export function AttachmentQueueList({
   attachments,
   selectedId,
   onSelect,
   onRemove,
   onClearAll,
+  onClearSent,
   onConfirmVideoAsDocument,
   onRetry,
+  onSelectNext,
+  onSelectPrev,
 }: {
   attachments: PendingAttachment[];
   selectedId: string | null;
   onSelect: (id: string) => void;
   onRemove: (id: string) => void;
   onClearAll: () => void;
+  onClearSent?: () => void;
   /** Acepta el re-tag video→document para un adjunto concreto. */
   onConfirmVideoAsDocument?: (id: string) => void;
   /** Reintenta el envío de un adjunto en estado `failed`. */
   onRetry?: (id: string) => void;
+  onSelectNext?: () => void;
+  onSelectPrev?: () => void;
 }) {
   if (attachments.length === 0) return null;
 
+  const summary = summarize(attachments);
+  const totalBytes = attachments.reduce((acc, a) => acc + a.file.size, 0);
+  const label = progressLabel(summary);
+  const allSent = summary.sent === summary.total && summary.total > 0;
+  const showClearSent = allSent && onClearSent;
+
   return (
-    <div className="mb-2 flex items-center gap-2">
+    <div className="mb-2" data-testid="attachment-queue">
+      {/* Header con resumen + acciones globales */}
+      <div className="mb-1.5 flex items-center justify-between gap-2 text-[11px] text-text-3">
+        <div className="flex min-w-0 items-center gap-1.5">
+          <ListChecks className="h-3.5 w-3.5 shrink-0" strokeWidth={1.7} />
+          <span className="font-medium text-text-2">
+            {attachments.length} adjunto{attachments.length === 1 ? "" : "s"}
+          </span>
+          <span aria-hidden="true">·</span>
+          <span className="text-text-3">{formatBytes(totalBytes)}</span>
+          {label && (
+            <>
+              <span aria-hidden="true">·</span>
+              <span
+                className={
+                  summary.failed > 0 ? "text-danger-text" : "text-success-text"
+                }
+                aria-live="polite"
+              >
+                {label}
+              </span>
+            </>
+          )}
+          {allSent && (
+            <CheckCircle2
+              className="h-3.5 w-3.5 shrink-0 text-success"
+              strokeWidth={1.7}
+              aria-hidden="true"
+            />
+          )}
+        </div>
+        <div className="flex shrink-0 items-center gap-1">
+          {showClearSent && (
+            <button
+              type="button"
+              onClick={onClearSent}
+              aria-label="Quitar adjuntos enviados de la cola"
+              className="rounded px-2 py-1 text-[11px] font-medium text-text-3 transition-colors hover:bg-secondary hover:text-text-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand"
+            >
+              Limpiar enviados
+            </button>
+          )}
+          {!allSent && attachments.length > 1 && (
+            <button
+              type="button"
+              onClick={onClearAll}
+              aria-label="Limpiar toda la cola de adjuntos"
+              className="rounded px-2 py-1 text-[11px] font-medium text-text-3 transition-colors hover:bg-secondary hover:text-text-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand"
+            >
+              Limpiar todo
+            </button>
+          )}
+        </div>
+      </div>
+
       <ul
         role="list"
         aria-live="polite"
         aria-label={`${attachments.length} adjunto${
           attachments.length === 1 ? "" : "s"
         } en cola`}
-        className="flex max-w-full flex-1 flex-nowrap gap-2 overflow-x-auto pb-1"
+        className="flex max-w-full flex-1 flex-nowrap items-stretch gap-2 overflow-x-auto pb-1"
       >
-        {attachments.map((att) => (
+        {attachments.map((att, i) => (
           <AttachmentItem
             key={att.id}
             attachment={att}
@@ -424,19 +597,12 @@ export function AttachmentQueueList({
                 : undefined
             }
             onRetry={onRetry ? () => onRetry(att.id) : undefined}
+            onPrev={onSelectPrev ? () => onSelectPrev() : undefined}
+            onNext={onSelectNext ? () => onSelectNext() : undefined}
+            positionLabel={`${i + 1} de ${attachments.length}`}
           />
         ))}
       </ul>
-      {attachments.length > 1 && (
-        <button
-          type="button"
-          onClick={onClearAll}
-          aria-label="Limpiar toda la cola de adjuntos"
-          className="shrink-0 rounded px-2 py-1 text-xs font-medium text-text-3 hover:bg-secondary hover:text-text-2"
-        >
-          Limpiar todo
-        </button>
-      )}
     </div>
   );
 }

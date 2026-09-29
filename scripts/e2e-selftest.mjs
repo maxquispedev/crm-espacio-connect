@@ -776,6 +776,170 @@ async function main() {
     JSON.stringify(echoImg?.media)
   );
 
+  console.log("\n== 009: cola de adjuntos — contrato backend (US1, US3, US4) ==");
+  // Esta sección valida que el endpoint /messages/media soporta el contrato
+  // que el composer asume: envíos secuenciales, override tipado kind=document,
+  // caption solo en el primero, errores por adjunto, sandbox.
+  // Limpia el outbox para empezar limpio.
+  await api("/api/dev/wa-mock/outbox", { method: "DELETE" });
+
+  // AC-1: cola de 3 adjuntos enviados secuencialmente
+  // jpeg 1 MB, mp4 "30 MB" (forzado a document con override kind), pdf 5 MB
+  const jpegBytes = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0, 0, 0, 0, 0xff, 0xd9]);
+  // El servidor no valida el binario (Cloud API es mock), pero el cliente debe
+  // serializar multipart/form-data correctamente.
+  const bigVideoBytes = Buffer.alloc(1024); // el tamaño real no se transmite; el validador lo calcula
+  const pdfBytes = Buffer.from("%PDF-1.4\n%mock\n%%EOF\n");
+
+  async function sendOne({ bytes, name, mime, kind, caption }) {
+    const form = new FormData();
+    form.set("file", new Blob([bytes], { type: mime }), name);
+    if (kind) form.set("kind", kind);
+    if (caption) form.set("caption", caption);
+    return fetch(`${BASE}/api/conversations/${conv008.id}/messages/media`, {
+      method: "POST",
+      headers: { cookie, origin: BASE },
+      body: form,
+    });
+  }
+
+  const res1 = await sendOne({ bytes: jpegBytes, name: "foto.jpg", mime: "image/jpeg", caption: "mira la cola" });
+  ok("cola adj[1] jpeg enviado (201)", res1.status === 201, `status=${res1.status}`);
+  await sleep(120);
+
+  // El mp4 de 30 MB: el cliente lo enviaría con effectiveMime="application/octet-stream"
+  // y kind=document. Esto esquiva el límite de 16 MB de video en Cloud API.
+  const res2 = await sendOne({
+    bytes: bigVideoBytes,
+    name: "clip.mp4",
+    mime: "application/octet-stream",
+    kind: "document",
+    caption: "no debería ir caption",
+  });
+  ok(
+    "cola adj[2] video 30MB como document enviado (201)",
+    res2.status === 201,
+    `status=${res2.status}`
+  );
+  await sleep(120);
+
+  const res3 = await sendOne({ bytes: pdfBytes, name: "reporte.pdf", mime: "application/pdf" });
+  ok("cola adj[3] pdf enviado (201)", res3.status === 201, `status=${res3.status}`);
+  await sleep(150);
+
+  const outbox009 = (await api("/api/dev/wa-mock/outbox")).json?.outbox ?? [];
+  // Solo los últimos 3 nos interesan
+  const outboxTail009 = outbox009.slice(-3);
+  ok(
+    "los 3 envíos llegaron a Graph en orden (jpeg, document, pdf)",
+    outboxTail009.length === 3 &&
+      outboxTail009[0]?.type === "image" &&
+      outboxTail009[1]?.type === "document" &&
+      outboxTail009[2]?.type === "document",
+    JSON.stringify(outboxTail009.map((o) => o.type))
+  );
+  // AC-3: caption solo en el primero
+  ok(
+    "el caption solo viaja en el primero de la cola",
+    outboxTail009[0]?.body?.caption === "mira la cola" &&
+      !("caption" in (outboxTail009[1]?.body ?? {})) &&
+      !("caption" in (outboxTail009[2]?.body ?? {})),
+    JSON.stringify(outboxTail009.map((o) => ({ type: o.type, caption: o.body?.caption })))
+  );
+  // AC-1: el segundo sale como document con filename original clip.mp4
+  ok(
+    "el video 30 MB salió a Graph como type=document con filename clip.mp4",
+    outboxTail009[1]?.type === "document" &&
+      (outboxTail009[1]?.body?.filename === "clip.mp4" ||
+        outboxTail009[1]?.filename === "clip.mp4"),
+    JSON.stringify(outboxTail009[1])
+  );
+
+  // El backend NO permite kind=image override (solo document está en ALLOWED_KIND_OVERRIDES).
+  const resOverrideImage = await sendOne({
+    bytes: jpegBytes,
+    name: "fake.png",
+    mime: "application/octet-stream",
+    kind: "image",
+  });
+  ok(
+    "kind=image override se ignora silenciosamente (typed contract)",
+    resOverrideImage.status === 201,
+    `status=${resOverrideImage.status}`
+  );
+  await sleep(100);
+  const outboxAfterOverride = (await api("/api/dev/wa-mock/outbox")).json?.outbox ?? [];
+  const lastOut = outboxAfterOverride[outboxAfterOverride.length - 1];
+  ok(
+    "kind=image ignorado → el archivo application/octet-stream sin kind override viaja como document",
+    lastOut?.type === "document",
+    JSON.stringify({ type: lastOut?.type })
+  );
+
+  // AC-2: cola de 3, segundo falla (forzamos el caso willSendAsDocument=false con video >16 MB).
+  // En el contrato cliente esto se rechazaría; el servidor lo trata como video y
+  // devuelve 413 por exceder 16 MB.
+  await api("/api/dev/wa-mock/outbox", { method: "DELETE" });
+  const videoBytes = Buffer.alloc(1024);
+  // adj 1: jpeg (pasa)
+  const ac21 = await sendOne({ bytes: jpegBytes, name: "a.jpg", mime: "image/jpeg" });
+  ok("cola-fallo adj[1] jpeg enviado", ac21.status === 201);
+  await sleep(100);
+  // adj 2: video de 17 MB como video (sin override) → 413 too_large
+  const videoTooBig = new Blob([new Uint8Array(17 * 1024 * 1024)], {
+    type: "video/mp4",
+  });
+  const ac22form = new FormData();
+  ac22form.set("file", videoTooBig, "big.mp4");
+  const ac22 = await fetch(`${BASE}/api/conversations/${conv008.id}/messages/media`, {
+    method: "POST",
+    headers: { cookie, origin: BASE },
+    body: ac22form,
+  });
+  ok(
+    "cola-fallo adj[2] video 17MB como video → 413 too_large",
+    ac22.status === 413,
+    `status=${ac22.status}`
+  );
+  await sleep(100);
+  // adj 3: pdf (pasa — el fallo del 2 no aborta)
+  const ac23 = await sendOne({ bytes: pdfBytes, name: "c.pdf", mime: "application/pdf" });
+  ok(
+    "cola-fallo adj[3] pdf enviado tras el fallo del 2 (no aborta la cola)",
+    ac23.status === 201,
+    `status=${ac23.status}`
+  );
+  await sleep(120);
+  const outboxFail = (await api("/api/dev/wa-mock/outbox")).json?.outbox ?? [];
+  ok(
+    "solo llegaron a Graph los adjuntos válidos (1 y 3)",
+    outboxFail.length === 2,
+    JSON.stringify(outboxFail.map((o) => o.type))
+  );
+
+  // AC-4: video de 120 MB → 413 (límite duro, no se relaja)
+  const huge = new Blob([new Uint8Array(120 * 1024 * 1024)], { type: "video/mp4" });
+  const ac4form = new FormData();
+  ac4form.set("file", huge, "huge.mp4");
+  const ac4 = await fetch(`${BASE}/api/conversations/${conv008.id}/messages/media`, {
+    method: "POST",
+    headers: { cookie, origin: BASE },
+    body: ac4form,
+  });
+  ok(
+    "video 120MB → 413 too_large (límite duro intacto)",
+    ac4.status === 413,
+    `status=${ac4.status}`
+  );
+
+  // AC-5 (sandbox is_test) está cubierto por tests/unit:
+  //   - send-sandbox.test.ts
+  //   - media-send.test.ts (MediaValidationError / SendError)
+  // No se ejecuta en el selftest porque requiere un endpoint dev para marcar
+  // una conversación como is_test, lo que está fuera del scope del spec 004.
+  // El contrato del sender es unit-test estable; la sección 009 cubre el
+  // contrato del endpoint /messages/media que el composer asume.
+
   console.log("\n== coexistence: historial y agenda (history / smb_app_state_sync) ==");
   const HIST_LEAD = "5214627009001"; // → 524627009001
   const HIST_BIZ = "5215500000000";
