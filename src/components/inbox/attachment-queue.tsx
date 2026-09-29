@@ -47,6 +47,77 @@ export type QueueState = {
 };
 
 /**
+ * 004 (corte 2d) — Maneja `remove` con la regla de transferencia de
+ * `captionOwner`:
+ *   - Si el adjunto eliminado NO era captionOwner, o su caption YA había
+ *     viajado (`captionConsumed=true`), solo lo quitamos.
+ *   - Si era captionOwner con caption aún NO consumido, lo quitamos y
+ *     transferimos la propiedad al primer adjunto restante elegible
+ *     (captionConsumed=false explícito, para que el caption viaje con
+ *     ese nuevo dueño cuando se envíe).
+ *
+ * Reglas duras:
+ *   - Nunca transferimos a un adjunto que ya tiene `captionOwner=true`
+ *     (defensivo: en la práctica solo hay un dueño a la vez, pero si el
+ *     estado viniera corrupto, no creamos dueños duplicados).
+ *   - Si no queda ningún candidato (caso de cola de un solo elemento),
+ *     simplemente quitamos sin transferir.
+ *
+ * Exportada para poder testear la regla sin React. Es una función pura.
+ */
+export function applyRemoveWithCaptionTransfer(
+  state: QueueState,
+  id: string
+): QueueState {
+  const removed = state.attachments.find((a) => a.id === id);
+  // Id inexistente: no-op (defensivo). El reducer garantiza esto pero
+  // cubrimos el caso por si alguien llama a esta helper directamente.
+  if (!removed) return state;
+
+  const remaining = state.attachments.filter((a) => a.id !== id);
+  // selectedId queda null si el id eliminado era el seleccionado.
+  const nextSelectedId =
+    state.selectedId === id ? null : state.selectedId;
+
+  // ¿Hay que transferir captionOwner?
+  const shouldTransfer =
+    removed.captionOwner === true && removed.captionConsumed === false;
+
+  if (!shouldTransfer) {
+    return {
+      ...state,
+      attachments: remaining,
+      selectedId: nextSelectedId,
+    };
+  }
+
+  // Encontrar el primer adjunto restante sin captionOwner.
+  // captionConsumed=false explícito: el caption aún no viajó y debe
+  // viajar con el nuevo dueño en su próximo envío.
+  const newOwnerIdx = remaining.findIndex((a) => a.captionOwner !== true);
+  if (newOwnerIdx === -1) {
+    // No hay candidato (caso borde: el único captionOwner es el que se
+    // eliminó). Solo quitamos, sin transferir.
+    return {
+      ...state,
+      attachments: remaining,
+      selectedId: nextSelectedId,
+    };
+  }
+
+  const transferred = remaining.map((a, i) =>
+    i === newOwnerIdx
+      ? { ...a, captionOwner: true, captionConsumed: false }
+      : a
+  );
+  return {
+    ...state,
+    attachments: transferred,
+    selectedId: nextSelectedId,
+  };
+}
+
+/**
  * Máquina de estados mínima de la cola. El manejo de Object URLs vive en
  * el hook (porque requiere `URL.revokeObjectURL`), no aquí.
  */
@@ -58,12 +129,11 @@ export function queueReducer(state: QueueState, action: QueueAction): QueueState
         attachments: [...state.attachments, ...action.items],
       };
     case "remove":
-      return {
-        ...state,
-        attachments: state.attachments.filter((a) => a.id !== action.id),
-        selectedId:
-          state.selectedId === action.id ? null : state.selectedId,
-      };
+      // 004 (corte 2d) — `remove` puede transferir la propiedad del caption
+      // si el eliminado era el captionOwner y su caption aún no se había
+      // consumido. La lógica vive en `applyRemoveWithCaptionTransfer` para
+      // poder probarla de forma aislada sin tocar React.
+      return applyRemoveWithCaptionTransfer(state, action.id);
     case "clear":
       return { attachments: [], selectedId: null };
     case "clearSent":
@@ -216,6 +286,90 @@ export type QueueSummary = {
   blocked: number;
 };
 
+/* ------------------------------------------------------------------ */
+/* Submit del composer — fuente de verdad para la rama de submit       */
+/* ------------------------------------------------------------------ */
+
+/**
+ * 004 (corte 2d) — Modo de submit que debe ejecutar el compositor:
+ *   - `"queue"` si hay adjuntos listos para enviar (no bloqueados y en
+ *     estado pending/failed). En este caso el compositor entra a
+ *     `submitQueue()`.
+ *   - `"text"` si NO hay adjuntos listos pero hay texto en el textarea.
+ *     En este caso el compositor envía texto plano por `onSend(value)`.
+ *   - `"noop"` si no hay nada que enviar (ni adjuntos listos ni texto).
+ *
+ * Reglas críticas (regresión del corte 2d):
+ *   - Adjuntos con `status="sent"` NO cuentan como "listos" (ya están
+ *     terminales). Si solo queda un sent residual y el operador escribe
+ *     texto, la rama debe ir a `"text"`, NO a `"queue"` (el bug anterior
+ *     usaba `attachments.some(a => !a.needsVideoAsDocumentConfirm)` que
+ *     consideraba sent como listo y mandaba `submitQueue()` a un bucle
+ *     vacío que retornaba sin enviar el texto).
+ *   - Adjuntos con `needsVideoAsDocumentConfirm=true` se excluyen
+ *     explícitamente: bloqueados = no cuentan como listos aunque su
+ *     status sea pending.
+ *
+ * Esta helper es la única fuente de verdad que `composer.submit()`
+ * consulta; el cálculo de `canSubmit` del botón y la decisión de la rama
+ * de submit usan exactamente este mismo filtro para que el botón y la
+ * acción no se contradigan.
+ */
+export type SubmitMode = "queue" | "text" | "noop";
+
+export function decideSubmitMode(
+  attachments: PendingAttachment[],
+  text: string
+): SubmitMode {
+  const readyToSend = attachments.filter(
+    (a) =>
+      a.needsVideoAsDocumentConfirm === false &&
+      (a.status === "pending" || a.status === "failed")
+  );
+  if (readyToSend.length > 0) return "queue";
+  if (text.trim().length > 0) return "text";
+  return "noop";
+}
+
+/* ------------------------------------------------------------------ */
+/* Cleanup del happy path del envío                                    */
+/* ------------------------------------------------------------------ */
+
+/**
+ * 004 (corte 2d) — Recorre los adjuntos del momento de captura y revoca
+ * TODAS sus previews, sin filtrar por status. Es la primitive que el
+ * compositor invoca tras `shouldAutoClearQueue === true`, encapsulada
+ * para que se pueda probar la semántica "no dejar Object URLs
+ * huérfanas" sin levantar React.
+ *
+ * Por qué existe este helper:
+ *   - El callback `q.clearSent()` del hook filtra por `status === "sent"`,
+ *     pero la captura `const q = queueRef.current` se hace ANTES de
+ *     `runQueueSend`. Si entre esa captura y la llamada a `clearSent()`
+ *     el `state.attachments` del closure sigue siendo el de pre-envío
+ *     (todos pending), el filtro deja la lista vacía y NO revoca nada,
+ *     dejando Object URLs huérfanas aunque el reducer luego elimine los
+ *     sent.
+ *   - `q.clear()` revoca todo lo del closure, pero al invocarlo desde
+ *     fuera del componente sigue dependiendo del estado capturado.
+ *   - Este helper recurre explícitamente a la lista de adjuntos que el
+ *     compositor pasó al bucle (los "originales") y revoca sin filtrar
+ *     por status. Aunque el closure sea stale, los `previewUrl` siguen
+ *     siendo válidos y deben liberarse.
+ *
+ * Devuelve el número de Object URLs revocadas, útil para tests.
+ */
+export function revokeAllPreviews(attachments: PendingAttachment[]): number {
+  let count = 0;
+  for (const a of attachments) {
+    if (a.previewUrl) {
+      revokePreviewUrl(a);
+      count += 1;
+    }
+  }
+  return count;
+}
+
 /** Cuenta cuántos adjuntos están en cada estado. */
 export function summarize(attachments: PendingAttachment[]): QueueSummary {
   let sent = 0;
@@ -357,23 +511,38 @@ export function useAttachmentQueue(): {
     [state.attachments]
   );
 
-  const remove = useCallback((id: string) => {
-    const att = state.attachments.find((a) => a.id === id);
-    if (att) revokePreviewUrl(att);
-    dispatch({ type: "remove", id });
-  }, [state.attachments]);
+  const remove = useCallback(
+    (id: string) => {
+      // 004 (corte 2d) — leemos de `attachmentsRef.current` (no del closure
+      // de `state.attachments`) para que la revocación sea robusta frente a
+      // captures obsoletos. El compositor agarra `q = queueRef.current` antes
+      // de un envío async; si entre el grab y la llamada el state cambió, el
+      // ref SIEMPRE apunta al último estado renderizado y la URL que vamos a
+      // revocar es la del adjunto que el caller realmente está eliminando.
+      const att = attachmentsRef.current.find((a) => a.id === id);
+      if (att) revokePreviewUrl(att);
+      dispatch({ type: "remove", id });
+    },
+    []
+  );
 
   const clear = useCallback(() => {
-    for (const a of state.attachments) revokePreviewUrl(a);
+    // 004 (corte 2d) — usa `attachmentsRef.current` (sin deps) para que el
+    // callback sea estable y la revocación NO se pierda cuando el compositor
+    // captura una referencia del queue previa a una corrida de envío. Ver
+    // `clearQueueOnSuccess` para el contrato del happy path.
+    for (const a of attachmentsRef.current) revokePreviewUrl(a);
     dispatch({ type: "clear" });
-  }, [state.attachments]);
+  }, []);
 
   const clearSent = useCallback(() => {
-    for (const a of state.attachments) {
+    // 004 (corte 2d) — mismo patrón: lee del ref estable para no perder
+    // revocaciones por closures stale.
+    for (const a of attachmentsRef.current) {
       if (a.status === "sent") revokePreviewUrl(a);
     }
     dispatch({ type: "clearSent" });
-  }, [state.attachments]);
+  }, []);
 
   const select = useCallback((id: string | null) => {
     dispatch({ type: "select", id });

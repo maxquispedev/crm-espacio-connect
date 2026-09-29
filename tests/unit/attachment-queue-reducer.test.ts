@@ -6,9 +6,11 @@
  */
 import { describe, expect, it } from "vitest";
 import {
+  applyRemoveWithCaptionTransfer,
   filterDuplicates,
   progressLabel,
   queueReducer,
+  revokeAllPreviews,
   summarize,
   type QueueState,
 } from "../../src/components/inbox/attachment-queue";
@@ -491,5 +493,192 @@ describe("queueReducer — clearSent post-exitoso (004 fix)", () => {
     const newText = "hola";
     const canSubmit = ready.length > 0 || (newText.trim().length > 0 && !onlyBlocked);
     expect(canSubmit).toBe(true);
+  });
+});
+
+/* ------------------------------------------------------------------ */
+/* applyRemoveWithCaptionTransfer — caption owner transferido          */
+/* (004 corte 2d, fix #3)                                              */
+/* ------------------------------------------------------------------ */
+
+describe("applyRemoveWithCaptionTransfer — caption owner transfer (004 fix 2d)", () => {
+  it("eliminar owner NO consumido → siguiente se convierte en owner", () => {
+    const owner = att("att_1", fakeFile("a.jpg", 100, "image/jpeg"), {
+      captionOwner: true,
+    });
+    const next = att("att_2", fakeFile("b.png", 100, "image/png"));
+    const s1 = queueReducer(empty, { type: "add", items: [owner, next] });
+    const s2 = applyRemoveWithCaptionTransfer(s1, "att_1");
+
+    // Owner eliminado.
+    expect(s2.attachments.map((x) => x.id)).toEqual(["att_2"]);
+    // El siguiente ahora es captionOwner con captionConsumed=false.
+    expect(s2.attachments[0]?.captionOwner).toBe(true);
+    expect(s2.attachments[0]?.captionConsumed).toBe(false);
+  });
+
+  it("eliminar owner CONSUMIDO → NO transfiere (caption ya viajó)", () => {
+    // Si el captionOwner ya viajó con caption, eliminarlo NO debe
+    // reasignar la propiedad: el caption ya se envió una vez y no debe
+    // repetirse en un próximo envío.
+    const consumedOwner = att("att_1", fakeFile("a.jpg", 100, "image/jpeg"), {
+      captionOwner: true,
+      captionConsumed: true,
+      status: "sent",
+    });
+    const next = att("att_2", fakeFile("b.png", 100, "image/png"));
+    const s1 = queueReducer(empty, {
+      type: "add",
+      items: [consumedOwner, next],
+    });
+    const s2 = applyRemoveWithCaptionTransfer(s1, "att_1");
+
+    expect(s2.attachments.map((x) => x.id)).toEqual(["att_2"]);
+    // El siguiente sigue sin captionOwner.
+    expect(s2.attachments[0]?.captionOwner).toBe(false);
+    expect(s2.attachments[0]?.captionConsumed).toBe(false);
+  });
+
+  it("eliminar adjunto que NO es owner → no afecta captionOwner existente", () => {
+    const owner = att("att_1", fakeFile("a.jpg", 100, "image/jpeg"), {
+      captionOwner: true,
+    });
+    const middle = att("att_2", fakeFile("b.png", 100, "image/png"));
+    const tail = att("att_3", fakeFile("c.webp", 100, "image/webp"));
+    const s1 = queueReducer(empty, { type: "add", items: [owner, middle, tail] });
+    const s2 = applyRemoveWithCaptionTransfer(s1, "att_2");
+
+    expect(s2.attachments.map((x) => x.id)).toEqual(["att_1", "att_3"]);
+    // Owner intacto.
+    expect(s2.attachments[0]?.captionOwner).toBe(true);
+    expect(s2.attachments[1]?.captionOwner).toBe(false);
+  });
+
+  it("cola de un solo owner → elimina sin transferir (no queda nadie)", () => {
+    const sole = att("att_1", fakeFile("a.jpg", 100, "image/jpeg"), {
+      captionOwner: true,
+    });
+    const s1 = queueReducer(empty, { type: "add", items: [sole] });
+    const s2 = applyRemoveWithCaptionTransfer(s1, "att_1");
+    expect(s2.attachments).toEqual([]);
+  });
+
+  it("id inexistente → no-op (defensivo)", () => {
+    const owner = att("att_1", fakeFile("a.jpg", 100, "image/jpeg"), {
+      captionOwner: true,
+    });
+    const s1 = queueReducer(empty, { type: "add", items: [owner] });
+    const s2 = applyRemoveWithCaptionTransfer(s1, "att_X");
+    expect(s2.attachments).toHaveLength(1);
+    expect(s2.attachments[0]?.captionOwner).toBe(true);
+  });
+
+  it("selectedId queda null si el id eliminado era el seleccionado", () => {
+    const owner = att("att_1", fakeFile("a.jpg", 100, "image/jpeg"), {
+      captionOwner: true,
+    });
+    const next = att("att_2", fakeFile("b.png", 100, "image/png"));
+    const s1 = queueReducer(empty, { type: "add", items: [owner, next] });
+    const s2 = queueReducer(s1, { type: "select", id: "att_1" });
+    const s3 = applyRemoveWithCaptionTransfer(s2, "att_1");
+    expect(s3.selectedId).toBeNull();
+  });
+
+  it("transferencia preserva el orden de la cola y los demás flags", () => {
+    const owner = att("att_1", fakeFile("a.jpg", 100, "image/jpeg"), {
+      captionOwner: true,
+      willSendAsDocument: true,
+    });
+    const candidate = att("att_2", fakeFile("b.png", 100, "image/png"));
+    const other = att("att_3", fakeFile("c.webp", 100, "image/webp"));
+    const s1 = queueReducer(empty, {
+      type: "add",
+      items: [owner, candidate, other],
+    });
+    const s2 = applyRemoveWithCaptionTransfer(s1, "att_1");
+    expect(s2.attachments.map((x) => x.id)).toEqual(["att_2", "att_3"]);
+    // att_2 ahora es captionOwner pero conserva su status y kind.
+    expect(s2.attachments[0]?.captionOwner).toBe(true);
+    expect(s2.attachments[0]?.captionConsumed).toBe(false);
+    expect(s2.attachments[0]?.kind).toBe("image");
+    expect(s2.attachments[1]?.captionOwner).toBe(false);
+  });
+
+  it("queueReducer.remove delega en applyRemoveWithCaptionTransfer (coherencia)", () => {
+    // Verifica que la acción `remove` del reducer produce exactamente el
+    // mismo resultado que llamar a la helper explícitamente. Si alguien
+    // cambia el reducer sin pasar por la helper, este test rompe.
+    const owner = att("att_1", fakeFile("a.jpg", 100, "image/jpeg"), {
+      captionOwner: true,
+    });
+    const next = att("att_2", fakeFile("b.png", 100, "image/png"));
+    const s0 = queueReducer(empty, { type: "add", items: [owner, next] });
+    const viaReducer = queueReducer(s0, { type: "remove", id: "att_1" });
+    const viaHelper = applyRemoveWithCaptionTransfer(s0, "att_1");
+    expect(viaReducer).toEqual(viaHelper);
+  });
+});
+
+/* ------------------------------------------------------------------ */
+/* revokeAllPreviews — limpieza robusta en el happy path               */
+/* (004 corte 2d, fix #2)                                              */
+/* ------------------------------------------------------------------ */
+
+describe("revokeAllPreviews — happy path cleanup (004 fix 2d)", () => {
+  it("revoca TODOS los previews, sin filtrar por status", () => {
+    // La regresión era: el closure capturado por el composer antes del
+    // envío tenía los adjuntos aún en `pending`. Si el cleanup usaba
+    // `clearSent` (filtra por status=sent), la revocación no corría y
+    // quedaban Object URLs huérfanas aunque el reducer luego quitase los
+    // sent. `revokeAllPreviews` no filtra por status: cierra esa puerta.
+    const a = att("att_1", fakeFile("a.jpg", 100, "image/jpeg"), {
+      previewUrl: "blob:a",
+      status: "pending",
+    });
+    const b = att("att_2", fakeFile("b.png", 100, "image/png"), {
+      previewUrl: "blob:b",
+      status: "failed",
+      error: "x",
+    });
+    const c = att("att_3", fakeFile("c.webp", 100, "image/webp"), {
+      previewUrl: "blob:c",
+      status: "sent",
+    });
+    const revoked = revokeAllPreviews([a, b, c]);
+    expect(revoked).toBe(3);
+  });
+
+  it("ignora adjuntos sin previewUrl (p. ej. documentos)", () => {
+    const doc = att("att_1", fakeFile("doc.pdf", 1024, "application/pdf"), {
+      previewUrl: null,
+    });
+    const img = att("att_2", fakeFile("a.jpg", 100, "image/jpeg"), {
+      previewUrl: "blob:a",
+    });
+    const revoked = revokeAllPreviews([doc, img]);
+    expect(revoked).toBe(1);
+  });
+
+  it("devuelve 0 sobre una lista vacía", () => {
+    expect(revokeAllPreviews([])).toBe(0);
+  });
+
+  it("REGRESIÓN 2d: el filtro por status=sent dejaría previews sin revocar", () => {
+    // Simula el bug: si el cleanup usara un filtro tipo `clearSent`, los
+    // adjuntos en `pending` (status stale del closure pre-envío) NO se
+    // revocarían. La regresión existe solo si se filtra por status; este
+    // test demuestra que filtrar por status es incorrecto.
+    const stalePending = att("att_1", fakeFile("a.jpg", 100, "image/jpeg"), {
+      previewUrl: "blob:a",
+      status: "pending", // stale: en realidad ya se envió, pero el closure lo ve pending
+    });
+    // El bug sería: revokeBy(filter a => a.status === "sent") sobre
+    // este closure dejaría blob:a sin revocar.
+    const wouldBeRevokedByBuggyFilter = [stalePending].filter(
+      (a) => a.status === "sent"
+    ).length;
+    expect(wouldBeRevokedByBuggyFilter).toBe(0); // bug latente
+    // El fix correcto (revokeAllPreviews) sí revoca.
+    expect(revokeAllPreviews([stalePending])).toBe(1);
   });
 });

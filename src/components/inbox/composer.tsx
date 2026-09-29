@@ -15,6 +15,7 @@ import { cn } from "@/lib/utils";
 import { formatBytes, formatRemaining, type PendingAttachment } from "./helpers";
 import {
   AttachmentQueueList,
+  decideSubmitMode,
   runQueueSend,
   shouldAutoClearQueue,
   useAttachmentQueue,
@@ -225,7 +226,16 @@ export function Composer({
       // debe quedar en el happy path.
       const allDone = shouldAutoClearQueue(result, q.attachments);
       if (allDone) {
-        q.clearSent();
+        // 004 (corte 2d) — `q.clear()` revoca TODAS las Object URLs del
+        // closure (no solo las de status="sent"). Importante porque el
+        // closure capturado por `queueRef.current` puede tener los
+        // adjuntos aún en `pending`/`failed` (el dispatch de los sent se
+        // hizo dentro de `runQueueSend` y el re-render puede no haber
+        // refrescado el callback antes de esta línea). Ver
+        // `revokeAllPreviews` para el contrato testeable.
+        // `clear()` además vacía la cola completa (el happy path debe
+        // dejar la cola vacía — no hay adjuntos bloqueados que conservar).
+        q.clear();
         setText("");
         if (taRef.current) {
           taRef.current.style.height = "auto";
@@ -248,15 +258,19 @@ export function Composer({
     if (submitInFlight.current) return;
     setError(null);
 
-    // Si hay adjuntos listos (no bloqueados), bucle de envío.
-    const hasReady = queue.attachments.some(
-      (a) => !a.needsVideoAsDocumentConfirm
-    );
-    if (hasReady) {
+    // 004 (corte 2d) — La rama de submit debe usar la MISMA fuente de
+    // verdad que `canSubmit` y que `readyToSend`: solo adjuntos NO
+    // bloqueados Y en estado pending/failed cuentan como "listos". Un
+    // sent residual NO es listo. El cálculo vivía en `decideSubmitMode`
+    // para poder probarlo de forma pura (ver tests unit).
+    const mode = decideSubmitMode(queue.attachments, text);
+    if (mode === "queue") {
       await submitQueue();
       return;
     }
+    if (mode === "noop") return;
 
+    // mode === "text" — sin adjuntos listos pero hay texto en el textarea.
     const value = text.trim();
     if (!value) return;
     submitInFlight.current = true;

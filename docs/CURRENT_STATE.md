@@ -1,6 +1,6 @@
 # CURRENT STATE — Espacio Connect
 
-**Actualizado:** 2026-09-29 (sync técnico tras spec 004 polish + corte 2c de fix)
+**Actualizado:** 2026-09-29 (sync técnico tras spec 004 polish + corte 2c + corte 2d)
 **Branch:** `main`
 **Baseline funcional previo a esta sincronización documental:** `bbae7cd1dfd98d5006cfd26440a8acf1def2c1bb`
 **Propósito:** checkpoint técnico rápido. Las decisiones de negocio viven en el cerebro de Obsidian; la implementación y la historia SDD viven aquí.
@@ -201,7 +201,7 @@ como estado durable.
 
 ### Estado del spec 004
 
-Implementado a través de commits atómicos `0 → 1 → 2 → 2a → 2b → 2c`:
+Implementado a través de commits atómicos `0 → 1 → 2 → 2a → 2b → 2c → 2d`:
 
 - Commit 0 (`275f457`): docs SDD (spec/plan/tasks).
 - Commit 1 (`b3cc38f`): cola de adjuntos, helpers puros, componentes
@@ -214,7 +214,7 @@ Implementado a través de commits atómicos `0 → 1 → 2 → 2a → 2b → 2c`
   por teclado (←/→, Delete/Backspace, Esc), drop overlay animado con
   conteo, indicadores de estado con texto explícito, toolbar buttons
   ≥ 44 px, auto-focus textarea, `aria-current`.
-- Commit 2c (este checkpoint, **fix de comportamiento**): cuatro ajustes
+- Commit 2c (`0e7148c`, **fix de comportamiento**): cuatro ajustes
   de comportamiento detectados antes de E2E, todos ya especificados —
   no agrega capacidades nuevas:
   1. **Cleanup automático tras éxito total**: cuando todos los adjuntos
@@ -241,6 +241,40 @@ Implementado a través de commits atómicos `0 → 1 → 2 → 2a → 2b → 2c`
      `status=sent` como bloqueantes — tras un envío total (con o sin
      cleanup automático disparado) el operador puede enviar un texto
      nuevo sin tener que pulsar "Limpiar enviados" primero.
+- Commit 2d (este checkpoint, **fix de comportamiento post-2c**):
+  tres regresiones detectadas al revisar el código desplegado tras
+  `0e7148c`. NO agrega capacidades nuevas. NO toca backend de
+  WhatsApp, límites, video-as-document, transcodificación, voice
+  recorder, storage/historial, webhook ni Sales/WHMCS. Solo refina
+  la lógica cliente del composer y de la cola:
+  1. **Rama de submit** (`composer.submit()`): antes usaba
+     `attachments.some(a => !a.needsVideoAsDocumentConfirm)` para
+     detectar "hay adjuntos listos". Eso contaba `status="sent"`
+     como listo, así que un sent residual bloqueaba el envío de un
+     texto nuevo (`submitQueue()` retornaba con `readyToSend` vacío
+     y el texto no salía). Nueva helper pura `decideSubmitMode`
+     encola los tres casos (`"queue" | "text" | "noop"`) usando el
+     mismo filtro que `readyToSend`. `submit()` la consulta y nunca
+     se contradice con `canSubmit`.
+  2. **Cleanup del happy path**: `submitQueue()` llamaba
+     `q.clearSent()` después del envío, pero el callback `clearSent`
+     filtra por `status === "sent"` y capturó el estado anterior al
+     envío (todos `pending`), por lo que su loop de
+     `URL.revokeObjectURL` no revocaba nada — quedaban Object URLs
+     huérfanas aunque el reducer luego quitase los sent. Fix: el
+     happy path usa `q.clear()` (revoca TODO sin filtrar status),
+     y los callbacks `clear`/`clearSent`/`remove` del hook ahora
+     leen de `attachmentsRef.current` (deps=[]) para ser estables
+     frente a capturas obsoletas. Helper pura `revokeAllPreviews`
+     encapsula la semántica "revocar sin filtrar status".
+  3. **Transferencia de captionOwner al eliminar**: la acción `remove`
+     del reducer (vía `applyRemoveWithCaptionTransfer`) ahora
+     transfiere `captionOwner=true` al primer adjunto restante
+     elegible cuando el eliminado era captionOwner con su caption aún
+     NO consumido. Si el caption ya viajó (`captionConsumed=true`),
+     NO transfiere. Si la cola era de un solo elemento, solo lo
+     quita sin transferir. Reglas duras: nunca se transfiere a un
+     adjunto que ya es owner (defensivo).
 
 **Verificación actual:**
 
@@ -249,7 +283,7 @@ Implementado a través de commits atómicos `0 → 1 → 2 → 2a → 2b → 2c`
 | `pnpm typecheck` | verde |
 | `pnpm lint` | verde |
 | `pnpm build` | verde |
-| `pnpm test` | verde — **522 tests** (500 baseline post-2b + 22 nuevos del corte 2c) |
+| `pnpm test` | verde — **546 tests** (522 post-2c + 24 nuevos del corte 2d) |
 | `pnpm test:e2e` (sección 009) | **PENDIENTE en este entorno** — sin app local ni PostgreSQL activa |
 | Playwright visual `tests/e2e/009-inbox-messaging-ux.md` | **PENDIENTE en este entorno** |
 | Sección 008 (regresión spec 003 cerrado) | pendiente de re-correr con la app levantada |
@@ -259,21 +293,24 @@ verificado en vivo punta a punta** hasta correr `pnpm test:e2e` local y
 re-correr la sección 008 para regresión. Por Constitución IX no debe
 reportarse como READY punta a punta hasta entonces.
 
-**Detalle de tests del corte 2c** (22 nuevos):
+**Detalle de tests del corte 2d** (24 nuevos):
 
-- `attachment-queue-classify.test.ts`: 7 nuevos (image >5 MB rechazada,
-  audio >16 MB rechazado, video 16–100 MB como document, doc >100 MB
-  rechazado, fronteras inclusivas, guard de constantes vs `MEDIA_LIMITS`).
-- `attachment-queue-run.test.ts`: 11 nuevos (caption durable ×2 casos
-  cubiertos, `shouldAutoClearQueue` ×4 casos, composición cleanup +
-  texto inmediato, regresión `onlyBlocked` no incluye sent, edge case
-  `captionConsumed=true`).
-- `attachment-queue-reducer.test.ts`: 5 nuevos (`markCaptionConsumed`
-  target/no-op/idempotente/id-inexistente + `clearSent` deja cola lista
-  para texto nuevo).
-- Test actualizado: "caption se aplica al primer adjunto intentado" —
-  ahora requiere `captionOwner: true` (la decisión es por el flag
-  durable, no por orden de iteración).
+- `attachment-queue-run.test.ts`: 12 nuevos
+  - `decideSubmitMode` × 10 casos: cola vacía, sent residual, mezcla
+    sent+sending, bloqueado video→document, mezcla bloqueado+listo,
+    solo `sending`, consistencia con `canSubmit`, edge cases.
+  - `runQueueSend` × 2 casos de integración con
+    `applyRemoveWithCaptionTransfer`: caption viaja exactamente una
+    vez con el nuevo owner; eliminar owner consumido NO reasigna.
+- `attachment-queue-reducer.test.ts`: 12 nuevos
+  - `applyRemoveWithCaptionTransfer` × 8 casos: owner no consumido
+    transfiere, owner consumido no transfiere, eliminar no-owner no
+    afecta, cola de 1, id inexistente no-op, selectedId cleanup,
+    preservación de orden/flags, delegación coherente con
+    `queueReducer`.
+  - `revokeAllPreviews` × 4 casos: revoca todos sin filtrar status,
+    ignora sin previewUrl, lista vacía, regresión "filtro por status
+    dejaría huérfanas".
 
 ---
 
@@ -289,6 +326,7 @@ reportarse como READY punta a punta hasta entonces.
 | 2026-09-29 | sincronización de memoria técnica + disciplina SDD |
 | 2026-09-29 | spec 004 cerrado: cola de adjuntos + UX polish (commits 0→1→2→2a→2b, 500 tests) |
 | 2026-09-29 | spec 004 corte 2c — fix de comportamiento antes de E2E (cleanup total, caption durable, pre-validación image/audio, botón engañoso del panel), 522 tests |
+| 2026-09-29 | spec 004 corte 2d — fix de comportamiento post-0e7148c (rama submit con sent residual, cleanup happy path revoca todas las previews, transferencia captionOwner al eliminar owner), 546 tests |
 
 ---
 

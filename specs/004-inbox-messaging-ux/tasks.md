@@ -306,6 +306,79 @@ implementación del corte 2b.
 - [x] **T2c12** `pnpm typecheck && pnpm lint && pnpm build && pnpm test`
   verdes tras el corte 2c. Total tests: 522.
 
+### Corte 2d — fix de comportamiento después del commit 0e7148c (regresiones detectadas)
+
+Tres regresiones concretas detectadas al revisar el código desplegado.
+NO agrega capacidades nuevas. NO toca backend de WhatsApp, límites,
+video-as-document, transcodificación, voice recorder, storage/historial,
+webhook ni Sales/WHMCS. Solo refina la lógica cliente del composer
+y de la cola para alinearla con la rama de tests ya escrita en el corte
+2c.
+
+- [x] **T2d01** [US4] `composer.submit()` rama de decisión:
+  - Regresión: `submit()` usaba `attachments.some(a => !a.needsVideoAsDocumentConfirm)`
+    para detectar "hay adjuntos listos" antes de entrar a `submitQueue()`.
+    Esto consideraba un attachment `status="sent"` como listo.
+  - Caso: queda un `sent` residual en la cola → `readyToSend.length === 0` →
+    el operador escribe texto → `canSubmit=true` → pulsa Enter →
+    `submit()` entraba a `submitQueue()` (que retornaba porque
+    `readyToSend` estaba vacío) → el texto NO se enviaba.
+  - Fix: nueva helper pura `decideSubmitMode(attachments, text): "queue"|"text"|"noop"`
+    en `attachment-queue.tsx`. `submit()` consulta `decideSubmitMode` y
+    enruta a `submitQueue()` (queue), `onSend(value)` (text) o retorna
+    (noop). El filtro interno es `!needsVideoAsDocumentConfirm &&
+    (status==="pending" || status==="failed")` — mismo que
+    `readyToSend`, así el botón y la rama de submit nunca se contradicen.
+  - Sent residual ahora va correctamente a `"text"`.
+- [x] **T2d02** [US4] Cleanup del happy path:
+  - Regresión: `submitQueue()` capturaba `const q = queueRef.current`
+    antes de `runQueueSend`. Después llamaba `q.clearSent()`. El callback
+    `clearSent` (que filtra por `status === "sent"`) capturó el estado
+    anterior al envío, donde los attachments todavía estaban `pending`;
+    su loop de `URL.revokeObjectURL` no revocaba nada aunque el reducer
+    luego eliminase los sent → Object URLs huérfanas.
+  - Fix: en el happy path (`shouldAutoClearQueue === true`) `submitQueue`
+    llama `q.clear()` en lugar de `q.clearSent()`. `clear()` revoca TODAS
+    las previews del closure (no solo sent), garantizando cero URLs
+    huérfanas. Como bonus, los callbacks `clear`/`clearSent`/`remove`
+    del hook ahora leen de `attachmentsRef.current` (deps=[]) para que
+    sean estables y robustos frente a capturas obsoletas en escenarios
+    async. Nueva helper pura `revokeAllPreviews(attachments): number`
+    encapsula la semántica "revocar sin filtrar por status", testeable.
+- [x] **T2d03** [US4] Transferencia de `captionOwner` al eliminar el owner:
+  - Regresión: si la cola era `[A (captionOwner, !captionConsumed), B, C]`
+    y el operador eliminaba A antes de enviar, B quedaba sin
+    `captionOwner` y el caption se perdía.
+  - Fix: la acción `remove` del reducer (vía helper exportada
+    `applyRemoveWithCaptionTransfer`) ahora:
+    1. Si el eliminado NO era captionOwner, o su caption YA se había
+       consumido (`captionConsumed=true`), lo quita sin transferir.
+    2. Si era captionOwner con caption aún NO consumido, lo quita y
+       transfiere `captionOwner=true` al primer adjunto restante sin
+       `captionOwner` (manteniendo `captionConsumed=false`).
+    3. Si no queda ningún candidato (cola de un solo elemento), lo
+       quita sin transferir.
+  - Coherencia con `runQueueSend`: tras la transferencia, el caption
+    viaja con el nuevo owner exactamente una vez.
+- [x] **T2d04** Tests añadidos en `tests/unit/attachment-queue-run.test.ts`:
+  - `decideSubmitMode` × 10 casos (cola vacía, sent residual,
+    bloqueado por video→document, mezcla bloqueado+listo, solo
+    sending, consistencia con `canSubmit`).
+  - `runQueueSend` × integración con `applyRemoveWithCaptionTransfer`
+    × 2 casos (caption viaja exactamente una vez con el nuevo
+    owner; eliminar owner consumido NO reasigna y el retry del
+    siguiente NO viaja caption).
+- [x] **T2d05** Tests añadidos en `tests/unit/attachment-queue-reducer.test.ts`:
+  - `applyRemoveWithCaptionTransfer` × 8 casos (owner no consumido
+    transfiere, owner consumido no transfiere, eliminar no-owner no
+    afecta, cola de 1, id inexistente no-op, selectedId cleanup,
+    preservación de orden/flags, delegación coherente con `queueReducer`).
+  - `revokeAllPreviews` × 4 casos (revoca todos sin filtrar status,
+    ignora sin previewUrl, lista vacía, regresión "filtro por status
+    dejaría huérfanas").
+- [x] **T2d06** `pnpm typecheck && pnpm lint && pnpm build && pnpm test`
+  verdes tras el corte 2d. Total tests: 546 (522 + 24 nuevos).
+
 **PENDIENTE fuera del entorno actual**:
 - `pnpm test:e2e` (sección 009) en vivo con app + mocks + BD.
 - Playwright visual con `tests/e2e/009-inbox-messaging-ux.md`.
