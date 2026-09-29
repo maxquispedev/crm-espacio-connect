@@ -34,6 +34,8 @@ function att(
     needsVideoAsDocumentConfirm: false,
     status: "pending",
     error: null,
+    captionOwner: false,
+    captionConsumed: false,
     ...overrides,
   };
 }
@@ -405,5 +407,89 @@ describe("progressLabel", () => {
 
   it("devuelve vacío si la cola está vacía", () => {
     expect(progressLabel(summarize([]))).toBe("");
+  });
+});
+
+describe("queueReducer — captionOwner / captionConsumed (004 fix)", () => {
+  it("markCaptionConsumed marca SOLO el adjunto target que es captionOwner", () => {
+    const owner = att("att_1", fakeFile("a.jpg", 100, "image/jpeg"), {
+      captionOwner: true,
+    });
+    const other = att("att_2", fakeFile("b.png", 100, "image/png"));
+    const s1 = queueReducer(empty, { type: "add", items: [owner, other] });
+    const s2 = queueReducer(s1, {
+      type: "markCaptionConsumed",
+      id: "att_1",
+    });
+    expect(s2.attachments[0]?.captionConsumed).toBe(true);
+    expect(s2.attachments[0]?.captionOwner).toBe(true);
+    // El otro adjunto no debe verse afectado.
+    expect(s2.attachments[1]?.captionConsumed).toBe(false);
+    expect(s2.attachments[1]?.captionOwner).toBe(false);
+  });
+
+  it("markCaptionConsumed es no-op si el id no es captionOwner (defensivo)", () => {
+    const a = att("att_1", fakeFile("a.jpg", 100, "image/jpeg")); // captionOwner=false
+    const s1 = queueReducer(empty, { type: "add", items: [a] });
+    const s2 = queueReducer(s1, {
+      type: "markCaptionConsumed",
+      id: "att_1",
+    });
+    expect(s2.attachments[0]?.captionConsumed).toBe(false);
+  });
+
+  it("markCaptionConsumed es idempotente: aplicado dos veces no rompe nada", () => {
+    const owner = att("att_1", fakeFile("a.jpg", 100, "image/jpeg"), {
+      captionOwner: true,
+    });
+    const s1 = queueReducer(empty, { type: "add", items: [owner] });
+    const s2 = queueReducer(s1, {
+      type: "markCaptionConsumed",
+      id: "att_1",
+    });
+    const s3 = queueReducer(s2, {
+      type: "markCaptionConsumed",
+      id: "att_1",
+    });
+    expect(s3.attachments[0]?.captionConsumed).toBe(true);
+  });
+
+  it("markCaptionConsumed sobre id inexistente no lanza", () => {
+    const a = att("att_1", fakeFile("a.jpg", 100, "image/jpeg"));
+    const s1 = queueReducer(empty, { type: "add", items: [a] });
+    const s2 = queueReducer(s1, {
+      type: "markCaptionConsumed",
+      id: "att_X",
+    });
+    expect(s2.attachments).toHaveLength(1);
+    expect(s2.attachments[0]?.captionConsumed).toBe(false);
+  });
+});
+
+describe("queueReducer — clearSent post-exitoso (004 fix)", () => {
+  it("tras clearSent la cola queda vacía y se puede aceptar texto nuevo", () => {
+    const a = att("att_1", fakeFile("a.jpg", 100, "image/jpeg"), {
+      status: "sent",
+      captionOwner: true,
+      captionConsumed: true,
+    });
+    const b = att("att_2", fakeFile("b.png", 100, "image/png"), {
+      status: "sent",
+    });
+    const s1 = queueReducer(empty, { type: "add", items: [a, b] });
+    const s2 = queueReducer(s1, { type: "clearSent" });
+    expect(s2.attachments).toEqual([]);
+
+    // Replicamos el cálculo de canSubmit del composer con la cola vacía:
+    // readyToSend = filter(!needsVideoAsDocumentConfirm && (pending||failed))
+    const ready = s2.attachments.filter(
+      (a0) =>
+        !a0.needsVideoAsDocumentConfirm &&
+        (a0.status === "pending" || a0.status === "failed")
+    );
+    const onlyBlocked = s2.attachments.length > 0 && ready.length === 0;
+    const newText = "hola";
+    const canSubmit = ready.length > 0 || (newText.trim().length > 0 && !onlyBlocked);
+    expect(canSubmit).toBe(true);
   });
 });

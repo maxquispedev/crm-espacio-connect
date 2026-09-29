@@ -5,7 +5,9 @@
  */
 import { describe, expect, it } from "vitest";
 import {
+  AUDIO_MAX,
   DOC_MAX,
+  IMAGE_MAX,
   VIDEO_MAX_AS_VIDEO,
   classifyForQueue,
   formatAttachStatus,
@@ -129,6 +131,64 @@ describe("classifyForQueue", () => {
       fakeFile("doc.pdf", DOC_MAX, "application/pdf")
     );
     expect(r?.kind).toBe("document");
+  });
+});
+
+describe("classifyForQueue — pre-validación client-side (004 fix)", () => {
+  it("rechaza imagen > 5 MB (null) sin esperar al POST", () => {
+    expect(
+      classifyForQueue(fakeFile("huge.jpg", IMAGE_MAX + 1, "image/jpeg"))
+    ).toBeNull();
+    expect(
+      classifyForQueue(fakeFile("huge.png", 6 * 1024 * 1024, "image/png"))
+    ).toBeNull();
+  });
+
+  it("acepta imagen en exactamente 5 MB (frontera inclusiva)", () => {
+    const r = classifyForQueue(fakeFile("edge.jpg", IMAGE_MAX, "image/jpeg"));
+    expect(r?.kind).toBe("image");
+  });
+
+  it("rechaza audio > 16 MB (null) sin esperar al POST", () => {
+    expect(
+      classifyForQueue(fakeFile("huge.ogg", AUDIO_MAX + 1, "audio/ogg"))
+    ).toBeNull();
+    expect(
+      classifyForQueue(fakeFile("huge.mp3", 17 * 1024 * 1024, "audio/mpeg"))
+    ).toBeNull();
+  });
+
+  it("acepta audio en exactamente 16 MB (frontera inclusiva)", () => {
+    const r = classifyForQueue(fakeFile("edge.ogg", AUDIO_MAX, "audio/ogg"));
+    expect(r?.kind).toBe("audio");
+  });
+
+  it("video entre 16 MB y 100 MB SIGUE ofreciéndose como documento (no se rechaza)", () => {
+    const r = classifyForQueue(
+      fakeFile("clip.mp4", 30 * 1024 * 1024, "video/mp4")
+    );
+    expect(r).not.toBeNull();
+    expect(r?.kind).toBe("document");
+    expect(r?.willSendAsDocument).toBe(true);
+    expect(r?.needsVideoAsDocumentConfirm).toBe(true);
+  });
+
+  it("documento > 100 MB sigue rechazándose (límite duro)", () => {
+    expect(
+      classifyForQueue(fakeFile("huge.pdf", DOC_MAX + 1, "application/pdf"))
+    ).toBeNull();
+    expect(
+      classifyForQueue(fakeFile("huge.zip", 200 * 1024 * 1024, "application/zip"))
+    ).toBeNull();
+  });
+
+  it("las constantes cliente coinciden con los nombres del límite backend", () => {
+    // 004 — la pre-validación refleja los límites del backend
+    // (`MEDIA_LIMITS.*.maxBytes`). Si el backend cambiara, este test avisa.
+    expect(IMAGE_MAX).toBe(5 * 1024 * 1024);
+    expect(AUDIO_MAX).toBe(16 * 1024 * 1024);
+    expect(VIDEO_MAX_AS_VIDEO).toBe(16 * 1024 * 1024);
+    expect(DOC_MAX).toBe(100 * 1024 * 1024);
   });
 });
 

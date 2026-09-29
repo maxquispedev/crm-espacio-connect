@@ -10,6 +10,9 @@ import {
 import { customAlphabet } from "nanoid";
 import { CheckCircle2, ListChecks } from "lucide-react";
 import {
+  AUDIO_MAX,
+  DOC_MAX,
+  IMAGE_MAX,
   type AttachStatus,
   type PendingAttachment,
   classifyForQueue,
@@ -34,7 +37,9 @@ export type QueueAction =
   /** Acepta el re-tag video→document y desbloquea el envío. */
   | { type: "confirmVideoAsDocument"; id: string }
   /** Transita `failed → pending` (limpia error) para reintentar el envío. */
-  | { type: "retry"; id: string };
+  | { type: "retry"; id: string }
+  /** Marca el captionOwner como ya enviado con su caption. */
+  | { type: "markCaptionConsumed"; id: string };
 
 export type QueueState = {
   attachments: PendingAttachment[];
@@ -102,6 +107,15 @@ export function queueReducer(state: QueueState, action: QueueAction): QueueState
             : a
         ),
       };
+    case "markCaptionConsumed":
+      return {
+        ...state,
+        attachments: state.attachments.map((a) =>
+          a.id === action.id && a.captionOwner
+            ? { ...a, captionConsumed: true }
+            : a
+        ),
+      };
   }
 }
 
@@ -164,6 +178,29 @@ export function filterDuplicates(
     result.push(f);
   }
   return result;
+}
+
+/* ------------------------------------------------------------------ */
+/* Mensajes de rechazo (cliente, soft — el servidor sigue siendo SoT)  */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Genera un mensaje legible para `classifyForQueue` cuando devuelve `null`.
+ * Refleja los límites del backend (`MEDIA_LIMITS`); NO los relaja.
+ */
+export function rejectionReason(file: { type: string; size: number }): string {
+  if (file.size <= 0) return "Archivo vacío";
+  const mime = file.type || "";
+  if (file.size > DOC_MAX) {
+    return `Excede el límite de ${formatBytes(DOC_MAX)} (documento)`;
+  }
+  if (mime.startsWith("image/") && file.size > IMAGE_MAX) {
+    return `Excede el límite de ${formatBytes(IMAGE_MAX)} (imagen)`;
+  }
+  if (mime.startsWith("audio/") && file.size > AUDIO_MAX) {
+    return `Excede el límite de ${formatBytes(AUDIO_MAX)} (audio)`;
+  }
+  return "Tipo de archivo no soportado";
 }
 
 /* ------------------------------------------------------------------ */
@@ -252,6 +289,8 @@ export function useAttachmentQueue(): {
     status: AttachStatus,
     error?: string | null
   ) => void;
+  /** Marca el `captionOwner` como ya enviado con caption (idempotente). */
+  markCaptionConsumed: (id: string) => void;
   /** Adjuntos en estado `pending`/`failed` que ya pueden enviarse (no bloqueados). */
   readyToSend: PendingAttachment[];
   /** Adjuntos bloqueados por `needsVideoAsDocumentConfirm`. */
@@ -282,15 +321,18 @@ export function useAttachmentQueue(): {
       const accepted: PendingAttachment[] = [];
       const rejected: { file: File; reason: string }[] = [];
       const fresh = filterDuplicates(state.attachments, files);
+      // captionOwner es durable: solo lo fijamos si la cola NO tiene ya un
+      // propietario. Si ya existe uno (p. ej. un adjunto previo falló y
+      // seguimos en la misma sesión de cola), los nuevos adjuntos NO se
+      // convierten en propietarios — el caption sigue siendo del primero.
+      const hasOwner = state.attachments.some((a) => a.captionOwner);
+      let nextIsOwner = !hasOwner;
       for (const file of fresh) {
         const classified = classifyForQueue(file);
         if (!classified) {
           rejected.push({
             file,
-            reason:
-              file.size > 100 * 1024 * 1024
-                ? `Excede el límite de ${formatBytes(100 * 1024 * 1024)}`
-                : "Tipo de archivo no soportado",
+            reason: rejectionReason(file),
           });
           continue;
         }
@@ -301,8 +343,11 @@ export function useAttachmentQueue(): {
           ...classified,
           status: "pending",
           error: null,
+          captionOwner: nextIsOwner,
+          captionConsumed: false,
         };
         accepted.push(att);
+        nextIsOwner = false;
       }
       if (accepted.length > 0) {
         dispatch({ type: "add", items: accepted });
@@ -367,6 +412,10 @@ export function useAttachmentQueue(): {
     []
   );
 
+  const markCaptionConsumed = useCallback((id: string) => {
+    dispatch({ type: "markCaptionConsumed", id });
+  }, []);
+
   const readyToSend = useMemo<PendingAttachment[]>(() => {
     return state.attachments.filter(
       (a) =>
@@ -398,6 +447,7 @@ export function useAttachmentQueue(): {
     confirmVideoAsDocument,
     retry,
     updateStatus,
+    markCaptionConsumed,
     readyToSend,
     needsVideoAsDocumentConfirmCount,
     summary,
@@ -418,8 +468,18 @@ export type SubmitQueueOptions = {
   ) => Promise<string | null>;
   /** Notificación de transición de estado por adjunto. */
   onStatus: (id: string, status: AttachStatus, error?: string | null) => void;
-  /** Caption del textarea; se aplica SOLO al primer adjunto intentado. */
+  /**
+   * Caption del textarea. Su aplicación al captionOwner se decide a partir de
+   * los flags `captionOwner`/`captionConsumed` de cada adjunto (no de un
+   * contador local), de modo que retries posteriores respeten lo ya enviado.
+   */
   caption: string | null;
+  /**
+   * Notifica que el `captionOwner` acaba de enviarse CON caption (éxito).
+   * Quien controla la cola debe persistir `captionConsumed=true` para
+   * impedir que retries de OTROS adjuntos re-envíen el caption.
+   */
+  onCaptionConsumed?: (id: string) => void;
 };
 
 export type SubmitQueueResult = {
@@ -432,13 +492,37 @@ export type SubmitQueueResult = {
 };
 
 /**
+ * Decide si la cola puede limpiarse automáticamente tras una pasada de
+ * envío: cuando (a) no hay adjuntos en `failed`, (b) no quedan bloqueos por
+ * `needsVideoAsDocumentConfirm` en la población original y (c) al menos un
+ * adjunto pasó a `sent`. Es una función pura para poder probarla sin React.
+ *
+ * Regla operativa: NO basta con que el bucle no haya fallado; hay que
+ * confirmar contra los adjuntos que formaban parte del intento, porque un
+ * fallo anterior todavía puede estar pendiente de reintento (`pending`) sin
+ * haber sido procesado por esta pasada.
+ */
+export function shouldAutoClearQueue(
+  result: SubmitQueueResult,
+  attempted: PendingAttachment[]
+): boolean {
+  if (result.failed > 0) return false;
+  if (result.sent === 0) return false;
+  const stillBlocked = attempted.some((a) => a.needsVideoAsDocumentConfirm);
+  if (stillBlocked) return false;
+  return true;
+}
+
+/**
  * Recorre la cola secuencialmente (`for await`) y para cada adjunto
  * transita `pending/failed → sending → sent|failed` según el resultado.
  * Características garantizadas:
  *  - **Un fallo no aborta el resto**: cada `sendOne` se ejecuta en su propio
  *    try/catch (vía `onStatus`) y el bucle continúa.
- *  - **Caption solo en el primero**: el primer adjunto que se intenta enviar
- *    recibe `caption`; los siguientes reciben `null`.
+ *  - **Caption durable**: solo el `captionOwner` con `captionConsumed=false`
+ *    recibe `caption`; tras éxito se invoca `onCaptionConsumed` para
+ *    persistir el flag en la cola. Retries posteriores de OTROS adjuntos
+ *    (o del propio, si falló) respetan el estado durable.
  *  - **Bloqueos respetados**: `needsVideoAsDocumentConfirm=true` se ignora
  *    hasta que el operador confirme (no se envía nada por error).
  *  - **No se duplican adjuntos `sent`**: ya están terminales, se omiten.
@@ -451,7 +535,6 @@ export async function runQueueSend(
   let sent = 0;
   let failed = 0;
   let skipped = 0;
-  let captionConsumed = false;
   for (const att of opts.attachments) {
     if (att.needsVideoAsDocumentConfirm) {
       skipped += 1;
@@ -462,16 +545,22 @@ export async function runQueueSend(
       continue;
     }
     opts.onStatus(att.id, "sending");
+    // La decisión de qué adjunto recibe el caption viene del estado durable
+    // de la cola (captionOwner/captionConsumed), NO de un contador local:
+    // así, retries de este mismo u otros adjuntos no re-envían el caption
+    // que ya viajó con el primero.
+    const isCaptionOwner = att.captionOwner && !att.captionConsumed;
     const thisCaption =
-      !captionConsumed && opts.caption
-        ? (captionConsumed = true, opts.caption)
-        : null;
+      isCaptionOwner && opts.caption ? opts.caption : null;
     const err = await opts.sendOne(att, thisCaption);
     if (err) {
       opts.onStatus(att.id, "failed", err);
       failed += 1;
     } else {
       opts.onStatus(att.id, "sent");
+      if (isCaptionOwner && opts.onCaptionConsumed) {
+        opts.onCaptionConsumed(att.id);
+      }
       sent += 1;
     }
   }

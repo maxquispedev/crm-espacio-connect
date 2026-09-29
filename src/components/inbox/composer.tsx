@@ -16,6 +16,7 @@ import { formatBytes, formatRemaining, type PendingAttachment } from "./helpers"
 import {
   AttachmentQueueList,
   runQueueSend,
+  shouldAutoClearQueue,
   useAttachmentQueue,
 } from "./attachment-queue";
 import { TemplateSender } from "./template-sender";
@@ -208,19 +209,33 @@ export function Composer({
         sendOne,
         onStatus: q.updateStatus,
         caption: caption || null,
+        onCaptionConsumed: q.markCaptionConsumed,
       });
-      // Si TODO salió bien (sin errores y sin bloqueos), limpiamos el caption.
-      // Si algo falló, conservamos el textarea para que el operador pueda
-      // reintentar manualmente los fallidos con el mismo texto.
-      const stillBlocked = q.needsVideoAsDocumentConfirmCount > 0;
-      const allDone = result.failed === 0 && !stillBlocked && result.sent > 0;
+      // Limpieza automática en el happy path. Cuando TODOS los adjuntos que
+      // formaban parte del envío terminaron correctamente (sin failed ni
+      // adjuntos bloqueados esperando confirmación) la cola se autovacía:
+      // - clearSent revoca Object URLs y quita los items del estado.
+      // - Limpiamos el textarea y devolvemos el foco, de modo que el
+      //   operador pueda escribir/enviar el siguiente mensaje de inmediato
+      //   sin pulsar "Limpiar enviados" (ese botón queda para estados
+      //   parciales).
+      // Sent attachments ya NO bloquean: si quedaron residuos por alguna
+      // pasada intermedia que NO haya disparado allDone, el operador los
+      // limpia con "Limpiar enviados" — pero un cleanup no pedido nunca
+      // debe quedar en el happy path.
+      const allDone = shouldAutoClearQueue(result, q.attachments);
       if (allDone) {
+        q.clearSent();
         setText("");
         if (taRef.current) {
           taRef.current.style.height = "auto";
           // Devolvemos el foco al textarea para que el operador siga escribiendo.
           taRef.current.focus();
         }
+      } else if (result.failed === 0) {
+        // Sin failed pero con adjuntos aún sin confirmar (video>16MB) o sin
+        // sent: NO tocamos el textarea — el operador debe decidir qué hacer
+        // (confirmar video, retry de pendientes) con el mismo caption visible.
       }
       if (result.sent > 0) onSent();
     } finally {
@@ -336,15 +351,28 @@ export function Composer({
   }
 
   const hasQueue = queue.attachments.length > 0;
-  // 004 — El botón Enviar está deshabilitado si:
+  // 004 — El botón Enviar del textarea está deshabilitado si:
   //   - hay algo en vuelo (anti-doble-envío visual)
-  //   - la cola está vacía Y no hay texto Y no hay panel secundario abierto
-  //   - hay adjuntos bloqueados esperando confirmación y nada más que enviar
-  const onlyBlocked = queue.attachments.length > 0 && queue.readyToSend.length === 0;
+  //   - la cola está vacía Y no hay texto
+  //   - hay adjuntos PENDIENTES/FALLIDOS pero TODOS bloqueados por
+  //     `needsVideoAsDocumentConfirm` y nada más que enviar
+  // CRÍTICO: attachments con status=sent NO se cuentan como "bloqueantes".
+  // Tras el cleanup automático del happy path la cola queda vacía, pero
+  // un residuo `sent` (p. ej. una corrida intermedia que no llegó a
+  // allDone) NO debe impedir escribir/enviar un texto nuevo — eso era
+  // un estado engañoso: el operador tenía que pulsar "Limpiar enviados"
+  // antes de poder seguir.
+  // NOTA: abrir un panel secundario (location/contact) NO habilita este
+  // botón: esos paneles tienen su propio botón "Enviar ubicación/contacto"
+  // y submitLocation/submitContact. Mantener el botón habilitado al abrir
+  // el panel sin contenido era otro estado engañoso (al click no hacía nada).
+  const hasUnresolved = queue.attachments.some(
+    (a) => a.status === "pending" || a.status === "failed"
+  );
+  const onlyBlocked = hasUnresolved && queue.readyToSend.length === 0;
   const canSubmit =
     queue.readyToSend.length > 0 ||
-    (text.trim().length > 0 && !onlyBlocked) ||
-    (panel !== null && !hasQueue);
+    (text.trim().length > 0 && !onlyBlocked);
 
   /* ----------------------------------------------- */
   /* Handlers de drag & drop sobre el composer       */

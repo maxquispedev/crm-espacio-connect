@@ -54,6 +54,21 @@ export function previewText(preview: string | null): string {
 /* ------------------------------------------------------------------ */
 
 /**
+ * Límite del cliente para que una imagen se siga enviando como `kind=image`.
+ * Por encima de este tamaño, el cliente la RECHAZA al añadirla a la cola
+ * (no espera al POST para descubrirlo). Coincide con
+ * `MEDIA_LIMITS.image.maxBytes` del servidor.
+ */
+export const IMAGE_MAX = 5 * 1024 * 1024;
+
+/**
+ * Límite del cliente para que un audio se siga enviando como `kind=audio`.
+ * Por encima de este tamaño, el cliente lo RECHAZA al añadirlo a la cola.
+ * Coincide con `MEDIA_LIMITS.audio.maxBytes` del servidor.
+ */
+export const AUDIO_MAX = 16 * 1024 * 1024;
+
+/**
  * Límite del cliente para que un video se siga enviando como `kind=video`.
  * Por encima de este tamaño, el cliente lo re-taggea como `application/octet-stream`
  * y lo envía como `kind=document` (la Cloud API rechaza video > 16 MB).
@@ -95,6 +110,19 @@ export type PendingAttachment = {
   needsVideoAsDocumentConfirm: boolean;
   status: AttachStatus;
   error: string | null;
+  /**
+   * 004 (corrección) — `true` cuando este adjunto es el destinatario durable
+   * del caption del textarea. Se fija al añadir el primer adjunto elegible
+   * a una cola vacía (sin propietario). Permanece estable aunque se añadan
+   * más adjuntos después, salvo que la cola se limpie por completo.
+   */
+  captionOwner: boolean;
+  /**
+   * 004 (corrección) — `true` después de que el captionOwner haya enviado
+   * su adjunto correctamente CON caption. Impide que retries posteriores de
+   * OTROS adjuntos re-envíen el caption que ya viajó con el primero.
+   */
+  captionConsumed: boolean;
 };
 
 /**
@@ -134,6 +162,12 @@ export function classifyForQueue(
   const mime = file.type || "";
 
   if (mime.startsWith("image/")) {
+    if (file.size > IMAGE_MAX) {
+      // El servidor rechazaría esto como `too_large`. Mejor rechazarlo aquí
+      // con un mensaje claro antes de añadirlo a la cola (FR-15 reforzado:
+      // la cola no espera al POST para descubrir el límite).
+      return null;
+    }
     // El servidor reasignará image/bmp a document; el cliente lo muestra
     // como imagen porque el preview visual sí es de imagen.
     return {
@@ -145,6 +179,10 @@ export function classifyForQueue(
   }
 
   if (mime.startsWith("audio/")) {
+    if (file.size > AUDIO_MAX) {
+      // Idem imagen: rechazamos en cliente para no esperar al POST.
+      return null;
+    }
     return {
       kind: "audio",
       effectiveMime: mime || "audio/mpeg",

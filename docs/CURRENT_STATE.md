@@ -1,6 +1,6 @@
 # CURRENT STATE — Espacio Connect
 
-**Actualizado:** 2026-09-29 (sync técnico tras spec 004 polish)
+**Actualizado:** 2026-09-29 (sync técnico tras spec 004 polish + corte 2c de fix)
 **Branch:** `main`
 **Baseline funcional previo a esta sincronización documental:** `bbae7cd1dfd98d5006cfd26440a8acf1def2c1bb`
 **Propósito:** checkpoint técnico rápido. Las decisiones de negocio viven en el cerebro de Obsidian; la implementación y la historia SDD viven aquí.
@@ -201,7 +201,7 @@ como estado durable.
 
 ### Estado del spec 004
 
-Implementado a través de commits atómicos `0 → 1 → 2 → 2a → 2b`:
+Implementado a través de commits atómicos `0 → 1 → 2 → 2a → 2b → 2c`:
 
 - Commit 0 (`275f457`): docs SDD (spec/plan/tasks).
 - Commit 1 (`b3cc38f`): cola de adjuntos, helpers puros, componentes
@@ -209,11 +209,38 @@ Implementado a través de commits atómicos `0 → 1 → 2 → 2a → 2b`:
 - Commit 2a (`de12265`): bucle de envío `runQueueSend`, anti-doble-envío,
   retry por adjunto, confirmación explícita video→document, override
   tipado `kind=document` server-side.
-- Commit 2b (este checkpoint): corte final de UX/pulido — header de
-  cola con conteo inline, `clearSent`, `summarize`+`progressLabel`,
-  navegación por teclado (←/→, Delete/Backspace, Esc), drop overlay
-  animado con conteo, indicadores de estado con texto explícito,
-  toolbar buttons ≥ 44 px, auto-focus textarea, `aria-current`.
+- Commit 2b (`21cc101`): corte final de UX/pulido — header de cola con
+  conteo inline, `clearSent`, `summarize`+`progressLabel`, navegación
+  por teclado (←/→, Delete/Backspace, Esc), drop overlay animado con
+  conteo, indicadores de estado con texto explícito, toolbar buttons
+  ≥ 44 px, auto-focus textarea, `aria-current`.
+- Commit 2c (este checkpoint, **fix de comportamiento**): cuatro ajustes
+  de comportamiento detectados antes de E2E, todos ya especificados —
+  no agrega capacidades nuevas:
+  1. **Cleanup automático tras éxito total**: cuando todos los adjuntos
+     del envío terminan OK y no quedan `failed`/bloqueos, la cola se
+     autovacía (revocando Object URLs), se limpia el textarea y el foco
+     vuelve al textarea. "Limpiar enviados" queda solo para estados
+     parciales. Heurística pura `shouldAutoClearQueue(result, attempted)`.
+  2. **Caption durable**: `runQueueSend` ya no usa un contador local —
+     lee `captionOwner`/`captionConsumed` de los adjuntos. El caption
+     queda anclado al primer adjunto elegible de la cola original; su
+     retry (si falló) conserva el caption; retries de otros adjuntos
+     tras un envío exitoso del captionOwner NO re-envían el caption.
+     El reducer expone `markCaptionConsumed` (idempotente, defensivo).
+  3. **Pre-validación client-side**: `classifyForQueue` ahora refleja
+     los límites `MEDIA_LIMITS.*` (image 5 MB, audio 16 MB). Image/audio
+     oversized se rechazan al añadirlos a la cola con mensaje claro vía
+     `rejectionReason`, sin esperar al POST. Video >16 MB sigue
+     ofreciéndose como document; document >100 MB sigue rechazado. El
+     backend sigue siendo la fuente de verdad (ningún límite relajado).
+  4. **Botón engañoso en panel location/contact**: abrir el panel
+     secundario sin texto ni adjuntos ya NO habilita el botón principal
+     del textarea (`canSubmit` no depende de `panel !== null`).
+     Adicionalmente, `onlyBlocked` ya no considera adjuntos con
+     `status=sent` como bloqueantes — tras un envío total (con o sin
+     cleanup automático disparado) el operador puede enviar un texto
+     nuevo sin tener que pulsar "Limpiar enviados" primero.
 
 **Verificación actual:**
 
@@ -222,7 +249,7 @@ Implementado a través de commits atómicos `0 → 1 → 2 → 2a → 2b`:
 | `pnpm typecheck` | verde |
 | `pnpm lint` | verde |
 | `pnpm build` | verde |
-| `pnpm test` | verde — **500 tests** (488 baseline + 12 nuevos: 4 `clearSent`, 3 `summarize`, 5 `progressLabel`) |
+| `pnpm test` | verde — **522 tests** (500 baseline post-2b + 22 nuevos del corte 2c) |
 | `pnpm test:e2e` (sección 009) | **PENDIENTE en este entorno** — sin app local ni PostgreSQL activa |
 | Playwright visual `tests/e2e/009-inbox-messaging-ux.md` | **PENDIENTE en este entorno** |
 | Sección 008 (regresión spec 003 cerrado) | pendiente de re-correr con la app levantada |
@@ -231,6 +258,22 @@ El spec 004 está **verificado unitariamente punta a punta** pero **NO
 verificado en vivo punta a punta** hasta correr `pnpm test:e2e` local y
 re-correr la sección 008 para regresión. Por Constitución IX no debe
 reportarse como READY punta a punta hasta entonces.
+
+**Detalle de tests del corte 2c** (22 nuevos):
+
+- `attachment-queue-classify.test.ts`: 7 nuevos (image >5 MB rechazada,
+  audio >16 MB rechazado, video 16–100 MB como document, doc >100 MB
+  rechazado, fronteras inclusivas, guard de constantes vs `MEDIA_LIMITS`).
+- `attachment-queue-run.test.ts`: 11 nuevos (caption durable ×2 casos
+  cubiertos, `shouldAutoClearQueue` ×4 casos, composición cleanup +
+  texto inmediato, regresión `onlyBlocked` no incluye sent, edge case
+  `captionConsumed=true`).
+- `attachment-queue-reducer.test.ts`: 5 nuevos (`markCaptionConsumed`
+  target/no-op/idempotente/id-inexistente + `clearSent` deja cola lista
+  para texto nuevo).
+- Test actualizado: "caption se aplica al primer adjunto intentado" —
+  ahora requiere `captionOwner: true` (la decisión es por el flag
+  durable, no por orden de iteración).
 
 ---
 
@@ -245,6 +288,7 @@ reportarse como READY punta a punta hasta entonces.
 | 2026-09-21 | último commit funcional auditado: `bbae7cd1dfd9` |
 | 2026-09-29 | sincronización de memoria técnica + disciplina SDD |
 | 2026-09-29 | spec 004 cerrado: cola de adjuntos + UX polish (commits 0→1→2→2a→2b, 500 tests) |
+| 2026-09-29 | spec 004 corte 2c — fix de comportamiento antes de E2E (cleanup total, caption durable, pre-validación image/audio, botón engañoso del panel), 522 tests |
 
 ---
 

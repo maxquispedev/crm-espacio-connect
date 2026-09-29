@@ -224,6 +224,88 @@ diaria al nivel WhatsApp Web **manteniendo la identidad visual Atlas**.
 - [x] **T2b13** `pnpm typecheck && pnpm lint && pnpm build && pnpm test`
   verdes tras el corte 2b.
 
+### Corte 2c — fix de comportamiento antes de E2E
+
+Corte de corrección de comportamiento YA especificado. NO agrega
+capacidades nuevas. Cubre cuatro ajustes detectados tras revisar la
+implementación del corte 2b.
+
+- [x] **T2c01** [US1, US4] `src/components/inbox/helpers.ts` — añadir
+  `IMAGE_MAX = 5 MB` y `AUDIO_MAX = 16 MB` (espejo de `MEDIA_LIMITS.*`).
+  `classifyForQueue` rechaza `image/*` y `audio/*` por encima del límite
+  en cliente (mensaje claro vía `rejectionReason`), sin esperar al POST.
+  Documentos siguen con `DOC_MAX = 100 MB`. El backend sigue siendo SoT.
+- [x] **T2c02** [US1] `PendingAttachment` añade `captionOwner: boolean`
+  y `captionConsumed: boolean`. `addFiles` fija `captionOwner=true` en
+  el primer adjunto aceptable solo si la cola no tiene ya propietario
+  (durable). Reducer añade acción `markCaptionConsumed` (idempotente,
+  defensivo si el id no es `captionOwner`).
+- [x] **T2c03** [US1, US4] `runQueueSend` deja de usar un contador local
+  `captionConsumed`. Ahora decide a partir de
+  `att.captionOwner && !att.captionConsumed` y, tras éxito del
+  captionOwner, invoca `onCaptionConsumed(id)` para que la cola persista
+  el flag. Retries posteriores respetan el estado durable (caption NO se
+  re-envía con otros adjuntos; retry del propio captionOwner que falló
+  SÍ conserva el caption).
+- [x] **T2c04** [US1, US4] `src/components/inbox/attachment-queue.tsx` —
+  nueva función pura `shouldAutoClearQueue(result, attempted)` (sin React,
+  testeable). Decide true solo cuando: `failed===0 && sent>0 && !stillBlocked`.
+  Hook expone `markCaptionConsumed` y la usa el composer vía
+  `onCaptionConsumed` del `runQueueSend`.
+- [x] **T2c05** [US4, US6] `composer.tsx` — `submitQueue` usa
+  `shouldAutoClearQueue`. Si todo salió bien: llama `q.clearSent()`
+  (revoca Object URLs de los sent y los quita), `setText("")`, devuelve
+  foco al textarea. Ya NO requiere pulsar "Limpiar enviados" en el happy
+  path (ese botón queda para estados parciales). Si hay adjuntos aún
+  sin confirmar (video>16MB) o pendientes, NO se toca el textarea.
+- [x] **T2c06** [US6] `composer.tsx` — `canSubmit` ya no se habilita por
+  `panel !== null && !hasQueue`. Abrir el panel de location/contact sin
+  texto ni adjuntos NO enciende el botón principal del textarea (que no
+  ejecuta `submitLocation`/`submitContact`); esos paneles tienen su
+  propio botón de envío.
+- [x] **T2c07** [US1, US4] `composer.tsx` — `onlyBlocked` deja de
+  considerar adjuntos con `status=sent` como bloqueantes. Solo se
+  considera `onlyBlocked` cuando hay adjuntos `pending`/`failed` Y todos
+  están bloqueados por `needsVideoAsDocumentConfirm`. Tras el cleanup
+  automático, un texto nuevo puede enviarse sin residuos `sent`.
+- [x] **T2c08** [US1] Tests añadidos en
+  `tests/unit/attachment-queue-classify.test.ts`:
+  - image > 5 MB rechazada en cliente
+  - audio > 16 MB rechazado en cliente
+  - video 16 MB < size <= 100 MB SIGUE ofreciéndose como document
+  - document > 100 MB rechazado
+  - fronteras inclusivas (5 MB exacto, 16 MB exacto)
+  - las constantes cliente coinciden con `MEDIA_LIMITS` (guard).
+- [x] **T2c09** [US4] Tests añadidos en
+  `tests/unit/attachment-queue-run.test.ts`:
+  - caption durable: primer enviado con caption + segundo failed + retry
+    del segundo → caption NO repetido (segundo recibe null, consumed
+    sigue siendo A).
+  - caption durable: captionOwner FAILED → retry mantiene el caption.
+  - runQueueSend respeta `captionConsumed=true` (defensivo).
+  - `shouldAutoClearQueue`: true cuando todo sent sin bloqueos; false si
+    hay failed / bloqueos / `sent===0`.
+  - Composición: cola completa enviada → cleanup + texto inmediato
+    habilitado (canSubmit=true con cola vacía y texto nuevo).
+  - Regresión: adjuntos con `status=sent` NO bloquean el envío de texto
+    nuevo (el `onlyBlocked` nuevo excluye sent).
+- [x] **T2c10** [US1, US4] Tests añadidos en
+  `tests/unit/attachment-queue-reducer.test.ts`:
+  - `markCaptionConsumed` marca SOLO el captionOwner target.
+  - `markCaptionConsumed` es no-op si el id no es captionOwner.
+  - `markCaptionConsumed` es idempotente (doble aplicación no rompe).
+  - `markCaptionConsumed` sobre id inexistente no lanza.
+  - Tras `clearSent` la cola queda vacía y puede aceptar texto nuevo
+    (canSubmit=true con texto no vacío).
+- [x] **T2c11** [US1] Test existente
+  `caption se aplica al primer adjunto intentado; los siguientes
+  reciben null` actualizado para reflejar el nuevo contrato: ahora
+  requiere `captionOwner: true` en el primer adjunto (la decisión ya no
+  es por orden de iteración sino por el flag durable). Añadido test
+  paralelo `caption nunca se aplica si nadie es captionOwner`.
+- [x] **T2c12** `pnpm typecheck && pnpm lint && pnpm build && pnpm test`
+  verdes tras el corte 2c. Total tests: 522.
+
 **PENDIENTE fuera del entorno actual**:
 - `pnpm test:e2e` (sección 009) en vivo con app + mocks + BD.
 - Playwright visual con `tests/e2e/009-inbox-messaging-ux.md`.

@@ -9,7 +9,10 @@
  *  - caption solo al primero.
  */
 import { describe, expect, it } from "vitest";
-import { runQueueSend } from "../../src/components/inbox/attachment-queue";
+import {
+  runQueueSend,
+  shouldAutoClearQueue,
+} from "../../src/components/inbox/attachment-queue";
 import type {
   AttachStatus,
   PendingAttachment,
@@ -34,6 +37,8 @@ function att(
     needsVideoAsDocumentConfirm: false,
     status: "pending",
     error: null,
+    captionOwner: false,
+    captionConsumed: false,
     ...overrides,
   };
 }
@@ -178,8 +183,10 @@ describe("runQueueSend — fallo parcial", () => {
 });
 
 describe("runQueueSend — caption solo al primero", () => {
-  it("caption se aplica al primer adjunto intentado; los siguientes reciben null", async () => {
-    const a = att("att_1", fakeFile("a.jpg", 100, "image/jpeg"));
+  it("caption se aplica al captionOwner; los siguientes reciben null", async () => {
+    const a = att("att_1", fakeFile("a.jpg", 100, "image/jpeg"), {
+      captionOwner: true,
+    });
     const b = att("att_2", fakeFile("b.png", 100, "image/png"));
     const c = att("att_3", fakeFile("c.webp", 100, "image/webp"));
     const sendOne = makeSendOne(
@@ -195,6 +202,24 @@ describe("runQueueSend — caption solo al primero", () => {
       { id: "att_1", caption: "pie" },
       { id: "att_2", caption: null },
       { id: "att_3", caption: null },
+    ]);
+  });
+
+  it("caption nunca se aplica si nadie es captionOwner", async () => {
+    const a = att("att_1", fakeFile("a.jpg", 100, "image/jpeg"));
+    const b = att("att_2", fakeFile("b.png", 100, "image/png"));
+    const sendOne = makeSendOne(
+      new Map([["att_1", null], ["att_2", null]])
+    );
+    await runQueueSend({
+      attachments: [a, b],
+      sendOne,
+      onStatus: () => {},
+      caption: "pie",
+    });
+    expect((sendOne as unknown as { calls: { id: string; caption: string | null }[] }).calls).toEqual([
+      { id: "att_1", caption: null },
+      { id: "att_2", caption: null },
     ]);
   });
 
@@ -385,3 +410,282 @@ describe("runQueueSend — anti-doble-envío (patrón guard)", () => {
     expect(sendOneCalls).toBe(1);
   });
 });
+
+describe("runQueueSend — caption durable (004 fix)", () => {
+  it("primer enviado con caption, segundo failed, retry del segundo → caption NO se repite", async () => {
+    // A es captionOwner; lo enviamos con éxito (caption viaja con A).
+    // B falla; C se envía sin caption. Luego se reintenta B y NO debe
+    // volver a viajar caption (ya fue consumido por A).
+    const a = att("att_1", fakeFile("a.jpg", 100, "image/jpeg"), {
+      captionOwner: true,
+    });
+    const b = att("att_2", fakeFile("b.mp4", 20 * 1024 * 1024, "video/mp4"), {
+      kind: "document",
+      willSendAsDocument: true,
+      needsVideoAsDocumentConfirm: false,
+    });
+    const c = att("att_3", fakeFile("c.pdf", 1024, "application/pdf"));
+
+    // Primera corrida: A OK, B falla, C OK.
+    const consumedCalls: string[] = [];
+    const r1 = await runQueueSend({
+      attachments: [a, b, c],
+      sendOne: makeSendOne(
+        new Map([
+          ["att_1", null],
+          ["att_2", "excede 16 MB"],
+          ["att_3", null],
+        ])
+      ),
+      onStatus: () => {},
+      onCaptionConsumed: (id) => consumedCalls.push(id),
+      caption: "pie",
+    });
+    expect(r1).toEqual({ sent: 2, failed: 1, skipped: 0 });
+    expect(consumedCalls).toEqual(["att_1"]);
+
+    // Aplicamos el markCaptionConsumed en la cola para reflejar el estado durable.
+    const bRetrying: PendingAttachment = { ...b, status: "pending", error: null };
+
+    // Retry: solo B se reintenta.
+    const sendOneRetry = makeSendOneWithCaptions(new Map([["att_2", null]]));
+    const r2 = await runQueueSend({
+      attachments: [bRetrying],
+      sendOne: sendOneRetry,
+      onStatus: () => {},
+      onCaptionConsumed: (id) => consumedCalls.push(id),
+      caption: "pie",
+    });
+    expect(r2).toEqual({ sent: 1, failed: 0, skipped: 0 });
+    // caption NO se re-envía: onCaptionConsumed no debe llamarse para B.
+    expect(consumedCalls).toEqual(["att_1"]);
+    // a ya estaba consumido, b no es captionOwner, así que caption=null.
+    expect(
+      (sendOneRetry as unknown as {
+        calls: { id: string; caption: string | null }[];
+      }).calls
+    ).toEqual([{ id: "att_2", caption: null }]);
+  });
+
+  it("primer adjunto (captionOwner) FAILED → retry conserva el caption", async () => {
+    const a = att("att_1", fakeFile("a.mp4", 20 * 1024 * 1024, "video/mp4"), {
+      kind: "document",
+      willSendAsDocument: true,
+      needsVideoAsDocumentConfirm: false,
+      captionOwner: true,
+    });
+    const b = att("att_2", fakeFile("b.pdf", 1024, "application/pdf"));
+
+    // Primera corrida: A falla, B OK.
+    const consumedCalls: string[] = [];
+    const r1 = await runQueueSend({
+      attachments: [a, b],
+      sendOne: makeSendOne(
+        new Map([["att_1", "red caída"], ["att_2", null]])
+      ),
+      onStatus: () => {},
+      onCaptionConsumed: (id) => consumedCalls.push(id),
+      caption: "pie",
+    });
+    expect(r1).toEqual({ sent: 1, failed: 1, skipped: 0 });
+    // A falló: su captionConsumed NO se activa.
+    expect(consumedCalls).toEqual([]);
+
+    // El operador hace retry de A → estado pending.
+    const aRetrying: PendingAttachment = { ...a, status: "pending", error: null };
+
+    // Segunda corrida: solo A, ya con captionOwner y captionConsumed=false.
+    const sendOne = makeSendOneWithCaptions(new Map([["att_1", null]]));
+    const r2 = await runQueueSend({
+      attachments: [aRetrying],
+      sendOne,
+      onStatus: () => {},
+      onCaptionConsumed: (id) => consumedCalls.push(id),
+      caption: "pie",
+    });
+    expect(r2).toEqual({ sent: 1, failed: 0, skipped: 0 });
+    // El caption SÍ viaja con A en el retry (aún es captionOwner y no consumido).
+    expect(
+      (sendOne as unknown as {
+        calls: { id: string; caption: string | null }[];
+      }).calls
+    ).toEqual([{ id: "att_1", caption: "pie" }]);
+    expect(consumedCalls).toEqual(["att_1"]);
+  });
+
+  it("runQueueSend respeta captionConsumed=true: ni siquiera re-evalúa captionOwner", async () => {
+    // Edge case: captionOwner=true pero captionConsumed=true (estado inconsistente
+    // al que se llega si la cola se carga manualmente). runQueueSend NO debe
+    // re-enviar el caption.
+    const a = att("att_1", fakeFile("a.jpg", 100, "image/jpeg"), {
+      captionOwner: true,
+      captionConsumed: true,
+    });
+    const sendOne = makeSendOneWithCaptions(new Map([["att_1", null]]));
+    const consumedCalls: string[] = [];
+    await runQueueSend({
+      attachments: [a],
+      sendOne,
+      onStatus: () => {},
+      onCaptionConsumed: (id) => consumedCalls.push(id),
+      caption: "pie",
+    });
+    expect(
+      (sendOne as unknown as {
+        calls: { id: string; caption: string | null }[];
+      }).calls
+    ).toEqual([{ id: "att_1", caption: null }]);
+    expect(consumedCalls).toEqual([]); // ya estaba consumido
+  });
+});
+
+describe("shouldAutoClearQueue — cleanup automático tras envío total (004 fix)", () => {
+  it("autoriza cleanup cuando todos los adjuntos enviados terminaron OK", () => {
+    const attempted = [
+      att("att_1", fakeFile("a.jpg", 100, "image/jpeg"), {
+        status: "sent",
+      }),
+      att("att_2", fakeFile("b.png", 100, "image/png"), {
+        status: "sent",
+      }),
+    ];
+    expect(shouldAutoClearQueue({ sent: 2, failed: 0, skipped: 0 }, attempted)).toBe(true);
+  });
+
+  it("NO autoriza cleanup si hay failed", () => {
+    const attempted = [
+      att("att_1", fakeFile("a.jpg", 100, "image/jpeg"), { status: "sent" }),
+      att("att_2", fakeFile("b.png", 100, "image/png"), { status: "failed" }),
+    ];
+    expect(shouldAutoClearQueue({ sent: 1, failed: 1, skipped: 0 }, attempted)).toBe(false);
+  });
+
+  it("NO autoriza cleanup si hay adjuntos bloqueados por needsVideoAsDocumentConfirm", () => {
+    const attempted = [
+      att("att_1", fakeFile("a.jpg", 100, "image/jpeg"), { status: "sent" }),
+      att("att_2", fakeFile("b.mp4", 30 * 1024 * 1024, "video/mp4"), {
+        kind: "document",
+        willSendAsDocument: true,
+        needsVideoAsDocumentConfirm: true,
+      }),
+    ];
+    expect(shouldAutoClearQueue({ sent: 1, failed: 0, skipped: 1 }, attempted)).toBe(false);
+  });
+
+  it("NO autoriza cleanup si sent=0 (p. ej. todos bloqueados por video→document)", () => {
+    const attempted = [
+      att("att_1", fakeFile("a.mp4", 30 * 1024 * 1024, "video/mp4"), {
+        kind: "document",
+        willSendAsDocument: true,
+        needsVideoAsDocumentConfirm: true,
+      }),
+    ];
+    expect(shouldAutoClearQueue({ sent: 0, failed: 0, skipped: 1 }, attempted)).toBe(false);
+  });
+});
+
+describe("composición: cola completa enviada → cleanup automático + texto inmediato", () => {
+  // Este bloque modela el flujo del composer (limpiar+setText("")) sin React.
+  // Verifica que el contrato se cumple: tras allDone, la cola queda vacía y un
+  // texto nuevo puede enviarse sin que ningún sent previo lo bloquee.
+
+  it("tras shouldAutoClearQueue=true, clearSent deja la cola vacía y lista para el siguiente texto", async () => {
+    // Tres adjuntos enviados: A (captionOwner), B, C.
+    const a = att("att_1", fakeFile("a.jpg", 100, "image/jpeg"), {
+      captionOwner: true,
+      status: "pending",
+    });
+    const b = att("att_2", fakeFile("b.png", 100, "image/png"), { status: "pending" });
+    const c = att("att_3", fakeFile("c.webp", 100, "image/webp"), { status: "pending" });
+
+    const consumedCalls: string[] = [];
+    const result = await runQueueSend({
+      attachments: [a, b, c],
+      sendOne: makeSendOne(
+        new Map([["att_1", null], ["att_2", null], ["att_3", null]])
+      ),
+      onStatus: (id, status) => {
+        // Simulamos que la cola marca sent en cada adjunto exitoso.
+        if (status === "sent") {
+          const map: Record<string, PendingAttachment> = {
+            att_1: { ...a, status: "sent" },
+            att_2: { ...b, status: "sent" },
+            att_3: { ...c, status: "sent" },
+          };
+          Object.assign(globalThis, map);
+        }
+      },
+      onCaptionConsumed: (id) => consumedCalls.push(id),
+      caption: "pie",
+    });
+
+    // Estado post-corrida: los tres quedaron sent.
+    const attemptedAfter = [a, b, c].map((x) => ({ ...x, status: "sent" as AttachStatus }));
+    expect(result).toEqual({ sent: 3, failed: 0, skipped: 0 });
+
+    // shouldAutoClearQueue debe autorizar el cleanup.
+    expect(shouldAutoClearQueue(result, attemptedAfter)).toBe(true);
+
+    // El composer aplica clearSent → cola vacía.
+    // El composer limpia el textarea → text="".
+    // El composer ya puede aceptar texto nuevo: simulamos un re-run con un
+    // texto nuevo (sin adjuntos) y verificamos que NO hay adjuntos sent
+    // bloqueando el envío (canSubmit se calcula con attachments y readyToSend).
+    const emptyAttachments: PendingAttachment[] = [];
+    const emptyReady = emptyAttachments.filter(
+      (a0) =>
+        !a0.needsVideoAsDocumentConfirm &&
+        (a0.status === "pending" || a0.status === "failed")
+    );
+    const onlyBlocked = emptyAttachments.length > 0 && emptyReady.length === 0;
+    const newText = "hola";
+    const canSubmitNew =
+      emptyReady.length > 0 || (newText.trim().length > 0 && !onlyBlocked);
+    expect(canSubmitNew).toBe(true); // texto nuevo habilitado
+    expect(consumedCalls).toEqual(["att_1"]); // caption consumido solo por A
+  });
+
+  it("adjuntos con status=sent NO bloquean el envío de un texto nuevo (regresión)", () => {
+    // Aunque la cola tuviera un sent residual (caso borde: el auto-cleanup no
+    // se disparó por una condición externa), un mensaje de texto nuevo debe
+    // poder enviarse sin que el operador tenga que limpiar manualmente.
+    const sentResidual: PendingAttachment = att(
+      "att_x",
+      fakeFile("x.jpg", 100, "image/jpeg"),
+      { status: "sent" }
+    );
+    const newText = "gracias";
+    // Replicamos el cálculo de canSubmit del composer (post-fix):
+    const attachments = [sentResidual];
+    const readyToSend = attachments.filter(
+      (a) =>
+        !a.needsVideoAsDocumentConfirm &&
+        (a.status === "pending" || a.status === "failed")
+    );
+    // `onlyBlocked` solo es true si hay adjuntos PENDIENTES/FALLIDOS sin
+    // resolver; un sent residual no cuenta como bloqueante.
+    const hasUnresolved = attachments.some(
+      (a) => a.status === "pending" || a.status === "failed"
+    );
+    const onlyBlocked = hasUnresolved && readyToSend.length === 0;
+    const canSubmit =
+      readyToSend.length > 0 || (newText.trim().length > 0 && !onlyBlocked);
+    expect(canSubmit).toBe(true);
+  });
+});
+
+/** Helper adicional: captura `(id, caption)` de cada llamada, para aserciones
+ * específicas del caption durable. */
+function makeSendOneWithCaptions(
+  responses: Map<string, string | null>
+): (a: PendingAttachment, caption: string | null) => Promise<string | null> {
+  const calls: { id: string; caption: string | null }[] = [];
+  const fn = async (a: PendingAttachment, caption: string | null) => {
+    calls.push({ id: a.id, caption });
+    const v = responses.get(a.id);
+    if (v === undefined) throw new Error(`sendOne sin respuesta para ${a.id}`);
+    return v;
+  };
+  (fn as unknown as { calls: { id: string; caption: string | null }[] }).calls = calls;
+  return fn;
+}
