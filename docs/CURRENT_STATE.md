@@ -1,6 +1,6 @@
 # CURRENT STATE — Espacio Connect
 
-**Actualizado:** 2026-09-29 (spec 006 ABIERTO: anuncio de origen de Meta — pieza visible sin CAPI todavía)
+**Actualizado:** 2026-09-29 (spec 007 ABIERTO: Meta CAPI para leads Click-to-WhatsApp — gate de etapa primero)
 **Branch:** `main`
 **Baseline funcional previo a esta sincronización documental:** `bbae7cd1dfd98d5006cfd26440a8acf1def2c1bb`
 **Propósito:** checkpoint técnico rápido. Las decisiones de negocio viven en el cerebro de Obsidian; la implementación y la historia SDD viven aquí.
@@ -242,6 +242,7 @@ Specs formales actuales:
 - `specs/004-inbox-messaging-ux/` (cola de adjuntos del composer + UX polish, cerrado)
 - `specs/005-quick-lead-name/` (edición inline de `contact.name` desde el panel del inbox — **CERRADO** en commit único)
 - `specs/006-anuncio-de-origen/` (de qué anuncio de Meta llegó cada conversación — **CERRADO**, pieza visible sin CAPI todavía)
+- `specs/007-meta-capi/` (reportar `QualifiedLead` y `Purchase` a Meta Conversions API — **ABIERTO**, gate de etapa primero)
 
 ### Estado del spec 006
 
@@ -355,6 +356,97 @@ app ni BD activas, queda registrada como pendiente y se ejecuta en el
 siguiente checkpoint que disponga de la app levantada. La verificación
 del clic CTWA real **no es automatizable** y queda marcada como
 PENDIENTE HUMANO/PRODUCCIÓN, igual que el upstream.
+
+### Estado del spec 007
+
+**Abierto el 2026-09-29** (este commit 0, sin código de implementación).
+Adaptación selectiva del upstream 016 (`kevinrivm/vocero-crm`, commits
+`0a154ea2711ad5350e20451c573a7863b926cfed` y
+`75124422bba2298bb21cf3e712cae16b31f01ce2`) — `specs/016-atribucion-capi/`
+y `docs/atribucion-capi.md`. **No es un port ciego**: este fork tiene
+Sales Orchestrator (Jev) que hoy escribe `lead.stageId` por su propio
+camino, y la etapa calificada la elige cada negocio (no se hardcodea
+"Interesado").
+
+**Alcance declarado (tres cortes secuenciales):**
+
+- **Corte A — puerta única de etapa.** Refactor neutro. Los 6 callsites
+  runtime que escriben `lead.stageId` hoy
+  (`app/api/pipeline/leads/[id]/route.ts`,
+  `app/api/pipeline/stages/[id]/route.ts`,
+  `app/api/bot/reset/route.ts`, `server/ai/pipeline.ts`,
+  `server/sales/orchestrator.ts`, `server/inbox/lead-activity.ts`)
+  migran a un único helper `moveLeadStage(...)` tenant-safe. Cero
+  cambios observables, cero llamadas externas, sin CAPI todavía. El
+  Sales Orchestrator deja de escribir `lead.stageId` directamente:
+  pasa por la puerta común conservando lanes y facts intactos.
+- **Corte B — CAPI core + schema + APIs.** Migración aditiva
+  `drizzle/00XX_meta_capi.sql` con `conversion_event` (UNIQUE
+  `(organization_id, conversation_id, event_name)` para dedup
+  durable) y `capi_settings` (config cifrada AES-256-GCM). Nuevo
+  `src/lib/meta/capi.ts` (catálogo cerrado `QualifiedLead`/`Purchase`,
+  validación Zod, acuse real `events_received >= 1`). Nuevo
+  `src/server/attribution/{flag,settings,conversions}.ts`. APIs
+  `/api/settings/capi` y `/api/settings/capi/events` protegidas por
+  auth+tenant y la bandera `ATRIBUCION`. El gateway del corte A
+  engancha `reportStageChange` **después** del commit, nunca dentro
+  de la transacción larga. Mock equivalente al patrón
+  `wa-mock`/`ai-mock` aprende `POST {dataset}/events`. Sin UI final.
+- **Corte C — UI + E2E + cierre.** Pestaña **Anuncios** en Ajustes
+  (visible solo con `ATRIBUCION=on`): dataset ID, token opcional,
+  selector de etapa calificada (lista de `pipelineStage` con
+  `kind = "open"` del tenant) y tabla de actividad con `fbtrace_id`.
+  Arnés E2E en **las dos configuraciones** (`ATRIBUCION=on` y
+  apagada), incluido el camino infeliz (Meta rechazando, token
+  vencido, sin `ctwa_clid`, `is_test`, sin etapa calificada).
+  `docs/atribucion-capi.md` espejo del upstream con notas del fork.
+
+**Decisiones no triviales documentadas en el spec:**
+
+- `ATRIBUCION` apagada por defecto; apagada ⇒ superficie CAPI inexistente
+  (404 según patrón upstream) pero 006 sigue mostrando origen sin `clid`.
+- Etapa calificada **configurable** por tenant; **no** hardcodeada a
+  "Interesado". `QualifiedLead` se emite la primera vez que el lead entra
+  a esa etapa; si el tenant no elige ninguna, queda en `skipped` con
+  motivo.
+- `Purchase` se emite automáticamente al entrar a cualquier etapa
+  `kind = "won"`.
+- `Purchase` incluye `value`/`currency` **solo si** el modelo de deal
+  actual del lead tiene un monto válido; si no, se envía **sin**
+  `value`/`currency`. Nunca se inventa `0` — un valor falso envenena la
+  optimización por valor de Meta.
+- `user_data` hacia Meta: solo `ctwa_clid` (de `ad_attribution` de 006)
+  + `whatsapp_business_account_id`. **Nunca** teléfono, nombre, email
+  ni texto del contacto.
+- Token CAPI: si el tenant ya conectó WhatsApp, **se reusa** ese token
+  cifrado (mismo que autoriza publicar en el dataset del WABA); pegar
+  token específico es opcional y se cifra con la misma capa `lib/crypto`.
+- Hacia el cliente solo `last4` y estado; nunca a logs.
+- Conversaciones `is_test = true` jamás emiten evento (guardrail del
+  Laboratorio, mismo patrón que el sender).
+- Un fallo de Meta **jamás** revierte ni bloquea el cambio de etapa; el
+  desenlace queda en `conversion_event` consultable.
+- Sin Marketing API, sin Campaign Playbooks, sin espejo de
+  `InitiateCheckout` de fábrica (la receta queda en `docs/atribucion-capi.md`
+  para cada fork que quiera agregarla); sin backfill; sin 019/Resultados.
+
+**Constitution Check (PASA sin violaciones):** I (seguridad: cifrado,
+`last4`, sin PII hacia Meta) · II (soberanía: misma Meta Graph API del
+canal ya permitido, traje completo de conector opcional apagado por
+defecto) · III (multi-tenancy: `organization_id NOT NULL` + `scoped()`)
+· IV (idempotencia: dedup `UNIQUE` + `ON CONFLICT DO NOTHING`,
+migración re-ejecutable) · V (calidad: gate + unit + E2E en dos
+configuraciones) · VI (specs antes de código: spec/plan/tasks
+presentes antes del código) · VII (trazabilidad: decisiones no obvias
+en el spec) · VIII (foco vertical: dos eventos, una pantalla, cero
+dashboards) · IX (verificación en vivo: self-test con mocks en ambas
+configuraciones antes de declarar Hecho).
+
+**Estado actual (este commit):** spec/plan/tasks abiertos. Ningún
+cambio de código. La implementación se ejecutará en tres commits
+secuenciales (`refactor(pipeline)`, `feat(attribution)`, `feat(attribution)`)
+siguiendo `.ai/tasks/vendeveloz-launch/06-007-stage-gateway.md`,
+`07-007-capi-core.md` y `08-007-settings-ui-close.md`.
 
 ### Estado del spec 005
 
@@ -573,7 +665,8 @@ reportarse como READY punta a punta hasta entonces.
 | 2026-09-29 | spec 004 corte 2d — fix de comportamiento post-0e7148c (rama submit con sent residual, cleanup happy path revoca todas las previews, transferencia captionOwner al eliminar owner), 546 tests |
 | 2026-09-29 | spec 004 corte 2e — 3 últimos edge cases del cliente (decideSubmitMode=noop con solo bloqueados, transferencia captionOwner salta sent/sending, mutaciones de la cola bloqueadas durante sending), 560 tests |
 | 2026-09-29 | spec 005 cerrado (commit único): edición inline de `contact.name` desde el panel del inbox + sync de UI en las tres superficies, 569 tests |
-| 2026-09-29 | spec 006 ABIERTO: anuncio de origen de Meta — pieza visible sin CAPI todavía (puerto selectivo del upstream 018; migración 0006 + tabla `ad_attribution` + normalización + imagen best-effort; implementación en dos cortes A/B posteriores) |
+| 2026-09-29 | spec 006 ABIERTO: anuncio de origen de Meta — pieza visible sin CAPI todavía (puerto selectivo del upstream 018; migración 0006 + tabla `ad_attribution` + normalización + imagen best-effort; implementación en dos cortes A/B posteriores)
+| 2026-09-29 | spec 007 ABIERTO: Meta CAPI para leads Click-to-WhatsApp — adaptación selectiva del upstream 016 (gate de etapa primero: refactor neutro que centraliza los 6 callsites runtime de `lead.stageId` en `moveLeadStage(...)` antes de tocar Meta; luego CAPI core + schema/API con `ATRIBUCION` apagada por defecto, token reusado de WhatsApp, etapa calificada configurable, `Purchase` sin valor inventado, dedup `UNIQUE`, `is_test` sin evento; luego UI Ajustes → Anuncios + E2E en dos configuraciones). Commit 0 documental; sin código. | |
 
 ---
 
