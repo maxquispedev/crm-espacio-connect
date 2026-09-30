@@ -139,13 +139,17 @@
   reemplaza al placeholder `false` del Corte A. `atribucionEnabled()`
   queda como compat.
 - [x] B5. `src/lib/meta/capi.ts`: payload, catálogo cerrado de eventos,
-  validación Zod, hash SHA-256 de `ctwa_clid`, lectura del acuse
-  `events_received`. — **2026-09-29**: `buildCapiPayload` arma el
-  payload exacto (`action_source: business_messaging`, `messaging_channel:
-  whatsapp`, `user_data` solo `ctwa_clid` hasheado + `whatsapp_business_account_id`,
+  validación Zod, **ctwa_clid viaja RAW** (sin trim, sin lowercase, sin
+  hashing — Meta lo necesita en su forma original para unirlo con su
+  tabla de clics), lectura del acuse `events_received`. — **2026-09-29**:
+  `buildCapiPayload` arma el payload exacto (`action_source:
+  business_messaging`, `messaging_channel: whatsapp`, `user_data` solo
+  `ctwa_clid` en crudo + `whatsapp_business_account_id`,
   `custom_data.lead_stage` siempre). `sendCapiEvent` reusa `graphRequest`
-  con import lazy (evita ciclos con tests que mockean `@/lib/meta/client`).
-  `isAckPositive(ack)` aplica el único acuse válido (`events_received >= 1`).
+  con import lazy (evita ciclos con tests que mockean `@/lib/meta/client`),
+  agrega `partner_agent = "espacio-connect"` (constante top-level del
+  proyecto) y `isAckPositive(ack)` aplica el único acuse válido
+  (`events_received >= 1`).
 - [x] B6. `src/server/attribution/settings.ts`: lectura/escritura de
   `capi_settings` con cifrado AES-256-GCM. — **2026-09-29**:
   `getCapiSettings` (descifra server-side), `getCapiSettingsDto` (DTO
@@ -186,10 +190,13 @@
   — **2026-09-29**: el mock devuelve acuse positivo con `fbtrace_id`.
   `DSET-FAIL` fuerza error 400; `DSET-ZERO` fuerza `events_received=0`
   para el camino infeliz de tests.
-- [x] B12. Unit tests: `capi-payload.test.ts` (19 tests: catálogo,
+- [x] B12. Unit tests: `capi-payload.test.ts` (23 tests: catálogo,
   estructura exacta del payload, `action_source`, `messaging_channel`,
-  `user_data` solo con `ctwa_clid` hasheado + WABA ID, hash SHA-256
-  trim+lowercase, `isAckPositive` con `events_received = 0` ⇒ failed,
+  `user_data` solo con `ctwa_clid` RAW + WABA ID, **ctwa_clid entra como
+  `"ARAaB_clic"` y sale EXACTAMENTE `"ARAaB_clic"`**, sin trim/lowercase/
+  hashing, `whatsapp_business_account_id` intacto, body top-level con
+  `partner_agent === "espacio-connect"`, body con `data[]`, sin
+  phone/email/name, `isAckPositive` con `events_received = 0` ⇒ failed,
   Purchase sin `value` inventado, traducción de errores Meta);
   `capi-flag.test.ts` (7 tests: apagada por defecto, solo `'on'`
   enciende, `atribucionEnabled` compat); `capi-conversions.test.ts`

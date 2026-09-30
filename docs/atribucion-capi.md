@@ -113,19 +113,28 @@ Esto evita pedir al dueño una credencial que ya autorizó. Pegar token
 específico es opcional, cifrado con la misma capa AES-256-GCM que el
 token de WhatsApp.
 
-### 7. user_data mínimo
+### 7. user_data mínimo y body top-level
 
 Hacia Meta solo viaja:
 
-- `ctwa_clid` (hasheado SHA-256 lowercase + trim, por contrato Meta).
+- `ctwa_clid` **en crudo**, exactamente como lo entregó el referral de
+  Meta. SIN trim, SIN lowercase, SIN hashing. Meta NO exige hashing para
+  este campo: es el identificador del clic del anuncio, no un dato
+  personal, y necesita recibirlo en su forma original para unirlo con su
+  tabla de clics.
 - `whatsapp_business_account_id` (WABA ID de la conexión del tenant,
   **no** se hashea — es un identificador de cuenta comercial, no de
   usuario).
 
-**Nunca** teléfono, nombre, email ni texto del contacto. El `ctwa_clid`
-es identificador de clic, no dato personal — pero igual se hashea por
-defensa en profundidad y porque el `click_id` real puede traer prefijos
-del CDN.
+**Nunca** teléfono, nombre, email ni texto del contacto.
+
+El body que sale hacia Meta incluye, top-level:
+
+- `data[]`: el array con el/los evento(s) a reportar.
+- `partner_agent`: constante del proyecto (`"espacio-connect"`). No es
+  configurable por tenant y NO incluye nombre del cliente ni PII. Es lo
+  que el contrato `business_messaging` de Meta exige para identificar al
+  integrador.
 
 ### 8. Cero espejo de InitiateCheckout de fábrica
 

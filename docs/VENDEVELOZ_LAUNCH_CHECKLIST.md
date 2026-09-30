@@ -154,15 +154,18 @@ producción son:
   `lib/crypto`).
 - **Cliente CAPI** (`src/lib/meta/capi.ts`): catálogo cerrado
   `QualifiedLead` / `Purchase`, `action_source: business_messaging`,
-  `messaging_channel: whatsapp`, hash SHA-256 lowercase + trim de
-  `ctwa_clid`, único acuse válido `events_received >= 1`.
+  `messaging_channel: whatsapp`, `ctwa_clid` viaja **en crudo** (sin trim,
+  sin lowercase, sin hashing — Meta lo necesita en su forma original para
+  unirlo con la tabla de clics), body top-level `partner_agent =
+  "espacio-connect"`, único acuse válido `events_received >= 1`.
 - **Reporte** (`src/server/attribution/conversions.ts`): guardrails
   (flag apagada / `is_test` / sin `ctwa_clid` / sin config / sin token);
   dedup por `ON CONFLICT DO NOTHING`; mapeo
   `won → Purchase`, `qualifiedStageId → QualifiedLead`; regla anti-valor-
   falso (`value` / `currency` solo si monto válido positivo y currency de 3
-  chars; nunca `0`); `user_data` mínimo (`ctwa_clid` hasheado +
-  `whatsapp_business_account_id`, nunca PII).
+  chars; nunca `0`); `user_data` mínimo (`ctwa_clid` en crudo +
+  `whatsapp_business_account_id`, nunca PII); body top-level con
+  `partner_agent = "espacio-connect"`.
 - **Hook** (`src/server/attribution/report-on-stage-change.ts`):
   `reportStageChangeOnMove` (single) y `reportStageChangeOnBulkMove`
   (bulk), llamados **fuera del try/catch** del cambio de etapa. Meta 5xx

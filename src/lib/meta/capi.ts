@@ -1,4 +1,3 @@
-import { createHash } from "node:crypto";
 import { z } from "zod";
 
 /**
@@ -17,11 +16,20 @@ import { z } from "zod";
  * permite que cada fork lo agregue si quiere.
  *
  * Identidad enviada a Meta (mínima, Constitución I):
- *  - `ctwa_clid` (de `ad_attribution.ctwa_clid` — captura de 006).
+ *  - `ctwa_clid` (de `ad_attribution.ctwa_clid` — captura de 006) **en crudo**,
+ *    exactamente como lo entregó el referral de Meta. Meta NO exige hashing
+ *    para este campo: es el identificador del clic del anuncio, no un dato
+ *    personal, y viaja RAW para que Meta pueda unirlo con su tabla de clics.
  *  - `whatsapp_business_account_id` (WABA ID de la conexión del tenant).
  *
  * NUNCA teléfono, nombre, email ni texto del contacto. El ctwa_clid es un
  * identificador de clic, no un dato personal.
+ *
+ * Body top-level:
+ *  - `data[]`: el array con los eventos a reportar.
+ *  - `partner_agent`: constante del proyecto que identifica al integrador
+ *    ("espacio-connect"). No es configurable por tenant y NO incluye
+ *    nombre del cliente ni PII.
  *
  * Acuse real: el único acuse válido es `events_received >= 1`. Si Meta
  * responde 200 pero `events_received = 0`, el caller marca la fila como
@@ -65,7 +73,13 @@ export type CapiCustomData = z.infer<typeof customDataSchema>;
 
 export const userDataSchema = z
   .object({
-    /** ctwa_clid de 006. Se hashea SHA-256 antes de enviar a Meta. */
+    /**
+     * ctwa_clid de 006. Viaja **RAW**, exactamente como lo entregó el
+     * referral de Meta: SIN trim, SIN lowercase, SIN hashing. Meta NO
+     * exige hashing para este campo (es el identificador del clic del
+     * anuncio, no un dato personal) y necesita recibirlo en su forma
+     * original para unirlo con su tabla de clics.
+     */
     ctwa_clid: z.string().min(1).max(256).optional(),
     /** WABA ID de la conexión del tenant (no es PII). */
     whatsapp_business_account_id: z.string().min(1).max(64).optional(),
@@ -97,21 +111,15 @@ export const capiAckSchema = z
 export type CapiAck = z.infer<typeof capiAckSchema>;
 
 // ---------------------------------------------------------------------------
-// Hash de identificadores (contrato Meta)
+// partner_agent
 // ---------------------------------------------------------------------------
 
 /**
- * Meta exige que los identificadores lleguen hasheados (SHA-256 hex).
- * `ctwa_clid` es la única excepción que Meta documenta como "no requiere
- * hashing si viene como URL click id" — pero como defensa en profundidad
- * (y porque el `click_id` real puede tener prefijos), lo hasheamos igual.
- *
- * Nunca hasheamos el `whatsapp_business_account_id`: es un ID de cuenta
- * comercial, no un identificador de usuario.
+ * Identificador del software que integró el evento. Es una constante del
+ * proyecto — NO configurable por tenant y NO incluye nombre del cliente ni
+ * PII. Lo exige el contrato de Meta Conversions API para `business_messaging`.
  */
-export function hashForMeta(value: string): string {
-  return createHash("sha256").update(value.trim().toLowerCase()).digest("hex");
-}
+export const PARTNER_AGENT = "espacio-connect" as const;
 
 // ---------------------------------------------------------------------------
 // Builder del payload
@@ -129,7 +137,8 @@ export type BuildPayloadInput = {
 export function buildCapiPayload(input: BuildPayloadInput): CapiEventPayload {
   const userData: CapiUserData = {};
   if (input.ctwaClid && input.ctwaClid.length > 0) {
-    userData.ctwa_clid = hashForMeta(input.ctwaClid);
+    // ctwa_clid viaja RAW: sin trim, sin lowercase, sin hashing.
+    userData.ctwa_clid = input.ctwaClid;
   }
   if (
     input.whatsappBusinessAccountId &&
@@ -187,8 +196,13 @@ export async function sendCapiEvent(input: {
     });
   }
 
-  // Meta espera un array `data` con uno o más eventos.
-  const body = { data: [input.payload] };
+  // Meta espera un array `data` con uno o más eventos, y un `partner_agent`
+  // top-level que identifica al integrador. Constante del proyecto, no
+  // configurable por tenant.
+  const body = {
+    data: [input.payload],
+    partner_agent: PARTNER_AGENT,
+  };
   const path = `${datasetId}/events`;
 
   let raw: unknown;

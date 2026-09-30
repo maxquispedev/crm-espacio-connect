@@ -1,8 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   CAPI_EVENT_NAMES,
+  PARTNER_AGENT,
   buildCapiPayload,
-  hashForMeta,
   isAckPositive,
   sendCapiEvent,
   type CapiCustomData,
@@ -38,11 +38,26 @@ afterEach(() => {
 /**
  * Tests del payload y la capa de envío a CAPI (B12 - 007 Corte B).
  *
+ * El contrato con Meta para `business_messaging` exige:
+ *
+ *  - `ctwa_clid` viaja RAW (sin trim, sin lowercase, sin hashing) tal cual
+ *    fue entregado por el referral de Meta.
+ *  - `whatsapp_business_account_id` se envía intacto (es un identificador
+ *    de cuenta comercial, no de usuario).
+ *  - Body top-level `partner_agent` con la constante del proyecto.
+ *  - Body con `data[]` que contiene el evento.
+ *  - Acuse válido = `events_received >= 1`. Cualquier otra cosa es fallo.
+ *
  * Cubre:
  *  - payload exacto (campos, action_source, messaging_channel, user_data
  *    solo con ctwa_clid + whatsapp_business_account_id);
  *  - catálogo cerrado (solo QualifiedLead / Purchase);
- *  - hash de ctwa_clid (SHA-256 hex, lowercase, trimmed);
+ *  - ctwa_clid RAW: entra como "ARAaB_clic" y sale EXACTAMENTE "ARAaB_clic";
+ *  - sin hashing del ctwa_clid;
+ *  - whatsapp_business_account_id sale intacto;
+ *  - body top-level contiene `partner_agent === "espacio-connect"`;
+ *  - body contiene `data[]` con el evento;
+ *  - no aparecen phone/email/name en el payload;
  *  - isAckPositive con events_received = 0 (NO es positivo);
  *  - traducción de error de Meta (status, code) en MetaApiError.
  */
@@ -92,7 +107,7 @@ describe("CAPI payload - estructura exacta", () => {
     expect(payload.event_time).toBeGreaterThan(t.getTime() / 1000 - 1);
   });
 
-  it("user_data SOLO lleva ctwa_clid (hasheado) + WABA ID", () => {
+  it("user_data SOLO lleva ctwa_clid (RAW) + WABA ID", () => {
     const payload = buildCapiPayload({
       eventName: "QualifiedLead",
       eventTime: new Date(),
@@ -104,21 +119,50 @@ describe("CAPI payload - estructura exacta", () => {
       "ctwa_clid",
       "whatsapp_business_account_id",
     ]);
-    expect(payload.user_data.ctwa_clid).toMatch(/^[a-f0-9]{64}$/);
+    // ctwa_clid viaja EXACTAMENTE como entró: sin trim, sin lowercase, sin hashing.
+    expect(payload.user_data.ctwa_clid).toBe("ClickId-ABC");
+    // whatsapp_business_account_id NO se hashea.
     expect(payload.user_data.whatsapp_business_account_id).toBe("9876543210");
   });
 
-  it("ctwa_clid nunca se manda en claro", () => {
-    const ctwa = "ClickId-CLIENTE-VISITOR-12345";
+  it("ctwa_clid viaja RAW: entra como 'ARAaB_clic' y sale EXACTAMENTE igual", () => {
+    // Test principal exigido por la hotfix: el ctwa_clid NO se transforma.
+    const ctwa = "ARAaB_clic";
     const payload = buildCapiPayload({
       eventName: "QualifiedLead",
       eventTime: new Date(),
       ctwaClid: ctwa,
+      whatsappBusinessAccountId: "WABA-1",
+      customData: { lead_stage: "qualified" },
+    });
+    expect(payload.user_data.ctwa_clid).toBe(ctwa);
+  });
+
+  it("NO existe hashing del ctwa_clid (no es hex SHA-256)", () => {
+    // Defensa contra una regresión que reintroduzca SHA-256: nunca debe
+    // salir un digest hex de 64 chars en minúsculas.
+    const payload = buildCapiPayload({
+      eventName: "QualifiedLead",
+      eventTime: new Date(),
+      ctwaClid: "ARAaB_clic",
+      whatsappBusinessAccountId: "WABA-1",
+      customData: { lead_stage: "qualified" },
+    });
+    const value = payload.user_data.ctwa_clid ?? "";
+    expect(value).not.toMatch(/^[a-f0-9]{64}$/);
+    expect(value).not.toMatch(/^[A-Fa-f0-9]{64}$/);
+  });
+
+  it("ctwa_clid NO sufre trim ni lowercase", () => {
+    // Defensa contra trim+lowercase: case y whitespace se preservan.
+    const payload = buildCapiPayload({
+      eventName: "QualifiedLead",
+      eventTime: new Date(),
+      ctwaClid: "  ARAaB_CliC  ",
       whatsappBusinessAccountId: "W",
       customData: { lead_stage: "qualified" },
     });
-    expect(payload.user_data.ctwa_clid).not.toContain(ctwa);
-    expect(payload.user_data.ctwa_clid).not.toContain("Click");
+    expect(payload.user_data.ctwa_clid).toBe("  ARAaB_CliC  ");
   });
 
   it("WABA ID NO se hashea (es identificador de cuenta comercial)", () => {
@@ -176,18 +220,173 @@ describe("CAPI payload - estructura exacta", () => {
   });
 });
 
-describe("CAPI payload - hash SHA-256", () => {
-  it("hashea ctwa_clid con SHA-256 hex en minúsculas", () => {
-    const h = hashForMeta("ClickId-ABC");
-    expect(h).toMatch(/^[a-f0-9]{64}$/);
-    // Determinístico.
-    expect(hashForMeta("ClickId-ABC")).toBe(h);
+describe("CAPI payload - partner_agent top-level", () => {
+  it("constante del proyecto es 'espacio-connect'", () => {
+    expect(PARTNER_AGENT).toBe("espacio-connect");
   });
 
-  it("trim + lowercase antes de hashear", () => {
-    const a = hashForMeta("ClickId-ABC");
-    const b = hashForMeta("  clickid-abc  ");
-    expect(a).toBe(b);
+  it("body top-level contiene partner_agent === 'espacio-connect'", async () => {
+    // Capturamos el body que el adapter envía a Meta y verificamos su forma.
+    const originalFetch = global.fetch;
+    global.fetch = (async () =>
+      new Response(
+        JSON.stringify({ events_received: 1, fbtrace_id: "fbtrace_1" }),
+        { status: 200 }
+      )
+    ) as typeof fetch;
+    try {
+      await sendCapiEvent({
+        datasetId: "DSET",
+        accessToken: "tok",
+        payload: buildCapiPayload({
+          eventName: "QualifiedLead",
+          eventTime: new Date(),
+          ctwaClid: "ARAaB_clic",
+          whatsappBusinessAccountId: "WABA-1",
+          customData: { lead_stage: "qualified" },
+        }),
+      });
+    } finally {
+      global.fetch = originalFetch;
+    }
+
+    // Re-llamamos con un fetch espía para inspeccionar el body realmente
+    // enviado. (El primer call ya consumió el mock; el segundo es el
+    // que capturamos.)
+    let capturedBody: unknown = null;
+    const spyFetch = (async (
+      _url: string | URL | Request,
+      init?: RequestInit
+    ): Promise<Response> => {
+      capturedBody = init?.body ? JSON.parse(String(init.body)) : null;
+      return new Response(
+        JSON.stringify({ events_received: 1, fbtrace_id: "fbtrace_2" }),
+        { status: 200 }
+      );
+    }) as typeof fetch;
+    global.fetch = spyFetch;
+    try {
+      await sendCapiEvent({
+        datasetId: "DSET",
+        accessToken: "tok",
+        payload: buildCapiPayload({
+          eventName: "QualifiedLead",
+          eventTime: new Date(),
+          ctwaClid: "ARAaB_clic",
+          whatsappBusinessAccountId: "WABA-1",
+          customData: { lead_stage: "qualified" },
+        }),
+      });
+    } finally {
+      global.fetch = originalFetch;
+    }
+
+    expect(capturedBody).not.toBeNull();
+    const body = capturedBody as {
+      data?: unknown[];
+      partner_agent?: string;
+    };
+    expect(body.partner_agent).toBe("espacio-connect");
+    expect(Array.isArray(body.data)).toBe(true);
+    expect(body.data?.length).toBe(1);
+  });
+
+  it("body contiene data[] con el evento y ctwa_clid RAW", async () => {
+    let capturedBody: unknown = null;
+    const originalFetch = global.fetch;
+    global.fetch = (async (
+      _url: string | URL | Request,
+      init?: RequestInit
+    ): Promise<Response> => {
+      capturedBody = init?.body ? JSON.parse(String(init.body)) : null;
+      return new Response(
+        JSON.stringify({ events_received: 1, fbtrace_id: "fbtrace_3" }),
+        { status: 200 }
+      );
+    }) as typeof fetch;
+    try {
+      await sendCapiEvent({
+        datasetId: "DSET",
+        accessToken: "tok",
+        payload: buildCapiPayload({
+          eventName: "Purchase",
+          eventTime: new Date("2026-09-29T18:00:00Z"),
+          ctwaClid: "ARAaB_clic",
+          whatsappBusinessAccountId: "9876543210",
+          customData: { lead_stage: "won", value: 450.5, currency: "MXN" },
+        }),
+      });
+    } finally {
+      global.fetch = originalFetch;
+    }
+
+    const body = capturedBody as {
+      data: Array<Record<string, unknown>>;
+      partner_agent: string;
+    };
+    expect(body.data).toHaveLength(1);
+    const event = body.data[0]!;
+    expect(event.event_name).toBe("Purchase");
+    expect(event.action_source).toBe("business_messaging");
+    expect(event.messaging_channel).toBe("whatsapp");
+    expect(event.user_data).toEqual({
+      ctwa_clid: "ARAaB_clic",
+      whatsapp_business_account_id: "9876543210",
+    });
+    expect(event.custom_data).toEqual({
+      lead_stage: "won",
+      value: 450.5,
+      currency: "MXN",
+    });
+    expect(body.partner_agent).toBe("espacio-connect");
+  });
+
+  it("NO aparecen phone/email/name en el body enviado a Meta", async () => {
+    let capturedBody: unknown = null;
+    const originalFetch = global.fetch;
+    global.fetch = (async (
+      _url: string | URL | Request,
+      init?: RequestInit
+    ): Promise<Response> => {
+      capturedBody = init?.body ? JSON.parse(String(init.body)) : null;
+      return new Response(
+        JSON.stringify({ events_received: 1, fbtrace_id: "fbtrace_4" }),
+        { status: 200 }
+      );
+    }) as typeof fetch;
+    try {
+      await sendCapiEvent({
+        datasetId: "DSET",
+        accessToken: "tok",
+        payload: buildCapiPayload({
+          eventName: "QualifiedLead",
+          eventTime: new Date(),
+          ctwaClid: "ARAaB_clic",
+          whatsappBusinessAccountId: "WABA-1",
+          customData: { lead_stage: "qualified" },
+        }),
+      });
+    } finally {
+      global.fetch = originalFetch;
+    }
+
+    const raw = JSON.stringify(capturedBody);
+    // Defensa contra PII accidental: ni la palabra "phone" ni "email" ni
+    // "name" deben aparecer como clave de user_data.
+    expect(raw).not.toContain("phone");
+    expect(raw).not.toContain("email");
+    expect(raw).not.toContain("\"name\"");
+    expect(raw).not.toContain("'name'");
+
+    // user_data solo lleva ctwa_clid + whatsapp_business_account_id.
+    const body = capturedBody as {
+      data: Array<{ user_data: Record<string, unknown> }>;
+    };
+    const userDataKeys = Object.keys(body.data[0]!.user_data).sort();
+    expect(userDataKeys).toEqual([
+      "ctwa_clid",
+      "whatsapp_business_account_id",
+    ]);
   });
 });
 
