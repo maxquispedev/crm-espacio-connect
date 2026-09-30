@@ -43,6 +43,20 @@
       "when": 1789965289508,
       "tag": "0005_wonderful_justin_hammer",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1789965400000,
+      "tag": "0006_anuncio_de_origen",
+      "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1789965500000,
+      "tag": "0007_meta_capi",
+      "breakpoints": true
     }
   ]
 }

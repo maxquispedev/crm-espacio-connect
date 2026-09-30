@@ -1,6 +1,18 @@
 # CURRENT STATE — Espacio Connect
 
 **Actualizado:** 2026-09-29 (Corte 9 — auditoría final de readiness para Vende Veloz. Gates técnicos re-verificados: typecheck/lint/build verdes, 646/646 tests, 74 archivos. `docs/VENDEVELOZ_LAUNCH_CHECKLIST.md` publicado con bloques A/B/C/D. Pendiente único externo: clic CTWA real contra Meta + self-test E2E local con app+Postgres. Ningún flag de producción fue tocado en este corte.)
+
+**Hotfix 2026-09-29 (post-Corte 9):** `drizzle/meta/_journal.json` ahora
+registra las migraciones `0006_anuncio_de_origen` y `0007_meta_capi` (que
+existían en disco pero no estaban en el journal, por lo que el
+`scripts/migrate.mjs` de arranque nunca las aplicaba y `/api/conversations`
+rompía en producción por el LEFT JOIN contra `ad_attribution`). Commit
+único `fix(db): registrar migraciones 0006 y 0007 en Drizzle journal`. Gates
+re-verificados: typecheck/lint/build verdes, 650/650 tests, 74 archivos;
+`drizzle-orm/migrator` descubre 8 migraciones (antes 6). Sin verificación
+en vivo punta a punta con Postgres (no había BD local disponible en este
+turno); producción debería migrar al próximo reinicio del contenedor sin
+más acciones manuales.
 **Branch:** `main`
 **Baseline funcional previo a esta sincronización documental:** `bbae7cd1dfd98d5006cfd26440a8acf1def2c1bb`
 **Propósito:** checkpoint técnico rápido. Las decisiones de negocio viven en el cerebro de Obsidian; la implementación y la historia SDD viven aquí.
