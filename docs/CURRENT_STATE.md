@@ -1,5 +1,7 @@
 # CURRENT STATE — Espacio Connect
 
+**Actualizado:** 2026-09-30 (Hotfix Sales Orchestrator — contexto de Meta Ads en estado Jev. El builder `buildJevSalesState` ahora consulta `ad_attribution` tenant-safe y, cuando la fila existe con al menos un campo comercial (`source_type`/`headline`/`body`), emite `source: "Meta Ads"` + `ad_context: { source_type, headline, body }` en el state que Jev evalúa. Contrato jevveloz 89/89 restaurado para conversaciones atribuidas; conversaciones orgánicas sin cambios observables. Commit único `fix(sales): conservar contexto de Meta Ads en estado Jev`. Gates re-verificados: typecheck/lint/build verdes, 660/660 tests, 74 archivos (650 anteriores + 10 nuevos del hotfix). NO se tocó: questions-v2, commercial-policy, resolver, writer, Jev, follow-ups ni CAPI. Defensa Constitución I verificada: el state no contiene `ctwa_clid`, `sourceId`, `sourceUrl`, `imageAssetId`, access tokens ni PII del contacto.)
+
 **Actualizado:** 2026-09-29 (Corte 9 — auditoría final de readiness para Vende Veloz. Gates técnicos re-verificados: typecheck/lint/build verdes, 646/646 tests, 74 archivos. `docs/VENDEVELOZ_LAUNCH_CHECKLIST.md` publicado con bloques A/B/C/D. Pendiente único externo: clic CTWA real contra Meta + self-test E2E local con app+Postgres. Ningún flag de producción fue tocado en este corte.)
 
 **Hotfix 2026-09-29 (post-Corte 9):** `drizzle/meta/_journal.json` ahora

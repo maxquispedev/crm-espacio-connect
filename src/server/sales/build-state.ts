@@ -2,6 +2,7 @@ import { desc, eq } from "drizzle-orm";
 import { getDb, schema } from "@/lib/db";
 import { scoped } from "@/lib/db/tenant";
 import type {
+  JevAdContext,
   JevConversationTurn,
   JevCrmState,
   JevPersistTarget,
@@ -21,6 +22,15 @@ import {
  * 3. Luego se recorta desde lo más reciente hasta `MAX_TURNS` o `MAX_CHARS`,
  *    sin reordenar. Un turno reciente excesivo se recorta; los antiguos
  *    se omiten enteros. Siempre se conserva al menos el turno más reciente.
+ *
+ * Hotfix 2026-09-30: además del hilo y `crm_state`, cuando la
+ * conversación tiene una fila en `ad_attribution` (spec 006), el state
+ * lleva `source: "Meta Ads"` y `ad_context` con `source_type`,
+ * `headline` y `body`. El contrato jevveloz validado en 89/89 casos
+ * incluye esa señal; sin ella Jev descalifica leads orgánicos que
+ * escriben "Hola quiero más información" porque no tiene forma de
+ * saber que el lead llegó por un anuncio. Ausente para conversaciones
+ * orgánicas: el state serializa sin `source` ni `ad_context`.
  */
 export const JEV_STATE_CONTEXT = {
   FETCH_CAP: 200,
@@ -138,11 +148,38 @@ export async function buildJevSalesState(
     })
   );
 
+  // Hotfix 2026-09-30 — contexto comercial de Meta Ads. Tenant-safe:
+  // scoped() cierra por organization_id y conversation_id antes del
+  // LIMIT 1. La UNIQUE (org, conversation) garantiza que la fila
+  // pertenece inequívocamente a esta conversación.
+  const adRows = await db
+    .select({
+      sourceType: schema.adAttribution.sourceType,
+      headline: schema.adAttribution.headline,
+      body: schema.adAttribution.body,
+    })
+    .from(schema.adAttribution)
+    .where(
+      scoped(
+        schema.adAttribution.organizationId,
+        organizationId,
+        eq(schema.adAttribution.conversationId, conversationId)
+      )
+    )
+    .limit(1);
+  const adContext = toAdContext(adRows[0]);
+
   const state: JevSalesState = {
     product: VENDE_VELOZ_PRODUCT,
     commercial_policy: VENDE_VELOZ_COMMERCIAL_POLICY,
     crm_state: toCrmState(leadRow),
     conversation,
+    ...(adContext
+      ? {
+          source: "Meta Ads" as const,
+          ad_context: adContext,
+        }
+      : {}),
   };
 
   return {
@@ -186,6 +223,41 @@ function toCrmState(
     payment_instructions_sent: lead.paymentInstructionsSentAt !== null,
     human_requested: lead.humanRequestedAt !== null,
     follow_up_count: lead.followUpCount,
+  };
+}
+
+/**
+ * AdContext estructurado para Jev desde `ad_attribution`. Pura: si la
+ * fila no existe o llega vacía, devuelve `null` y el state omite
+ * `source` y `ad_context`. Solo transporta tres campos comerciales
+ * (`source_type`, `headline`, `body`). Por Constitución I jamás se
+ * filtra `ctwa_clid`, `sourceId`, `sourceUrl`, `imageAssetId`, URLs
+ * crudas del creativo, ni PII del contacto.
+ */
+function toAdContext(
+  adRow:
+    | {
+        sourceType: string | null;
+        headline: string | null;
+        body: string | null;
+      }
+    | undefined
+): JevAdContext | null {
+  if (!adRow) return null;
+  // Considerar ausente si los tres campos vienen null. Evita emitir un
+  // `ad_context: { source_type: null, headline: null, body: null }`
+  // inútil que Jev tendría que aprender a ignorar.
+  if (
+    adRow.sourceType === null &&
+    adRow.headline === null &&
+    adRow.body === null
+  ) {
+    return null;
+  }
+  return {
+    source_type: adRow.sourceType,
+    headline: adRow.headline,
+    body: adRow.body,
   };
 }
 
