@@ -1,4 +1,4 @@
-import { and, asc, eq } from "drizzle-orm";
+import { and, asc, eq, isNull } from "drizzle-orm";
 import { withAuth } from "@/lib/api";
 import { getDb, schema } from "@/lib/db";
 import { scoped } from "@/lib/db/tenant";
@@ -41,7 +41,9 @@ export const GET = withAuth(async (session) => {
         eq(schema.adAttribution.organizationId, session.organizationId)
       )
     )
-    .where(scoped(schema.lead.organizationId, session.organizationId))
+    .where(scoped(schema.lead.organizationId, session.organizationId,
+      isNull(schema.contact.archivedAt)
+    ))
     .orderBy(asc(schema.lead.position));
 
   return Response.json({

@@ -531,8 +531,8 @@ NO empieces Corte 4.
   etiqueta y no la key cruda. `tests/unit/judge.test.ts` y
   `lab-sandbox.test.ts` intactos (el juez recibe el key como string).
 - [x] **T602** — `src/server/lab/runner.ts`: ejecutar el pipeline REAL
-  (`runSalesOrchestratorTurn` con `is_test=true`). El sender ya lanza
-  excepción en `is_test=true`. Confirmar con spy que no se invoca
+  (`runSalesOrchestratorTurn` con `is_test=true`). El sender real lanza
+  excepción en `is_test=true`; `deliverReply` persiste localmente (hotfix). Confirmar con spy que no se invoca
   WhatsApp real.
   → ✅ Cada turno comercial llama a `runSalesOrchestratorTurn` con
   `playbookOverride` (validado por el guard T306 del orquestador porque
@@ -864,3 +864,35 @@ NO empieces Corte 7.
 - Override de Playbook sobre conversación real → rechazado. Solo
   aplica en `is_test=true`.
 - Scheduling de follow-ups durante `is_test=true` → suprimido.
+## Hotfix productivo del Laboratorio — 2026-10-01
+
+- [x] HF1 — Contacto único archivado + lead limpio por caso sales vía gateway.
+- [x] HF2 — Delivery sandbox real, sin follow-ups/WhatsApp/CAPI externos.
+- [x] HF3 — Snapshot durable del caso antes del judge + cleanup finally.
+- [x] HF4 — Board excluye archivados y regresiones del pipeline real.
+- [x] HF5 — Gates, evidencia E2E, docs y commit único.
+
+### Evidencia y handoff del hotfix
+
+- Gate técnico: typecheck/lint/build verdes; 815 tests / 88 archivos verdes.
+  Lint: 3 warnings preexistentes, 0 errores. pnpm instalado 11.1.1; se usó
+  `--pm-on-fail=ignore` para evitar descarga del 11.5.0 indicado por el repo
+  (sin modificar package.json/lockfile).
+- Tests del runner ahora ejecutan builder/orquestador/resolver/delivery reales
+  con Jev/writer mock; spy Graph y CAPI sin llamadas, sin follow-ups. Cinco
+  nuevas regresiones (incl. judge retornado/lanzado), aislamiento both/re-run,
+  lead antes de Jev, stage open tenant-safe, snapshot, historial y limpieza.
+  Mutation checks: omitir lead o entrega sandbox hace fallar su regresión.
+- E2E sección 015 real: 33/33 checks verdes en localhost:3018 + PostgreSQL +
+  mocks locales, copia temporal aislada; caminos felices y 422/404. Se
+  aplicaron migraciones existentes pendientes a BD local y se preparó fixture
+  E2E (perfil/stages); modelo LLM mock configurado sin tocar .env productivo.
+- PostgreSQL después de Published/Draft/both: 24 resultados durables, 0
+  actuals faltantes, conversation_id null en todos, 0 artefactos operacionales
+  (contact/lead/conversation/message), 0 follow-ups y 0 CAPI para org de prueba.
+- Solo E2E de Laboratorio ejecutado; pendientes históricos de otros módulos
+  permanecen. `node --check` del arnés verde.
+- Docs actualizados: CURRENT_STATE, SALES_ORCHESTRATOR y playbook. No cambió
+  decisión de negocio; no requiere sincronización comercial en Obsidian.
+- Commit único: `fix(lab): ejecutar pipeline comercial real en sandbox`.
+  Próximo paso: deploy habitual y repetir Draft productivo sin publicar V2.

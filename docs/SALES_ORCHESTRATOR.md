@@ -593,3 +593,16 @@ Cuando exista la siguiente campaña:
 3. abrir el siguiente spec SDD;
 4. extraer solo las dimensiones demostradas por ese segundo caso;
 5. reutilizar el núcleo actual y evitar una reescritura.
+
+## Hotfix del Laboratorio de Feature 008 — 2026-10-01
+
+Una corrida productiva Draft reveló que faltaba el lead sandbox y el writer
+no persistía sus respuestas. El runner ahora crea por caso un contacto
+archivado único (`lab:<runId>:<testCaseId>`) y un lead nuevo vía gateway en
+la primera etapa open del tenant (sin etapa, error explícito). El orquestador
+llama a `deliverReply` también con `is_test=true`: persiste outbound local y
+actualiza facts de demo/precio, sin WhatsApp real. Follow-ups siguen suprimidos
+y CAPI conserva su guard sandbox. Transcript y outcomes se copian al caso
+durable antes del juez; finalmente se borra el contacto por cascada, sin
+borrar `agent_test_case` (su FK de conversación queda null). Pipeline excluye
+contactos archivados reales y sintéticos. No cambia la estrategia comercial.

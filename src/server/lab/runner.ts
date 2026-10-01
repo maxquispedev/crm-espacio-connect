@@ -1,4 +1,4 @@
-import { and, asc, eq } from "drizzle-orm";
+import { asc, eq, isNotNull } from "drizzle-orm";
 import { getDb, schema } from "@/lib/db";
 import { newId } from "@/lib/db/ids";
 import { scoped } from "@/lib/db/tenant";
@@ -17,6 +17,7 @@ import {
   type Persona,
   type PersonaCohort,
 } from "@/server/lab/personas";
+import { createLeadInStage, findFirstOpenStage } from "@/server/leads/stage-gateway";
 import { runSalesOrchestratorTurn } from "@/server/sales/orchestrator";
 
 /**
@@ -271,19 +272,19 @@ async function runAllCases(
   const cases = await db
     .select()
     .from(schema.agentTestCase)
-    .where(eq(schema.agentTestCase.runId, runId))
+    .where(scoped(schema.agentTestCase.organizationId, organizationId, eq(schema.agentTestCase.runId, runId)))
     .orderBy(asc(schema.agentTestCase.createdAt));
 
   const kbEntries = await db
     .select()
     .from(schema.kbEntry)
-    .where(eq(schema.kbEntry.organizationId, organizationId));
+    .where(scoped(schema.kbEntry.organizationId, organizationId));
   const kbText = renderKb(kbEntries);
 
   const profileRows = await db
     .select()
     .from(schema.agentProfile)
-    .where(eq(schema.agentProfile.organizationId, organizationId))
+    .where(scoped(schema.agentProfile.organizationId, organizationId))
     .limit(1);
   const profile = profileRows[0];
   const behaviorText = profile
@@ -308,36 +309,55 @@ async function runAllCases(
     await db
       .update(schema.agentTestCase)
       .set({ status: "running" })
-      .where(eq(schema.agentTestCase.id, testCase.id));
+      .where(scoped(schema.agentTestCase.organizationId, organizationId, eq(schema.agentTestCase.id, testCase.id)));
 
-    const { transcript, conversationId, actual } = await runConversation(
-      organizationId,
-      persona,
-      ctx
-    );
+    // ID reservado antes del setup: finally también cubre fallos parciales.
+    const contactId = newId("contact");
+    try {
+      const { transcript, conversationId, actual } = await runConversation(
+        organizationId,
+        persona,
+        ctx,
+        contactId,
+        runId,
+        testCase.id
+      );
 
-    const outcome = await judgeCase({
-      personaKey: persona.key,
-      transcript,
-      kbText,
-      behaviorText,
-    });
-
-    await db
-      .update(schema.agentTestCase)
-      .set({
+      // Conservar evidencia incluso si el juez lanza una excepción.
+      await db.update(schema.agentTestCase).set({
         conversationId,
         transcript,
+        actualNextAction: actual.nextAction,
+        actualLane: actual.lane,
+        actualHandoff: actual.handoff,
+      }).where(scoped(schema.agentTestCase.organizationId, organizationId,
+        eq(schema.agentTestCase.id, testCase.id)));
+
+      const outcome = await judgeCase({
+        personaKey: persona.key,
+        transcript,
+        kbText,
+        behaviorText,
+      });
+      await db.update(schema.agentTestCase).set({
         status: outcome.status,
         veredicto: outcome.status === "done" ? outcome.verdict.veredicto : null,
         hallazgos: outcome.status === "done" ? outcome.verdict.hallazgos : null,
-        // Outcomes observados por el motor (T604). Se leen del snapshot
-        // durable del lead, que el orquestador escribe en cada turno.
-        actualNextAction: actual?.nextAction ?? null,
-        actualLane: actual?.lane ?? null,
-        actualHandoff: actual?.handoff ?? null,
-      })
-      .where(eq(schema.agentTestCase.id, testCase.id));
+      }).where(scoped(schema.agentTestCase.organizationId, organizationId,
+        eq(schema.agentTestCase.id, testCase.id)));
+    } catch (err) {
+      await db.update(schema.agentTestCase).set({ status: "judge_failed" })
+        .where(scoped(schema.agentTestCase.organizationId, organizationId,
+          eq(schema.agentTestCase.id, testCase.id)));
+      throw err;
+    } finally {
+      // FK cascade limpia lead/conversation/messages; la FK del resultado
+      // durable es SET NULL y nunca borra agent_test_case.
+      await db.delete(schema.contact).where(scoped(
+        schema.contact.organizationId, organizationId,
+        eq(schema.contact.id, contactId), isNotNull(schema.contact.archivedAt)
+      ));
+    }
 
     done += 1;
     publishProgress(organizationId, runId, "running", done, total);
@@ -349,13 +369,13 @@ async function runAllCases(
       veredicto: schema.agentTestCase.veredicto,
     })
     .from(schema.agentTestCase)
-    .where(eq(schema.agentTestCase.runId, runId));
+    .where(scoped(schema.agentTestCase.organizationId, organizationId, eq(schema.agentTestCase.runId, runId)));
   const score = computeScore(finalCases);
 
   await getDb()
     .update(schema.agentTestRun)
     .set({ status: "done", score, finishedAt: new Date() })
-    .where(eq(schema.agentTestRun.id, runId));
+    .where(scoped(schema.agentTestRun.organizationId, organizationId, eq(schema.agentTestRun.id, runId)));
   publishProgress(organizationId, runId, "done", done, total, score);
 }
 
@@ -376,7 +396,10 @@ export type ActualOutcome = {
 async function runConversation(
   organizationId: string,
   persona: Persona,
-  ctx: RunContext
+  ctx: RunContext,
+  contactId: string,
+  runId: string,
+  testCaseId: string
 ): Promise<{
   transcript: { role: "cliente" | "agente"; text: string }[];
   conversationId: string;
@@ -384,8 +407,31 @@ async function runConversation(
 }> {
   const db = getDb();
 
-  // Contacto sintético ARCHIVADO (no aparece en la lista ni genera leads).
-  const contactId = await upsertTestContact(organizationId, persona);
+  // Contacto nuevo incluso para la misma persona/version en otra corrida.
+  await db.insert(schema.contact).values({
+    id: contactId,
+    organizationId,
+    phone: persona.phone,
+    waIdentity: `lab:${runId}:${testCaseId}`,
+    name: persona.contactName,
+    archivedAt: new Date(),
+  });
+
+  if (ctx.cohort === "sales") {
+    const stage = await findFirstOpenStage(organizationId);
+    if (!stage) throw new Error("lab_sales_open_stage_not_found");
+    // INSERT nuevo: todos los facts comerciales usan los defaults limpios
+    // del schema (auto, timestamps/snapshot null, followUpCount=0).
+    const created = await createLeadInStage({
+      organizationId,
+      contactId,
+      toStageId: stage.id,
+      position: 0,
+      actor: "system",
+      reason: "lab_sandbox",
+    });
+    if (!created.created) throw new Error("lab_sales_lead_not_created");
+  }
 
   const convId = newId("conversation");
   await db.insert(schema.conversation).values({
@@ -411,11 +457,11 @@ async function runConversation(
     await db
       .update(schema.conversation)
       .set({ lastInboundAt: now, lastMessageAt: now, updatedAt: now })
-      .where(eq(schema.conversation.id, convId));
+      .where(scoped(schema.conversation.organizationId, organizationId, eq(schema.conversation.id, convId)));
 
     // Turno REAL, secuencial y sin debounce (FR-030).
     if (ctx.cohort === "sales") {
-      const conversation = await loadConversation(convId);
+      const conversation = await loadConversation(organizationId, convId);
       if (conversation) {
         await runSalesOrchestratorTurn(
           { organizationId, conversationId: convId, conversation },
@@ -433,7 +479,7 @@ async function runConversation(
     const convRows = await db
       .select({ handoffAt: schema.conversation.handoffAt })
       .from(schema.conversation)
-      .where(eq(schema.conversation.id, convId))
+      .where(scoped(schema.conversation.organizationId, organizationId, eq(schema.conversation.id, convId)))
       .limit(1);
     if (convRows[0]?.handoffAt) break; // primer handoff → fin del guion
   }
@@ -441,7 +487,7 @@ async function runConversation(
   const messages = await db
     .select()
     .from(schema.message)
-    .where(eq(schema.message.conversationId, convId))
+    .where(scoped(schema.message.organizationId, organizationId, eq(schema.message.conversationId, convId)))
     .orderBy(asc(schema.message.createdAt));
 
   return {
@@ -456,12 +502,12 @@ async function runConversation(
   };
 }
 
-async function loadConversation(conversationId: string) {
+async function loadConversation(organizationId: string, conversationId: string) {
   const db = getDb();
   const rows = await db
     .select()
     .from(schema.conversation)
-    .where(eq(schema.conversation.id, conversationId))
+    .where(scoped(schema.conversation.organizationId, organizationId, eq(schema.conversation.id, conversationId)))
     .limit(1);
   return rows[0] ?? null;
 }
@@ -512,39 +558,6 @@ async function readActualOutcome(
   };
 }
 
-async function upsertTestContact(
-  organizationId: string,
-  persona: Persona
-): Promise<string> {
-  const db = getDb();
-  const inserted = await db
-    .insert(schema.contact)
-    .values({
-      id: newId("contact"),
-      organizationId,
-      phone: persona.phone,
-      waIdentity: persona.phone,
-      name: persona.contactName,
-      archivedAt: new Date(),
-    })
-    .onConflictDoNothing({
-      target: [schema.contact.organizationId, schema.contact.waIdentity],
-    })
-    .returning();
-  if (inserted[0]) return inserted[0].id;
-  const rows = await db
-    .select({ id: schema.contact.id })
-    .from(schema.contact)
-    .where(
-      and(
-        eq(schema.contact.organizationId, organizationId),
-        eq(schema.contact.phone, persona.phone)
-      )
-    )
-    .limit(1);
-  return rows[0]!.id;
-}
-
 async function failRun(
   runId: string,
   organizationId: string,
@@ -555,7 +568,7 @@ async function failRun(
   await db
     .update(schema.agentTestRun)
     .set({ status: "failed", error, finishedAt: new Date() })
-    .where(eq(schema.agentTestRun.id, runId));
+    .where(scoped(schema.agentTestRun.organizationId, organizationId, eq(schema.agentTestRun.id, runId)));
   publishProgress(organizationId, runId, "failed", 0, total);
 }
 

@@ -200,15 +200,9 @@ export async function runSalesOrchestratorTurn(
     });
 
     if (written.ok && written.text) {
-      // T308 — sandbox suprime TODO efecto externo: ni el sender de
-      // WhatsApp (deliverReply) ni la cola durable de follow-ups.
-      // Esto aísla la corrida de Laboratorio de efectos secundarios
-      // sobre la cola durable y la API real de Meta.
-      if (isTest) {
-        sent = false;
-      } else {
-        sent = await deliverReply(conversation, written.text);
-      }
+      // deliverReply persiste is_test localmente sin llamar a WhatsApp.
+      // Su resultado también gobierna los facts durables del sandbox.
+      sent = await deliverReply(conversation, written.text);
       if (sent) {
         await persistDeliveryFacts(organizationId, leadCtx.lead.id, plan);
         // T308 — sandbox suprime follow-ups. Las filas

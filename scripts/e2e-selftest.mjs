@@ -4160,6 +4160,8 @@ async function runSection015() {
     JSON.stringify({ published: publishedV1.id, draft: draftV?.id })
   );
 
+  const boardBeforeLab = await api("/api/pipeline/board");
+
   /** Lanza una corrida y espera a que termine. */
   const runLab = async (playbook_mode) => {
     const started = await api("/api/lab/runs", {
@@ -4218,6 +4220,25 @@ async function runSection015() {
       pubCases.some((c) => (c.transcript ?? []).some((t) => t.role === "agente")),
     JSON.stringify(pubCases.map((c) => (c.transcript ?? []).length))
   );
+
+  ok(
+    "015 · sales tiene los tres actuals aun sin expected",
+    pubCases.length === 6 && pubCases.every((c) =>
+      typeof c.actualNextAction === "string" && typeof c.actualLane === "string" &&
+      typeof c.actualHandoff === "boolean"),
+    JSON.stringify(pubCases.map((c) => [c.actualNextAction, c.actualLane, c.actualHandoff]))
+  );
+  ok(
+    "015 · judge completa todos los casos comerciales",
+    pubCases.length === 6 && pubCases.every((c) => c.status === "done"),
+    JSON.stringify(pubCases.map((c) => c.status))
+  );
+  const labBoard = await api("/api/pipeline/board");
+  ok("015 · leads sandbox no aparecen en board",
+    labBoard.res.ok && boardBeforeLab.res.ok &&
+      JSON.stringify((labBoard.json?.leads ?? []).map((l) => l.id).sort()) ===
+      JSON.stringify((boardBeforeLab.json?.leads ?? []).map((l) => l.id).sort()),
+    JSON.stringify(labBoard.json?.leads));
 
   // --- 2) Expected outcomes (T604) -------------------------------
   const firstCase = pubCases[0];

@@ -1,5 +1,44 @@
 # CURRENT STATE — Espacio Connect
 
+**Actualizado: 2026-10-01 — Hotfix productivo del Laboratorio comercial (Feature 008).**
+Una corrida REAL en modo Borrador terminó con score/judge pero con los tres
+`actual_*` vacíos. Causas confirmadas: runner sin lead (el orquestador retornaba
+por `leadId=null`) y writer sandbox sin `deliverReply` (sin outbound ni facts
+de entrega). Ahora cada caso crea contacto archivado único por run/case y lead
+nuevo vía gateway, en la primera etapa open del tenant por position; sin etapa
+open falla explícitamente. Los defaults del INSERT mantienen todos los facts
+limpios, sin reutilización entre Published/Draft o corridas. `deliverReply`
+persiste outbound local en `is_test=true`, sin WhatsApp real; siguen suprimidos
+follow-ups y protegido CAPI. Se copian transcript/outcomes antes del judge y
+se limpia el contacto en finally por cascada (lead/conversation/messages);
+`agent_test_case` conserva resultado y versión, con conversation_id SET NULL.
+Board excluye `contact.archived_at IS NOT NULL`, también para contactos reales.
+Expected manual nullable sigue mostrando actual a la derecha. Sin cambios a
+Playbook V1, sin publicación de Draft V2, pricing ni estrategia.
+
+**Evidencia del hotfix:** typecheck, lint (0 errores, 3 warnings preexistentes),
+build y **815/815 tests en 88 archivos** verdes. Runner ahora usa builder,
+orquestador, resolver y delivery reales con Jev/writer mock; pruebas cubren
+lead inicial limpio, historial/facts entre turnos, outcomes, aislamiento both,
+board, legacy, fallo de judge y falta de etapa. Al reintroducir cada bug, su
+regresión falla. `node --check scripts/e2e-selftest.mjs` verde.
+
+**E2E real del Laboratorio EJECUTADO:** sección 015 aislada del arnés en copia
+temporal de app (`/tmp/lab-hotfix-app`, localhost:3018), PostgreSQL local y
+Graph/LLM/Jev apuntando a mocks locales: **33/33 checks verdes** (Published,
+Draft, both, transcript cliente+agente, judge, actuals, versiones, expected,
+board, 422 modo/versión inválidos, 404 caso inexistente, outbox vacío). El
+fixture local requirió aplicar migraciones existentes pendientes y sembrar
+perfil/etapas de su org de prueba, además de configurar modelo mock. Consulta
+PostgreSQL posterior: **24 casos durables**, **0 actuals faltantes**, **0 FK de
+conversación temporal**, **0 contactos sandbox/leads/conversaciones/mensajes**,
+**0 follow-up jobs**, **0 eventos CAPI** en esa org E2E. El E2E completo de
+otros módulos no se reejecutó; sus pendientes históricos no se cierran aquí.
+Commit único previsto: `fix(lab): ejecutar pipeline comercial real en sandbox`.
+Siguiente paso: desplegar este commit por el flujo habitual; repetir Borrador
+para comprobar el reporte productivo (sin publicar V2).
+
+
 **Actualizado:** 2026-10-01 (Corte 7 del spec 008 — **CIERRE de la feature 008, Sales Playbook durable**. La estrategia comercial que estaba congelada en TypeScript (`VENDE_VELOZ_*` / `JEV_SALES_QUESTIONS_V2`) pasó a ser configuración durable, versionada, tenant-safe y editable sin redeploy: el motor sigue igual y solo consulta la versión publicada. Los siete cortes quedaron cerrados. Este corte agrega "Guardar conversación como caso" (`POST /api/lab/cases/from-conversation`) con **PII minimizada**: la nueva tabla `lab_case` **no tiene columna de identidad** (garantía estructural, no disciplina de código) y encima el texto se sanea server-side (`[telefono]`, `[email]`, `[enlace]`, `[id]`), porque un cliente suele dictar su propio número dentro de un mensaje. El `conversation_id` se usa solo como input autenticado y nunca se persiste. El bootstrap en boot ahora loguea explícitamente por org ("Playbook V1 sembrada" / "ya existente" / "Org X no tiene Sales Orchestrator; sin playbook"). Decisión documentada: los defaults congelados **no se borran**, quedan como `DEFAULTS_ONLY` — red de arranque del runtime y baseline de regresión de los tests. Gates: typecheck/lint/build verdes, **810/810 tests en 88 archivos** (23 nuevos), `bash -n` del runner AI verde. **E2E en vivo PENDIENTE**: este entorno no tiene Docker, `psql` ni PostgreSQL y la app no está levantada; la sección 013 extendida parsea (`node --check`) pero no se ejecutó. Guía del dueño en `docs/playbook.md`.)
 
 **Actualizado:** 2026-10-01 (Corte 6 del spec 008 — **Laboratorio comercial**: el Laboratorio dejó de evaluar solo el agente genérico y ahora corre el **pipeline comercial real** (Sales Orchestrator + Jev + resolver + writer) sobre conversaciones sandbox, con override de Playbook por caso y comparación **Published vs Draft**. Gaps cerrados: `agent_test_case` persiste `playbook_version_id`/`playbook_schema_version` (migración aditiva `0008b`), outcomes esperados declarados a mano por el dueño con ✅/❌ en el reporte, y 6 personas V1 comerciales de academias deportivas. Las 6 ferreteras **no se eliminan**: quedan como `legacy_*` con alias para el histórico. Cero efectos residuales verificado por test: sin WhatsApp real (spy sobre `graphRequest`), sin filas en `sales_follow_up_job` y sin CAPI en corridas `is_test=true`. Cambió el índice de concurrencia de corridas: el lock pasó de UNIQUE(organización) a UNIQUE(organización, `playbook_mode`) para que `both` corra published y draft en paralelo. Gates: typecheck/lint/build verdes, 787/787 tests en 87 archivos (29 nuevos). **E2E en vivo y self-test con `pnpm dev` + mocks PENDIENTES**: este entorno no tiene Docker, `psql` ni PostgreSQL, y la app no está levantada; la sección 015 del arnés E2E está escrita y parsea, pero no se ejecutó. NO se tocó el runtime productivo: el override solo aplica con `is_test=true` y sigue validado por el guard T306 del orquestador.)

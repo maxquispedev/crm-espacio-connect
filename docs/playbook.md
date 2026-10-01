@@ -205,6 +205,14 @@ lo pruebas. Elige en qué versión quieres correr la evaluación (selector
 versión del playbook atendió cada caso**, por lo que la comparación es auditable: no
 comparas "corrida A" vs "corrida B" a ciegas, comparas dos versiones identificadas.
 
+Cada caso usa un contacto archivado y un lead nuevos, independientes también
+entre Publicada y Borrador. Las respuestas se guardan localmente para que el
+siguiente turno vea el historial completo. Al terminar (incluso si falla el
+juez), se eliminan contacto, lead, conversación y mensajes temporales; el
+informe conserva transcript, versión, outcomes y veredicto. Si la organización
+no tiene una etapa abierta, la corrida falla explícitamente. Los contactos
+archivados tampoco aparecen en el Pipeline operativo.
+
 ### Declarar lo esperado (a mano)
 
 El informe te muestra, por caso, el resultado real (qué decidió el motor) al lado
@@ -215,7 +223,7 @@ mano**, con los desplegables de `next_action`, `lane` y `handoff`.
 |---|---|
 | ✅ | Coincide con lo que declaraste. |
 | ❌ | Difiere de lo que declaraste. |
-| — | No declaraste expectativa para ese campo (o no hay resultado). |
+| — | No declaraste expectativa para ese campo. El resultado observado se muestra igualmente a la derecha; si falta, ese lado también muestra —. |
 
 > **Por qué el editor nunca autocompleta el esperado con lo observado:** sería una
 > comparación tautológica. Si el sistema llenara "esperado" con lo que el motor hizo,

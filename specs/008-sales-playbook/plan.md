@@ -527,3 +527,16 @@ un normalizer configurable— se acota con:
 
 La feature 008 no se declara Hecha hasta que los siete cortes
 estén verdes.
+## Plan del hotfix 2026-10-01
+
+1. Reutilizar findFirstOpenStage/createLeadInStage y defaults del schema con
+   contacto nuevo por caso, archivado y con identidad sandbox run/case.
+2. Invocar deliverReply también en is_test y conservar supresión de follow-ups.
+3. Copiar transcript/outcomes antes de judge y limpiar contacto en finally
+   (cascade lead/conversation/messages; agent_test_case FK SET NULL).
+4. Filtrar archivedAt IS NULL en board; regresiones con builder, orquestador,
+   resolver y delivery reales, Jev/writer mock, aislamiento y caminos infelices.
+5. Gates globales, E2E según disponibilidad y un commit atómico.
+
+Constitution Check: tenant scope obligatorio; sin nuevas dependencias/schema,
+sender único con barrera sandbox existente; cero cambios comerciales.

@@ -589,3 +589,15 @@ Una feature no está "Hecha" hasta que:
    `DEFAULTS_ONLY` reusables en tests; el runtime prefiere la
    publicada.
 7. Working tree limpio, un commit por corte, sin secretos.
+## Hotfix productivo del Laboratorio — 2026-10-01
+
+Corrida Draft real detectó outcomes vacíos: faltaba el lead y se omitía la
+entrega sandbox. Cada caso sales debe crear contacto archivado único por
+run/case y lead nuevo en la primera etapa open por position del tenant; sin
+etapa open falla explícitamente. Facts comerciales arrancan con defaults
+limpios, sin reutilización entre Published/Draft ni corridas. Writer entrega
+por `deliverReply` sandbox: persiste outbound e historial/facts sin WhatsApp,
+follow-ups ni CAPI externos. Transcript y actuals se copian a agent_test_case
+antes del judge; limpieza en finally por cascada de contacto conserva el
+resultado durable. Pipeline excluye todos los contactos archivados. Expected
+manualmente nullable nunca oculta actual. Sin cambios al Playbook V1/V2.

@@ -2,7 +2,7 @@
  * T308 — Cuando `conversation.is_test=true`, el orquestador:
  *   - NO llama a `scheduleNextFollowUp` (cero filas en
  *     `sales_follow_up_job`).
- *   - NO invoca el sender de WhatsApp (`deliverReply`).
+ *   - invoca `deliverReply` sandbox (persistencia local sin WhatsApp).
  *
  * Esto aísla la corrida de Laboratorio de efectos secundarios
  * sobre la cola durable y la API real de Meta.
@@ -155,9 +155,11 @@ describe("lab sandbox suppress follow-ups (T308)", () => {
       } as never,
     });
 
-    // T308: is_test=true suprime ambos efectos.
+    // Sandbox entrega localmente y suprime la cola durable.
     expect(scheduleNextFollowUp).not.toHaveBeenCalled();
-    expect(deliverReply).not.toHaveBeenCalled();
+    expect(deliverReply).toHaveBeenCalledWith(
+      expect.objectContaining({ isTest: true }), "mensaje de prueba"
+    );
   });
 
   it("corrida is_test=false → sigue creando follow-ups normalmente", async () => {

@@ -28,8 +28,11 @@ vi.mock("drizzle-orm", () => ({
   eq: (col: string, value: unknown) => ({ kind: "eq", col, value }),
   and: (...clauses: unknown[]) => ({ kind: "and", clauses }),
   or: (...clauses: unknown[]) => ({ kind: "or", clauses }),
-  asc: (c: unknown) => c,
-  desc: (c: unknown) => c,
+  isNull: (col: string) => ({ kind: "null", col }),
+  isNotNull: (col: string) => ({ kind: "notNull", col }),
+  inArray: (col: string, values: unknown[]) => ({ kind: "in", col, values }),
+  asc: (c: unknown) => ({ col: c, direction: 1 }),
+  desc: (c: unknown) => ({ col: c, direction: -1 }),
   sql: Object.assign(
     (strings: TemplateStringsArray, ...values: unknown[]) => ({
       kind: "sql",
@@ -55,6 +58,7 @@ const tables: Record<string, Row[]> = {
   lead: [],
   kbEntry: [],
   agentProfile: [],
+  pipelineStage: [],
   salesFollowUpJob: [],
 };
 
@@ -69,18 +73,31 @@ type Clause =
   | { kind: "eq"; col: string; value: unknown }
   | { kind: "and"; clauses: Clause[] }
   | { kind: "or"; clauses: Clause[] }
+  | { kind: "null" | "notNull"; col: string }
   | { kind: "sql" }
   | undefined;
+
+function valueOf(row: Row, col: string): unknown {
+  if (col in row) return row[col];
+  return row[col.slice(col.indexOf(".") + 1)];
+}
 
 function evalClause(clause: Clause | undefined, row: Row): boolean {
   if (!clause) return true;
   if (clause.kind === "eq") {
-    const col = clause.col.slice(clause.col.indexOf(".") + 1);
-    return row[col] === clause.value;
+    const right = typeof clause.value === "string" && clause.value.includes(".")
+      ? valueOf(row, clause.value) : clause.value;
+    return valueOf(row, clause.col) === right;
   }
+  if (clause.kind === "null") return valueOf(row, clause.col) == null;
+  if (clause.kind === "notNull") return valueOf(row, clause.col) != null;
   if (clause.kind === "and") return clause.clauses.every((c) => evalClause(c, row));
   if (clause.kind === "or") return clause.clauses.some((c) => evalClause(c, row));
-  return true; // sql() es del índice parcial UNIQUE; la BD real lo resuelve
+  return true;
+}
+
+function qualified(table: string, row: Row): Row {
+  return Object.fromEntries(Object.entries(row).map(([key, value]) => [`${table}.${key}`, value]));
 }
 
 function tableNameOf(t: unknown): string {
@@ -99,6 +116,13 @@ function insertRows(table: string, values: Row | Row[]): Row[] {
   const withDefaults = list.map((v) => ({
     createdAt: new Date(),
     startedAt: new Date(),
+    ...(table === "lead" ? {
+      automationLane: "auto", demoShownAt: null, pricePresentedAt: null,
+      paymentInstructionsSentAt: null, humanRequestedAt: null,
+      nextFollowUpAt: null, followUpCount: 0, followUpReason: null,
+      lastJevEvaluatedAt: null, lastJevDecision: null, lastJevError: null,
+      lastJevPlaybookVersionId: null, lastJevPlaybookSchemaVersion: null,
+    } : {}),
     ...v,
   }));
   bucket(table).push(...withDefaults);
@@ -115,7 +139,12 @@ function project(row: Row, projection: Record<string, unknown>): Row {
   const out: Row = {};
   for (const [key, ref] of Object.entries(projection)) {
     if (typeof ref === "string" && ref.includes(".")) {
-      out[key] = row[ref.slice(ref.indexOf(".") + 1)];
+      out[key] = valueOf(row, ref);
+    } else if (ref && typeof ref === "object") {
+      const table = tableNameOf(ref);
+      const prefix = `${table}.`;
+      const entries = Object.entries(row).filter(([k]) => k.startsWith(prefix));
+      out[key] = entries.length ? Object.fromEntries(entries.map(([k, v]) => [k.slice(prefix.length), v])) : null;
     }
   }
   return out;
@@ -125,6 +154,9 @@ const fakeDb = {
   select(projection?: Record<string, unknown>) {
     let table = "unknown";
     let clause: Clause;
+    let ordering: { col: string; direction: number } | undefined;
+    let cap = Infinity;
+    const joins: { table: string; clause: Clause; left: boolean }[] = [];
     const q: Record<string, unknown> = {
       from(t: unknown) {
         table = tableNameOf(t);
@@ -134,26 +166,39 @@ const fakeDb = {
         clause = c;
         return q;
       },
-      orderBy() {
-        return q;
+      orderBy(order: { col: string; direction: number }) { ordering = order; return q; },
+      limit(n: number) { cap = n; return q; },
+      innerJoin(t: unknown, c: Clause) {
+        joins.push({ table: tableNameOf(t), clause: c, left: false }); return q;
       },
-      limit() {
-        return q;
-      },
-      innerJoin() {
-        return q;
-      },
-      leftJoin() {
-        return q;
+      leftJoin(t: unknown, c: Clause) {
+        joins.push({ table: tableNameOf(t), clause: c, left: true }); return q;
       },
       then(
         resolve: (rows: Row[]) => unknown,
         reject?: (e: unknown) => unknown
       ): Promise<unknown> {
-        const matched = bucket(table).filter((r) => evalClause(clause, r));
-        const rows = projection
-          ? matched.map((r) => project(r, projection))
-          : matched;
+        let joined = bucket(table).map((r) => ({ ...r, ...qualified(table, r) }));
+        for (const join of joins) {
+          joined = joined.flatMap((r) => {
+            const matches = bucket(join.table)
+              .map((other) => ({ ...r, ...qualified(join.table, other) }))
+              .filter((candidate) => evalClause(join.clause, candidate));
+            return matches.length ? matches : join.left ? [r] : [];
+          });
+        }
+        let matched = joined.filter((r) => evalClause(clause, r));
+        if (ordering) {
+          const { col, direction } = ordering;
+          matched.sort((a, b) => {
+            const av = valueOf(a, col) as number;
+            const bv = valueOf(b, col) as number;
+            return (av < bv ? -1 : av > bv ? 1 : 0) * direction;
+          });
+        }
+        matched = matched.slice(0, cap);
+        const rows = projection ? matched.map((r) => project(r, projection))
+          : matched.map((r) => Object.fromEntries(Object.entries(r).filter(([k]) => !k.includes("."))));
         return Promise.resolve(rows).then(resolve, reject);
       },
     };
@@ -179,6 +224,27 @@ const fakeDb = {
       },
     };
     return q;
+  },
+
+  delete(t: unknown) {
+    const table = tableNameOf(t);
+    return { where(clause: Clause) {
+      const hits = bucket(table).filter((r) => evalClause(clause, r));
+      tables[table] = bucket(table).filter((r) => !hits.includes(r));
+      if (table === "contact") {
+        const ids = hits.map((r) => r.id);
+        const convIds = bucket("conversation").filter((r) => ids.includes(r.contactId)).map((r) => r.id);
+        tables.lead = bucket("lead").filter((r) => !ids.includes(r.contactId));
+        tables.conversation = bucket("conversation").filter((r) => !convIds.includes(r.id));
+        for (const child of ["message", "conversionEvent"]) {
+          tables[child] = bucket(child).filter((r) => !convIds.includes(r.conversationId));
+        }
+        for (const c of bucket("agentTestCase")) {
+          if (convIds.includes(c.conversationId)) c.conversationId = null;
+        }
+      }
+      return Promise.resolve(hits);
+    } };
   },
 
   update(t: unknown) {
@@ -240,11 +306,28 @@ vi.mock("@/lib/meta/client", async (importOriginal) => {
   return { ...original, graphRequest };
 });
 
+const sendCapiEvent = vi.hoisted(() => vi.fn());
+vi.mock("@/lib/meta/capi", async (importOriginal) => {
+  const original = await importOriginal<typeof import("@/lib/meta/capi")>();
+  return { ...original, sendCapiEvent };
+});
+
 const runAgentTurn = vi.hoisted(() => vi.fn());
 vi.mock("@/server/ai/pipeline", () => ({ runAgentTurn }));
 
 const runSalesOrchestratorTurn = vi.hoisted(() => vi.fn());
-vi.mock("@/server/sales/orchestrator", () => ({ runSalesOrchestratorTurn }));
+vi.mock("@/server/sales/orchestrator", async (importOriginal) => {
+  const original = await importOriginal<typeof import("@/server/sales/orchestrator")>();
+  return { ...original, runSalesOrchestratorTurn };
+});
+const evaluateJev = vi.hoisted(() => vi.fn());
+vi.mock("@/server/sales/client", () => ({ evaluateJev }));
+const writeSalesReply = vi.hoisted(() => vi.fn());
+vi.mock("@/server/sales/writer", () => ({ writeSalesReply }));
+vi.mock("@/lib/api", () => ({
+  withAuth: (handler: (session: unknown) => Promise<Response>) =>
+    () => handler({ organizationId: "org_lab" }),
+}));
 
 const getPublishedConfigForOrg = vi.hoisted(() => vi.fn());
 const getDraftConfigForOrg = vi.hoisted(() => vi.fn());
@@ -274,6 +357,8 @@ vi.mock("@/server/events/bus", () => ({ publish: vi.fn() }));
  * Helpers.
  * ------------------------------------------------------------------ */
 
+import { makeDecision } from "./sales-fixtures";
+import { GET as getBoard } from "@/app/api/pipeline/board/route";
 import {
   PlaybookVersionNotFoundError,
   parsePlaybookMode,
@@ -297,13 +382,13 @@ function seedProfile(salesEnabled: boolean): void {
 
 function seedPublished(id: string | null): void {
   getPublishedConfigForOrg.mockResolvedValue(
-    id ? { id, schema_version: "1.0", version_number: 1, status: "published" } : null
+    id ? { id, schema_version: "1.0", version_number: 1, status: "published", config: {} } : null
   );
 }
 
 function seedDraft(id: string | null): void {
   getDraftConfigForOrg.mockResolvedValue(
-    id ? { id, schema_version: "1.0", version_number: 2, status: "draft" } : null
+    id ? { id, schema_version: "1.0", version_number: 2, status: "draft", config: {} } : null
   );
 }
 
@@ -321,6 +406,7 @@ async function waitForRunDone(runId: string): Promise<void> {
 beforeEach(() => {
   resetTables();
   graphRequest.mockReset();
+  sendCapiEvent.mockReset();
   runAgentTurn.mockReset();
   runSalesOrchestratorTurn.mockReset();
   scheduleNextFollowUp.mockReset();
@@ -333,8 +419,22 @@ beforeEach(() => {
     verdict: { veredicto: "verde", hallazgos: [] },
   });
   runAgentTurn.mockResolvedValue(undefined);
-  runSalesOrchestratorTurn.mockResolvedValue(undefined);
-  getConfigByVersionId.mockResolvedValue(null);
+  runSalesOrchestratorTurn.mockImplementation(async (input, opts) => {
+    const original = await vi.importActual<typeof import("@/server/sales/orchestrator")>("@/server/sales/orchestrator");
+    await original.runSalesOrchestratorTurn(input, opts);
+  });
+  evaluateJev.mockReset();
+  writeSalesReply.mockReset();
+  evaluateJev.mockResolvedValue({ ok: true, decision: makeDecision({ nextAction: "show_operations_demo" }), snapshot: {} });
+  writeSalesReply.mockResolvedValue({ ok: true, text: "Demo sandbox" });
+  vi.stubEnv("ATRIBUCION", "on");
+  tables.pipelineStage!.push(
+    { id: "other", organizationId: "other_org", kind: "open", position: -10, name: "Otra org" },
+    { id: "won", organizationId: ORG, kind: "won", position: -1, name: "Cliente" },
+    { id: "chat", organizationId: ORG, kind: "open", position: 1, name: "En conversación" },
+    { id: "new", organizationId: ORG, kind: "open", position: 0, name: "Nuevo" },
+  );
+  getConfigByVersionId.mockImplementation(async (_org, id) => ({ id, config: {}, schema_version: "1.0", version_number: 1 }));
 });
 
 /* ------------------------------------------------------------------ */
@@ -381,7 +481,7 @@ describe("Laboratorio comercial — pipeline real (T607)", () => {
     }
 
     // Las conversaciones creadas por el runner son sandbox.
-    const convs = tables.conversation!;
+    const convs = runSalesOrchestratorTurn.mock.calls.map((call) => call[0].conversation);
     expect(convs.length).toBeGreaterThan(0);
     for (const conv of convs) expect(conv.isTest).toBe(true);
   });
@@ -427,6 +527,7 @@ describe("Laboratorio comercial — pipeline real (T607)", () => {
       schema_version: "1.0",
       version_number: 1,
       status: "archived",
+      config: {},
     });
 
     const runId = await startRun(ORG, "archived:spv_vieja");
@@ -501,33 +602,124 @@ describe("Laboratorio comercial — pipeline real (T607)", () => {
 
     // 1. Cero invocación al cliente Graph (WhatsApp real).
     expect(graphRequest).not.toHaveBeenCalled();
+    expect(sendCapiEvent).not.toHaveBeenCalled();
     // 2. Cero filas en la cola durable de follow-ups.
     expect(tables.salesFollowUpJob).toHaveLength(0);
     expect(scheduleNextFollowUp).not.toHaveBeenCalled();
-    // 3. Ninguna tabla de CAPI fue tocada por la corrida.
-    expect(tablesTouched).not.toContain("conversionEvent");
+    // 3. El guard CAPI impide emisión real; sus skips se limpian por cascada.
+    expect(tables.conversionEvent).toHaveLength(0);
     expect(tablesTouched).not.toContain("capiSettings");
+  });
+
+  it("crea lead limpio antes del primer turno; ambos modos y corridas repetidas son independientes", async () => {
+    seedProfile(true); seedPublished("pub"); seedDraft("draft");
+    const original = await vi.importActual<typeof import("@/server/sales/orchestrator")>("@/server/sales/orchestrator");
+    const initial: Row[] = [];
+    const contacts: Row[] = [];
+    const seen = new Set<string>();
+    runSalesOrchestratorTurn.mockImplementation(async (input, opts) => {
+      const lead = tables.lead!.find((r) => r.contactId === input.conversation.contactId);
+      expect(lead).toBeDefined(); // regresión: NO puede retornar por leadId=null
+      if (!seen.has(String(lead!.id))) {
+        seen.add(String(lead!.id)); initial.push({ ...lead! });
+        contacts.push({ ...tables.contact!.find((r) => r.id === lead!.contactId)! });
+      }
+      await original.runSalesOrchestratorTurn(input, opts);
+    });
+    const { runIds } = await startRunWithMode(ORG, "both");
+    await Promise.all(runIds.map(waitForRunDone));
+    await waitForRunDone(await startRun(ORG));
+    expect(initial).toHaveLength(18);
+    expect(new Set(contacts.map((c) => c.waIdentity)).size).toBe(18);
+    for (const c of contacts) expect(c.archivedAt).toBeInstanceOf(Date);
+    for (const lead of initial) {
+      expect(lead.stageId).toBe("new"); // primera open del tenant por position
+      expect(lead.automationLane).toBe("auto");
+      expect(lead.followUpCount).toBe(0);
+      for (const key of ["demoShownAt", "pricePresentedAt", "paymentInstructionsSentAt",
+        "humanRequestedAt", "nextFollowUpAt", "followUpReason", "lastJevDecision",
+        "lastJevEvaluatedAt", "lastJevError", "lastJevPlaybookVersionId", "lastJevPlaybookSchemaVersion"]) {
+        expect(lead[key]).toBeNull();
+      }
+    }
+    for (const c of tables.agentTestCase!) {
+      // Caso normal, Jev válido: los tres actuals jamás quedan vacíos.
+      expect(c.actualNextAction).toBe("show_operations_demo");
+      expect(c.actualLane).toBe("auto");
+      expect(c.actualHandoff).toBe(false);
+      expect(c.conversationId).toBeNull();
+    }
+    for (const table of ["contact", "lead", "conversation", "message"]) expect(tables[table]).toHaveLength(0);
+    // Builder y writer leen historial/outbound y facts durables del turno anterior.
+    expect(evaluateJev.mock.calls.some(([input]) =>
+      input.state.conversation.some((t: { from: string }) => t.from === "seller")
+      && input.state.crm_state.demo_shown === true)).toBe(true);
+    expect(graphRequest).not.toHaveBeenCalled();
+    expect(sendCapiEvent).not.toHaveBeenCalled();
+  });
+
+  it("board excluye sandbox y contactos reales archivados mientras conserva tarjetas normales del tenant", async () => {
+    seedProfile(true); seedPublished("pub");
+    tables.contact!.push(
+      { id: "live", organizationId: ORG, archivedAt: null, name: "Real" },
+      { id: "archived", organizationId: ORG, archivedAt: new Date(), name: "Archivado" },
+      { id: "foreign", organizationId: "other_org", archivedAt: null },
+    );
+    tables.lead!.push(
+      { id: "liveLead", organizationId: ORG, contactId: "live", stageId: "new", position: 0 },
+      { id: "archivedLead", organizationId: ORG, contactId: "archived", stageId: "new", position: 0 },
+      { id: "foreignLead", organizationId: "other_org", contactId: "foreign", stageId: "other", position: 0 },
+    );
+    judgeCase.mockImplementation(async () => {
+      expect(tables.contact!.some((c) => String(c.waIdentity).startsWith("lab:"))).toBe(true);
+      const response = await getBoard();
+      const board = await response.json();
+      expect(board.leads.map((l: { id: string }) => l.id)).toEqual(["liveLead"]);
+      return { status: "done", verdict: { veredicto: "verde", hallazgos: [] } };
+    });
+    await waitForRunDone(await startRun(ORG));
+    expect(judgeCase).toHaveBeenCalledTimes(6);
+    expect(tables.contact!.map((c) => c.id)).toEqual(["live", "archived", "foreign"]);
+    expect(tables.lead!.map((c) => c.id)).toEqual(["liveLead", "archivedLead", "foreignLead"]);
+  });
+
+  it("sin etapa open del tenant falla explícitamente y limpia setup parcial", async () => {
+    seedProfile(true); seedPublished("pub");
+    tables.pipelineStage = tables.pipelineStage!.filter((s) => s.organizationId !== ORG || s.kind !== "open");
+    const runId = await startRun(ORG);
+    await vi.waitFor(() => {
+      const run = tables.agentTestRun!.find((r) => r.id === runId);
+      expect(run?.status).toBe("failed");
+      expect(run?.error).toContain("lab_sales_open_stage_not_found");
+    });
+    expect(evaluateJev).not.toHaveBeenCalled();
+    for (const table of ["contact", "lead", "conversation", "message"]) expect(tables[table]).toHaveLength(0);
+  });
+
+  it.each(["returned", "thrown"])("judge falla (%s): conserva transcript/outcomes/version y limpia artefactos", async (mode) => {
+    seedProfile(true); seedPublished("pub");
+    if (mode === "thrown") judgeCase.mockRejectedValue(new Error("judge unavailable"));
+    else judgeCase.mockResolvedValue({ status: "judge_failed", detail: "judge unavailable" });
+    const runId = await startRun(ORG);
+    await vi.waitFor(() => expect(tables.agentTestRun!.find((r) => r.id === runId)?.status)
+      .toBe(mode === "thrown" ? "failed" : "done"));
+    const c = tables.agentTestCase!.find((r) => r.runId === runId)!;
+    expect(c.status).toBe("judge_failed");
+    expect(c.actualNextAction).toBe("show_operations_demo");
+    expect(c.actualLane).toBe("auto");
+    expect(c.actualHandoff).toBe(false);
+    expect(c.playbookVersionId).toBe("pub");
+    expect((c.transcript as Row[]).some((t) => t.role === "agente")).toBe(true);
+    expect(c.conversationId).toBeNull();
+    for (const table of ["contact", "lead", "conversation", "message"]) expect(tables[table]).toHaveLength(0);
   });
 
   it("persiste los outcomes observados (actual_*) para comparar contra lo esperado", async () => {
     seedProfile(true);
     seedPublished("spv_publicada_v1");
-    // El orquestador real escribe el snapshot en `lead`; aquí lo sembramos
-    // para verificar que el runner lo lee de la fuente durable. El contacto
-    // sale de la MISMA conversación del turno (cada caso tiene el suyo).
-    runSalesOrchestratorTurn.mockImplementation(
-      async ({ conversation }: { conversation: { contactId: string } }) => {
-        tables.lead!.push({
-          id: `ld_${conversation.contactId}`,
-          organizationId: ORG,
-          contactId: conversation.contactId,
-          automationLane: "human",
-          lastJevDecision: {
-            plan: { nextAction: "schedule_call", lane: "human", shouldHandoff: true },
-          },
-        });
-      }
-    );
+    evaluateJev.mockResolvedValue({
+      ok: true, decision: makeDecision({ nextAction: "schedule_call" }), snapshot: {},
+    });
 
     const runId = await startRun(ORG, "published");
     await waitForRunDone(runId);
@@ -547,17 +739,6 @@ describe("Laboratorio comercial — pipeline real (T607)", () => {
   it("el juez evalúa el transcript real (incluye respuestas del agente)", async () => {
     seedProfile(true);
     seedPublished("spv_publicada_v1");
-    // El orquestador, en sandbox, deja el mensaje saliente del writer.
-    runSalesOrchestratorTurn.mockImplementation(async ({ conversationId }: { conversationId: string }) => {
-      tables.message!.push({
-        id: `msg_out_${conversationId}`,
-        organizationId: ORG,
-        conversationId,
-        direction: "out",
-        text: "Con gusto, te muestro cómo funciona la demo de operaciones.",
-        createdAt: new Date(Date.now() + 1000),
-      });
-    });
 
     const runId = await startRun(ORG, "published");
     await waitForRunDone(runId);
@@ -571,6 +752,12 @@ describe("Laboratorio comercial — pipeline real (T607)", () => {
 
     const cases = tables.agentTestCase!.filter((c) => c.runId === runId);
     expect(cases[0]!.status).toBe("done");
+    for (const c of cases) {
+      expect((c.transcript as Row[]).some((t) => t.role === "agente")).toBe(true);
+      expect(c.actualNextAction).not.toBeNull();
+      expect(c.actualLane).not.toBeNull();
+      expect(typeof c.actualHandoff).toBe("boolean");
+    }
   });
 });
 
