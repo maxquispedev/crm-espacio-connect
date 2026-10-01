@@ -23,6 +23,7 @@ import { z } from "zod";
 
 import { parseBody, withAuth } from "@/lib/api";
 import {
+  assertJevProtectedKeys,
   ConfigV1ObjectSchema,
   ConfigV1Schema,
   type ConfigV1,
@@ -161,6 +162,31 @@ export const PUT = withAuth(async (session, request: Request) => {
           code:
             (i as unknown as { params?: { code?: string } }).params?.code ??
             i.code,
+          path: i.path.join("."),
+          message: i.message,
+        })),
+      },
+      { status: 422 }
+    );
+  }
+
+  // Corte 5 / T505: el Zod valida la FORMA del documento, pero no
+  // puede saber si una `known signal` cambió de `type` respecto al
+  // draft guardado (el `discriminatedUnion` acepta `noul -> score`
+  // con criterios nuevos). Aquí sí tenemos el baseline, así que
+  // revisamos el candado por clase contra lo que había.
+  const protectedIssues = assertJevProtectedKeys(
+    result.data.jev_questions,
+    current.jev_questions
+  );
+  if (protectedIssues.length > 0) {
+    return Response.json(
+      {
+        code: "protected_keys_violation",
+        message:
+          "Una pregunta del contrato del motor cambió de tipo o fue eliminada",
+        details: protectedIssues.map((i) => ({
+          code: i.code,
           path: i.path.join("."),
           message: i.message,
         })),

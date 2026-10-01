@@ -157,14 +157,17 @@ export function PlaybookClient() {
       const res = await fetch("/api/playbook/draft", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        // El endpoint acepta patch por bloque; mandamos los bloques
-        // tocables (las preguntas Jev no se editan en este corte).
+        // Mandamos el documento entero (bloques tocables + las
+        // preguntas Jev, que el editor Jev del Corte 5 ya permite
+        // editar con sus candados por clase). El servidor revalida
+        // con Zod + `assertJevProtectedKeys` antes de persistir.
         body: JSON.stringify({
           product: config.product,
           offer: config.offer,
           commercial_policy: config.commercial_policy,
           priorities: config.priorities,
           writer: config.writer,
+          jev_questions: config.jev_questions,
           prohibitions: config.prohibitions,
           handoff: config.handoff,
           urgency_rules: config.urgency_rules ?? null,

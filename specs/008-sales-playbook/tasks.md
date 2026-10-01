@@ -469,7 +469,7 @@ NO empieces Corte 4.
 
 ## Corte 5 — Editor Jev avanzado (T501..T507)
 
-- [ ] **T501** — `jev-questions-editor.tsx`: lista de preguntas con
+- [x] **T501** — `jev-questions-editor.tsx`: lista de preguntas con
   badges:
   - `engine-required` 🔒 (2 preguntas): `next_action`,
     `needs_human_call`. Candado en `key` y `type`.
@@ -481,12 +481,12 @@ NO empieces Corte 4.
     descripciones y `enabled`.
   - `analytical/custom` ➕ (libres): cualquier otra. Editables por
     completo.
-- [ ] **T502** — Editor inline por pregunta (choice / noul / score).
-- [ ] **T503** — Crear pregunta nueva (solo `analytical`).
-- [ ] **T504** — Duplicar pregunta existente (no
+- [x] **T502** — Editor inline por pregunta (choice / noul / score).
+- [x] **T503** — Crear pregunta nueva (solo `analytical`).
+- [x] **T504** — Duplicar pregunta existente (no
   `engine-required`; en `known signals` se permite duplicar pero la
   copia es `analytical`).
-- [ ] **T505** — `assertJevProtectedKeys(current, next)` server-side:
+- [x] **T505** — `assertJevProtectedKeys(current, next)` server-side:
   - `next_action`: type fijo `choice`, no se puede eliminar ni
     desactivar; option keys deben ser exactamente el set
     `['ask_more_questions', 'show_operations_demo',
@@ -508,8 +508,8 @@ NO empieces Corte 4.
   - `real_operational_need`, `product_fit`, `motivation_to_change`,
     `purchase_intent`: type fijo (noul / score / score / score), no
     se pueden renombrar. Se pueden desactivar.
-- [ ] **T506** — UX: candados con tooltip explicativo en cada clase.
-- [ ] **T507** — Tests + E2E.
+- [x] **T506** — UX: candados con tooltip explicativo en cada clase.
+- [x] **T507** — Tests + E2E.
 
 **Cierre del corte 5**:
 

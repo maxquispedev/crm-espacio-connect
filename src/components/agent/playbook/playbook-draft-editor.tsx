@@ -31,10 +31,7 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 
-import {
-  WRITER_NEXT_ACTIONS,
-  type JevQuestionClass,
-} from "@/lib/sales/playbook/constants";
+import { WRITER_NEXT_ACTIONS } from "@/lib/sales/playbook/constants";
 import type { ConfigV1 } from "@/lib/sales/playbook/schema";
 
 import {
@@ -46,20 +43,11 @@ import {
   TextAreaField,
   TextField,
 } from "./fields";
-import { countJevByClass, jevClassIcon, jevClassLabel } from "./summary";
+import { JevQuestionsEditor } from "./jev-questions-editor";
 import type { PlaybookVersionDto, ValidationIssue } from "./types";
 
 const CURRENCY_OPTIONS = ["PEN", "USD", "MXN", "EUR"] as const;
 const CHANNEL_OPTIONS = ["WhatsApp", "WhatsApp+SMS", "WhatsApp+Email"] as const;
-
-const JEV_BADGE_VARIANT: Record<
-  JevQuestionClass,
-  "destructive" | "warning" | "secondary"
-> = {
-  "engine-required": "destructive",
-  "known-signal": "warning",
-  analytical: "secondary",
-};
 
 /**
  * Construye un lookup `path -> mensaje` desde los `details` del 422 de
@@ -213,9 +201,6 @@ export function PlaybookDraftEditor({
   const issueAt = React.useMemo(() => makeIssueIndex(allIssues), [allIssues]);
   const hasErrors = allIssues.length > 0;
 
-  const counts = countJevByClass(config.jev_questions);
-  const totalQuestions = Object.keys(config.jev_questions).length;
-
   const handleSave = () => {
     onSave({ ...config, urgency_rules: config.urgency_rules ?? null });
   };
@@ -235,31 +220,20 @@ export function PlaybookDraftEditor({
       </CardHeader>
 
       <CardContent className="flex flex-col gap-5">
-        {/* ================= Resumen Jev (read-only, Corte 5) ========== */}
-        <div className="rounded-md border bg-secondary/30 p-3">
-          <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
-            <span className="text-sm font-medium">
-              Preguntas Jev · {totalQuestions} en total
-            </span>
-            <span className="text-xs text-muted-foreground">
-              No editables en este corte
-            </span>
-          </div>
-          <div className="flex flex-wrap gap-1.5">
-            <Badge variant={JEV_BADGE_VARIANT["engine-required"]}>
-              {jevClassIcon("engine-required")} {jevClassLabel("engine-required")}:{" "}
-              {counts["engine-required"]}
-            </Badge>
-            <Badge variant={JEV_BADGE_VARIANT["known-signal"]}>
-              {jevClassIcon("known-signal")} {jevClassLabel("known-signal")}:{" "}
-              {counts["known-signal"]}
-            </Badge>
-            <Badge variant={JEV_BADGE_VARIANT.analytical}>
-              {jevClassIcon("analytical")} {jevClassLabel("analytical")}:{" "}
-              {counts.analytical}
-            </Badge>
-          </div>
-        </div>
+        {/* ================= Preguntas Jev (Corte 5) ================ */}
+        <BlockSection
+          title="Preguntas Jev"
+          description="Editor por clases: contrato del motor, señales conocidas y preguntas analíticas propias."
+        >
+          <JevQuestionsEditor
+            questions={config.jev_questions}
+            issueAt={issueAt}
+            onChange={(next) => {
+              setConfig((c) => ({ ...c, jev_questions: next }));
+              setDirty(true);
+            }}
+          />
+        </BlockSection>
 
         {/* ================= 1. Producto ============================== */}
         <BlockSection

@@ -1893,6 +1893,10 @@ async function main() {
   // rollback → eliminar draft, más el aislamiento de tenant.
   await runSection013();
 
+  // 008 — Sección 014: Sales Playbook (editor Jev, corte 5). Corre
+  // sobre la misma org que la 013 y vuelve a dejarla limpia.
+  await runSection014();
+
   console.log(`\n===== ${checks - failures}/${checks} checks OK, ${failures} fallos =====`);
   process.exit(failures > 0 ? 1 : 0);
 }
@@ -3247,6 +3251,247 @@ async function runSection013() {
   ok(
     "013 · la org B tampoco puede leer una versión concreta de la org A",
     (await api(`/api/playbook/versions/${v1Id}`)).res.status === 404
+  );
+
+  // Restauramos la sesión de la org A.
+  cookie = cookieA;
+}
+
+/**
+ * 008 — Sección 014 (Sales Playbook, corte 5: editor Jev por clases).
+ *
+ * Corre el ciclo de edición de preguntas Jev que ejecuta la UI del
+ * editor (`/agent` → "Sales Playbook" → "Preguntas Jev"), contra la
+ * app real, y comprueba los tres caminos por clase:
+ *
+ *  - `engine-required` (🔒): editar la DESCRIPCIÓN de un criterio de
+ *    `next_action` sí se guarda (200)… pero cambiar su `type`, sus
+ *    option keys, desactivarlo o "volver a crearlo" son 422 con el
+ *    `code` de guardarraíl. La UI además no renderiza selector de
+ *    type ni input de key para esta clase (T506).
+ *  - `known signal` (📊): `product_fit` se DESACTIVA (200, con
+ *    fallback), su `type` no se puede cambiar (422) y sus option
+ *    keys en `buying_timing` son intocables (422).
+ *  - `analytical` (➕): crear una pregunta libre nueva es 200 y
+ *    sobrevive a la relectura del draft.
+ *
+ * Deja la org como la encontró (V1 publicada, sin draft) para que la
+ * sección sea RE-EJECUTABLE (Constitución IV).
+ */
+async function runSection014() {
+  console.log("\n== 008-sales-playbook: editor Jev (corte 5) ==");
+  const email = "e2e-008@vocero.test";
+  const password = "password-e2e-123";
+  let reg = await api("/api/auth/sign-up/email", {
+    method: "POST",
+    body: JSON.stringify({ email, password, name: "Operador 008" }),
+  });
+  if (!reg.res.ok) {
+    reg = await api("/api/auth/sign-in/email", {
+      method: "POST",
+      body: JSON.stringify({ email, password }),
+    });
+  }
+  ok("014 · signup/login operador 008", reg.res.ok, JSON.stringify(reg.json));
+  const cookieA = cookie;
+
+  let orgsA = orgListFrom((await api("/api/auth/organization/list")).json);
+  let orgA = orgsA[0];
+  if (!orgA) {
+    const createdOrg = await api("/api/auth/organization/create", {
+      method: "POST",
+      body: JSON.stringify({
+        name: "Playbook E2E 008",
+        slug: `playbook-e2e-014-${Date.now()}`,
+      }),
+    });
+    orgA = createdOrg.json?.id
+      ? { id: createdOrg.json.id }
+      : orgListFrom((await api("/api/auth/organization/list")).json)[0];
+  }
+  if (orgA?.id) {
+    await api("/api/auth/organization/set-active", {
+      method: "POST",
+      body: JSON.stringify({ organizationId: orgA.id }),
+    });
+  }
+
+  const codes = (body) => (body?.details ?? []).map((d) => d.code ?? "");
+
+  // Partimos de un estado conocido: publicada activa, sin draft.
+  let state = await api("/api/playbook");
+  if (state.json?.draft) {
+    await api("/api/playbook/draft", { method: "DELETE" });
+    state = await api("/api/playbook");
+  }
+  const v1 = state.json?.published;
+  ok(
+    "014 · baseline: hay V1 publicada y ningún draft abierto",
+    state.res.ok && !!v1 && !state.json?.draft,
+    JSON.stringify({ published: v1?.version_number, draft: state.json?.draft })
+  );
+  if (!v1) {
+    cookie = cookieA;
+    return;
+  }
+
+  const created = await api("/api/playbook/draft", {
+    method: "POST",
+    body: JSON.stringify({}),
+  });
+  ok("014 · POST draft → 201", created.res.status === 201, JSON.stringify(created.json).slice(0, 200));
+  if (created.res.status !== 201) {
+    cookie = cookieA;
+    return;
+  }
+
+  /** PUT de `jev_questions` devolviendo el cuerpo parseado. */
+  const putJev = async (jev_questions) =>
+    api("/api/playbook/draft", {
+      method: "PUT",
+      body: JSON.stringify({ jev_questions }),
+    });
+
+  const clone = (o) => JSON.parse(JSON.stringify(o));
+  const baseQuestions = () => clone(v1.jev_questions);
+
+  // --- engine-required: editar la DESCRIPCIÓN sí se guarda --------
+  const q1 = baseQuestions();
+  q1.next_action.criteria.present_price =
+    "Presenta el precio con el included de alumnos activos.";
+  const put1 = await putJev(q1);
+  ok(
+    "014 · editar la descripción de un criterio de next_action → 200",
+    put1.res.status === 200,
+    JSON.stringify(put1.json).slice(0, 200)
+  );
+  ok(
+    "014 · la descripción editada de next_action quedó persistida",
+    put1.json?.draft?.jev_questions?.next_action?.criteria?.present_price ===
+      "Presenta el precio con el included de alumnos activos.",
+    JSON.stringify(put1.json?.draft?.jev_questions?.next_action?.criteria?.present_price)
+  );
+
+  // --- known signal: desactivar product_fit -----------------------
+  const q2 = clone(put1.json.draft.jev_questions);
+  q2.product_fit.enabled = false;
+  const put2 = await putJev(q2);
+  ok(
+    "014 · desactivar product_fit (known signal) → 200",
+    put2.res.status === 200,
+    JSON.stringify(put2.json).slice(0, 200)
+  );
+  ok(
+    "014 · product_fit queda guardada como desactivada",
+    put2.json?.draft?.jev_questions?.product_fit?.enabled === false,
+    JSON.stringify(put2.json?.draft?.jev_questions?.product_fit?.enabled)
+  );
+
+  // --- analytical: crear una pregunta libre -----------------------
+  const q3 = clone(put2.json.draft.jev_questions);
+  q3.foo_bar = {
+    type: "noul",
+    enabled: true,
+    instructions: "¿Ha mencionado el precio de un competidor?",
+    criteria: {
+      true: "Sí, hay un precio explícito en la conversación.",
+      false: "No mencionó precios de terceros.",
+    },
+  };
+  const put3 = await putJev(q3);
+  ok("014 · crear pregunta analítica nueva (foo_bar) → 200", put3.res.status === 200, JSON.stringify(put3.json).slice(0, 200));
+  ok(
+    "014 · la analítica sobrevive a la relectura del draft",
+    put3.json?.draft?.jev_questions?.foo_bar?.type === "noul",
+    JSON.stringify(put3.json?.draft?.jev_questions?.foo_bar)
+  );
+
+  // --- Los candados: cada intento inválido da 422 con su code ------
+  // (La UI no ofrece estos controles; el arnés los ejercita por API
+  // para comprobar que el servidor es la frontera real.)
+
+  const qType = clone(put3.json.draft.jev_questions);
+  qType.next_action = {
+    type: "noul",
+    enabled: true,
+    instructions: "intento de cambio de type",
+    criteria: { true: "sí", false: "no" },
+  };
+  const rType = await putJev(qType);
+  ok(
+    "014 · cambiar el type de next_action → 422 engine_required_type_mismatch",
+    rType.res.status === 422 && codes(rType.json).includes("engine_required_type_mismatch"),
+    JSON.stringify(rType.json?.details ?? rType.json)
+  );
+
+  const qCreate = clone(put3.json.draft.jev_questions);
+  qCreate.next_action = {
+    type: "noul",
+    enabled: true,
+    instructions: "intento de alta con key del contrato",
+    criteria: { true: "sí", false: "no" },
+  };
+  const rCreate = await putJev(qCreate);
+  ok(
+    "014 · 'crear' una pregunta con la key next_action → 422",
+    rCreate.res.status === 422,
+    JSON.stringify(rCreate.json?.details ?? rCreate.json)
+  );
+
+  const qKeys = clone(put3.json.draft.jev_questions);
+  qKeys.buying_timing.criteria.pronto = "Compra en las próximas semanas.";
+  const rKeys = await putJev(qKeys);
+  ok(
+    "014 · añadir una option key fuera del set V1 en buying_timing → 422 choice_keys_mismatch",
+    rKeys.res.status === 422 && codes(rKeys.json).includes("choice_keys_mismatch"),
+    JSON.stringify(rKeys.json?.details ?? rKeys.json)
+  );
+
+  const qKnown = clone(put3.json.draft.jev_questions);
+  qKnown.real_operational_need = {
+    type: "score",
+    enabled: true,
+    instructions: "cambio de type de una known signal",
+    criteria: ["Nada", "Nada", "Poco", "Algo", "Bastante", "Mucho", "Total"],
+  };
+  const rKnown = await putJev(qKnown);
+  ok(
+    "014 · cambiar el type de una known signal (real_operational_need) → 422 protected_type_change",
+    rKnown.res.status === 422 && codes(rKnown.json).includes("protected_type_change"),
+    JSON.stringify(rKnown.json?.details ?? rKnown.json)
+  );
+
+  // --- El contrato quedó intacto tras todos los 422 ---------------
+  const after = await api("/api/playbook");
+  const finalQ = after.json?.draft?.jev_questions;
+  const nextKeys = Object.keys(finalQ?.next_action?.criteria ?? {}).sort();
+  const timingKeys = Object.keys(finalQ?.buying_timing?.criteria ?? {}).sort();
+  ok(
+    "014 · tras los rechazos el contrato sigue intacto (7 next_action, 5 buying_timing)",
+    nextKeys.length === 7 && timingKeys.length === 5,
+    JSON.stringify({ nextKeys, timingKeys })
+  );
+  ok(
+    "014 · el contrato conserva la descripción editada y la analítica nueva",
+    finalQ?.next_action?.criteria?.present_price ===
+      "Presenta el precio con el included de alumnos activos." &&
+      finalQ?.foo_bar !== undefined &&
+      finalQ?.product_fit?.enabled === false,
+    JSON.stringify({
+      descripcion: finalQ?.next_action?.criteria?.present_price,
+      analitica: !!finalQ?.foo_bar,
+      productFit: finalQ?.product_fit?.enabled,
+    })
+  );
+
+  // --- Limpieza: dejamos la org como la encontramos ---------------
+  const del = await api("/api/playbook/draft", { method: "DELETE" });
+  ok("014 · DELETE draft (limpieza) → 200", del.res.ok, JSON.stringify(del.json).slice(0, 200));
+  const finalState = await api("/api/playbook");
+  ok(
+    "014 · la org queda con V1 publicada y sin draft (re-ejecutable)",
+    finalState.res.ok && !!finalState.json?.published && !finalState.json?.draft,
+    JSON.stringify({ published: finalState.json?.published?.version_number, draft: finalState.json?.draft })
   );
 
   // Restauramos la sesión de la org A.

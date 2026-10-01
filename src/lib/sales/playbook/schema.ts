@@ -31,6 +31,7 @@ import {
   ENGINE_REQUIRED_KEYS,
   MAIN_VALUE_PROPOSITION_OPTION_KEYS,
   NEXT_ACTION_OPTION_KEYS,
+  PROTECTED_QUESTION_TYPES,
 } from "./constants";
 
 /* ============================================================
@@ -47,6 +48,8 @@ export {
   KNOWN_SIGNAL_KEYS,
   MAIN_VALUE_PROPOSITION_OPTION_KEYS,
   NEXT_ACTION_OPTION_KEYS,
+  PROTECTED_CHOICE_OPTION_KEYS,
+  PROTECTED_QUESTION_TYPES,
 } from "./constants";
 
 /* ============================================================
@@ -347,4 +350,105 @@ function assertExactChoiceKeys(
       },
     });
   }
+}
+
+/* ============================================================
+ * assertJevProtectedKeys — candado por clase, contra el baseline
+ * ============================================================ */
+
+/**
+ * Revisión de las clases protegidas contra el **baseline** (el draft
+ * tal y como está guardado), complemento del `superRefine` de
+ * `ConfigV1Schema`.
+ *
+ * El Zod ya cubre, sin conocer el historial:
+ *   - `engine-required` ausentes / con `type` incorrecto /
+ *     con `enabled = false`;
+ *   - option keys fuera del set V1 en `next_action`, `buying_timing`
+ *     y `main_value_proposition`;
+ *   - `key` mal formadas (`^[a-z_]+$`, ≤ 60 chars).
+ *
+ * Lo que el Zod **no** puede saber es si una `known signal` cambió
+ * de `type`. El schema es un `discriminatedUnion` sobre `type`, así
+ * que `real_operational_need` pasando de `noul` a `score` con sus
+ * criterios nuevos es un documento *estructuralmente válido* que el
+ * motor leería con otra forma de la que espera. Eso es exactamente
+ * lo que el Corte 5 prohíbe ("key, type fijos"), así que lo
+ * detectamos aquí comparando con el documento previo.
+ *
+ * Códigos emitidos (alineados con el `code` de los 422 del API):
+ *   - `protected_key_removed`  — desaparece una key protegida.
+ *   - `protected_type_change`  — cambia el `type` de una key protegida.
+ *
+ * `baseline` es el `jev_questions` guardado. Si viene `undefined`
+ * (no debería en el PUT, que siempre tiene draft), solo se valida
+ * contra la tabla de tipos esperados.
+ */
+export function assertJevProtectedKeys(
+  next: unknown,
+  baseline?: unknown
+): ParseErrorDetail[] {
+  const issues: ParseErrorDetail[] = [];
+  const qs = asQuestionRecord(next);
+  if (qs === null) return issues;
+
+  const base = asQuestionRecord(baseline);
+  const protectedKeys = Object.keys(PROTECTED_QUESTION_TYPES);
+
+  for (const key of protectedKeys) {
+    const expectedType = PROTECTED_QUESTION_TYPES[key];
+    if (expectedType === undefined) continue;
+    const q = qs[key];
+
+    if (q === undefined) {
+      // Las `engine-required` nunca desaparecen (el Zod ya lo exige);
+      // las `known signal` sí pueden: el resolver tolera ausentes.
+      if (base?.[key] !== undefined) {
+        issues.push({
+          path: ["jev_questions", key],
+          message: `pregunta protegida eliminada: ${key} es contrato del motor`,
+          code: "protected_key_removed",
+        });
+      }
+      continue;
+    }
+
+    if (q.type !== expectedType) {
+      issues.push({
+        path: ["jev_questions", key, "type"],
+        message: `protected type change: ${key} debe seguir siendo ${expectedType}, recibido ${q.type}`,
+        code: "protected_type_change",
+      });
+      continue;
+    }
+
+    // Si el baseline tenía otra forma, el cambio es explícito aunque
+    // el `type` esperado coincida (p. ej. la key se creó nueva con el
+    // `type` correcto pero no venía del contrato).
+    const prev = base?.[key];
+    if (prev !== undefined && prev.type !== q.type) {
+      issues.push({
+        path: ["jev_questions", key, "type"],
+        message: `protected type change: ${key} cambió de ${prev.type} a ${q.type}`,
+        code: "protected_type_change",
+      });
+    }
+  }
+
+  return issues;
+}
+
+/**
+ * Narrowing defensivo del record de preguntas. Acepta cualquier valor
+ * (el PUT lo pasa ya parseado, pero la función también se usa en
+ * tests) y devuelve `null` si no tiene la forma mínima de un map de
+ * preguntas.
+ */
+function asQuestionRecord(
+  value: unknown
+): Record<string, { type?: unknown }> | null {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return null;
+  }
+  return value as Record<string, { type?: unknown }>;
 }
