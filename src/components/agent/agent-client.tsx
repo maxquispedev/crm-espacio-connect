@@ -8,7 +8,16 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import { PlaybookClient } from "@/components/agent/playbook/playbook-client";
 import { countVariables } from "@/lib/whatsapp/template-placeholders";
+
+type TabId = "comportamiento" | "conocimiento" | "playbook";
+
+const TABS: readonly { id: TabId; label: string }[] = [
+  { id: "comportamiento", label: "Comportamiento" },
+  { id: "conocimiento", label: "Conocimiento" },
+  { id: "playbook", label: "Sales Playbook" },
+];
 
 type Profile = {
   enabled: boolean;
@@ -46,6 +55,7 @@ export function AgentClient() {
   const [kbSize, setKbSize] = useState<{ chars: number; warnAt: number; warning: boolean } | null>(null);
   const [templates, setTemplates] = useState<TemplateOption[]>([]);
   const [saved, setSaved] = useState(false);
+  const [tab, setTab] = useState<TabId>("comportamiento");
 
   const refetch = useCallback(async () => {
     const [p, kb, size, tpl] = await Promise.all([
@@ -134,36 +144,66 @@ export function AgentClient() {
       )}
 
       <div className="space-y-6 p-6">
-        <SalesOrchestratorCard
-          enabled={profile.salesOrchestratorEnabled}
-          jevConfigured={jevConfigured}
-          onToggle={() => {
-            const next = !profile.salesOrchestratorEnabled;
-            void saveProfile({
-              salesOrchestratorEnabled: next,
-              ...(next ? {} : { salesFollowUpsEnabled: false }),
-            });
-          }}
-        />
-        <SalesFollowUpsCard
-          enabled={profile.salesFollowUpsEnabled}
-          orchestratorEnabled={profile.salesOrchestratorEnabled}
-          templateId={profile.salesFollowUpTemplateId}
-          templates={templates}
-          onToggle={() => {
-            if (!profile.salesOrchestratorEnabled) return;
-            void saveProfile({
-              salesFollowUpsEnabled: !profile.salesFollowUpsEnabled,
-            });
-          }}
-          onTemplateChange={(id) =>
-            void saveProfile({ salesFollowUpTemplateId: id })
-          }
-        />
-        <div className="grid gap-6 lg:grid-cols-2">
-          <ProfileSection profile={profile} onSave={saveProfile} />
+        <nav
+          className="flex flex-wrap gap-1 border-b"
+          role="tablist"
+          aria-label="Secciones del agente"
+        >
+          {TABS.map((t) => (
+            <button
+              key={t.id}
+              role="tab"
+              type="button"
+              aria-selected={tab === t.id}
+              onClick={() => setTab(t.id)}
+              className={`-mb-px border-b-2 px-3 py-2 text-sm font-medium transition-colors ${
+                tab === t.id
+                  ? "border-brand text-foreground"
+                  : "border-transparent text-muted-foreground hover:text-foreground"
+              }`}
+            >
+              {t.label}
+            </button>
+          ))}
+        </nav>
+
+        {tab === "comportamiento" ? (
+          <>
+            <SalesOrchestratorCard
+              enabled={profile.salesOrchestratorEnabled}
+              jevConfigured={jevConfigured}
+              onToggle={() => {
+                const next = !profile.salesOrchestratorEnabled;
+                void saveProfile({
+                  salesOrchestratorEnabled: next,
+                  ...(next ? {} : { salesFollowUpsEnabled: false }),
+                });
+              }}
+            />
+            <SalesFollowUpsCard
+              enabled={profile.salesFollowUpsEnabled}
+              orchestratorEnabled={profile.salesOrchestratorEnabled}
+              templateId={profile.salesFollowUpTemplateId}
+              templates={templates}
+              onToggle={() => {
+                if (!profile.salesOrchestratorEnabled) return;
+                void saveProfile({
+                  salesFollowUpsEnabled: !profile.salesFollowUpsEnabled,
+                });
+              }}
+              onTemplateChange={(id) =>
+                void saveProfile({ salesFollowUpTemplateId: id })
+              }
+            />
+            <ProfileSection profile={profile} onSave={saveProfile} />
+          </>
+        ) : null}
+
+        {tab === "conocimiento" ? (
           <KbSection entries={entries} kbSize={kbSize} onChanged={() => void refetch()} />
-        </div>
+        ) : null}
+
+        {tab === "playbook" ? <PlaybookClient /> : null}
       </div>
     </div>
   );

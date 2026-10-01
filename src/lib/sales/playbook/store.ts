@@ -75,6 +75,22 @@ export type UpdateDraftPatch = {
   slug?: string;
 };
 
+/**
+ * Error lanzado al intentar eliminar el draft cuando la organización
+ * no tiene ninguna versión `published` activa. Sin esePublished, borrar
+ * el único documento dejaría al negocio sin playbook en vigor, así que
+ * la operación se rechaza (el caller la mapea a HTTP 409).
+ */
+export class NoPublishedVersionError extends Error {
+  readonly code = "no_published_version";
+  constructor(
+    message = "No se puede eliminar el draft sin una versión publicada activa"
+  ) {
+    super(message);
+    this.name = "NoPublishedVersionError";
+  }
+}
+
 /* ============================================================
  * Helpers internos
  * ============================================================ */
@@ -503,6 +519,59 @@ async function ensurePlaybookRow(
   const row = inserted[0];
   if (!row) {
     throw new Error("ensurePlaybookRow: INSERT no retornó fila");
+  }
+  return row;
+}
+
+/* ============================================================
+ * Borrado del draft (Corte 4, T406)
+ * ============================================================ */
+
+/**
+ * Elimina (hard delete) el draft abierto de la organización.
+ *
+ * Guardarraíl de negocio: **solo** se permite si existe una versión
+ * `published` activa. Así la UI no puede dejar al negocio sin playbook
+ * en vigor borrando el único documento disponible.
+ *
+ * Semánticas de retorno:
+ *  - `null` si no había draft abierto (idempotente: no es error).
+ *  - la fila eliminada si sí lo había.
+ *  - lanza `NoPublishedVersionError` si no hay `published` activo.
+ *
+ * El borrado es duro (no archivamos): un draft nunca fue published, así
+ * que no tiene valor histórico ni aparece en el historial publicado.
+ * Las versiones ya publicadas/archivadas NUNCA se tocan aquí.
+ */
+export async function deleteDraft(
+  orgId: string
+): Promise<PlaybookVersionRow | null> {
+  if (!orgId) throw new Error("deleteDraft: organizationId requerido");
+  const db = getDb();
+
+  const published = await getPublishedVersionForOrg(orgId);
+  if (!published) {
+    throw new NoPublishedVersionError();
+  }
+
+  const draft = await getDraftVersionForOrg(orgId);
+  if (!draft) return null;
+
+  const deleted = await db
+    .delete(schema.salesPlaybookVersion)
+    .where(
+      scoped(
+        schema.salesPlaybookVersion.organizationId,
+        orgId,
+        eq(schema.salesPlaybookVersion.id, draft.id)
+      )
+    )
+    .returning();
+
+  const row = deleted[0];
+  if (!row) {
+    // Carrera: otro caller borró el draft entre SELECT y DELETE.
+    return null;
   }
   return row;
 }

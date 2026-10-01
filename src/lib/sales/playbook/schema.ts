@@ -26,49 +26,28 @@
 
 import { z } from "zod";
 
+import {
+  BUYING_TIMING_OPTION_KEYS,
+  ENGINE_REQUIRED_KEYS,
+  MAIN_VALUE_PROPOSITION_OPTION_KEYS,
+  NEXT_ACTION_OPTION_KEYS,
+} from "./constants";
+
 /* ============================================================
  * Catálogos congelados (contrato del resolver/writer)
+ *
+ * Viven en `./constants` (módulo sin dependencias) para que la UI del
+ * editor pueda clasificarlas sin arrastrar Zod al bundle del cliente.
+ * Se re-exportan aquí para conservar los imports existentes.
  * ============================================================ */
 
-export const NEXT_ACTION_OPTION_KEYS = [
-  "ask_more_questions",
-  "show_operations_demo",
-  "show_online_enrollment_demo",
-  "present_price",
-  "schedule_call",
-  "schedule_follow_up",
-  "disqualify",
-] as const;
-
-export const BUYING_TIMING_OPTION_KEYS = [
-  "now",
-  "soon",
-  "future_season",
-  "unknown",
-  "no_current_plan",
-] as const;
-
-export const MAIN_VALUE_PROPOSITION_OPTION_KEYS = [
-  "operational_control",
-  "reduce_whatsapp_dependency",
-  "online_enrollment",
-  "reduce_manual_work",
-  "no_relevant_value_now",
-] as const;
-
-export const ENGINE_REQUIRED_KEYS = [
-  "next_action",
-  "needs_human_call",
-] as const;
-
-export const KNOWN_SIGNAL_KEYS = [
-  "real_operational_need",
-  "product_fit",
-  "motivation_to_change",
-  "purchase_intent",
-  "buying_timing",
-  "main_value_proposition",
-] as const;
+export {
+  BUYING_TIMING_OPTION_KEYS,
+  ENGINE_REQUIRED_KEYS,
+  KNOWN_SIGNAL_KEYS,
+  MAIN_VALUE_PROPOSITION_OPTION_KEYS,
+  NEXT_ACTION_OPTION_KEYS,
+} from "./constants";
 
 /* ============================================================
  * Bloques estructurales

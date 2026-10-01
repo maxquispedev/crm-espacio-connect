@@ -1802,8 +1802,12 @@ async function main() {
     afterD.json?.stage?.kind !== "lost",
     JSON.stringify(afterD.json?.stage)
   );
-  const board = await api("/api/pipeline/board");
-  const boardLead = (board.json?.leads ?? []).find((l) => l.id === fuLeadId);
+  // `board` ya está declarado más arriba en este mismo scope (sección de
+  // follow-ups): aquí usamos un nombre propio para no chocar.
+  const boardFollowUps = await api("/api/pipeline/board");
+  const boardLead = (boardFollowUps.json?.leads ?? []).find(
+    (l) => l.id === fuLeadId
+  );
   ok(
     "D board no dice Perdido por silencio",
     boardLead?.automationLane === "stop" &&
@@ -1883,6 +1887,11 @@ async function main() {
   // corre los caminos felices e infelices. Cada modo se prueba con una
   // invocación del script contra una app con esa configuración.
   await runSection012();
+
+  // 008 — Sección 013: Sales Playbook (editor por bloques, corte 4).
+  // Cubre el ciclo completo draft → guardar → publicar → historial →
+  // rollback → eliminar draft, más el aislamiento de tenant.
+  await runSection013();
 
   console.log(`\n===== ${checks - failures}/${checks} checks OK, ${failures} fallos =====`);
   process.exit(failures > 0 ? 1 : 0);
@@ -2788,4 +2797,458 @@ async function runSection012() {
     method: "PUT",
     body: JSON.stringify({ salesOrchestratorEnabled: false }),
   });
+}
+
+/**
+ * 008 — Sección 013 (Sales Playbook, corte 4: editor por bloques).
+ *
+ * Usa un usuario/org DEDICADO (`e2e-008@vocero.test`) para no depender
+ * del estado que dejaron las secciones anteriores y para que el flujo
+ * sea determinista incluso en base recién creada.
+ *
+ * Cubre el mismo ciclo que ejecuta la UI de `/agent` → tab
+ * "Sales Playbook":
+ *  - siembra la V1 vía el mock `POST /api/dev/playbook-bootstrap`. El
+ *    bootstrap real dispara en instrumentation AL BOOT y solo enumera
+ *    orgs que ya tuvieran `sales_orchestrator_enabled = true`; en una
+ *    base nueva ninguna cumple, así que sin este mock el arnés no
+ *    tendría baseline contra el que editar.
+ *  - GET    /api/playbook          → 200 con V1 publicada, sin draft.
+ *  - POST   /api/playbook/validate → 422 con `details[]` si el doc está
+ *                                    roto (lo que el editor pinta en rojo).
+ *  - POST   /api/playbook/draft    → 201 (V2, clon de la publicada).
+ *  - PUT    /api/playbook/draft    → 200 con el cambio en
+ *                                    `writer.present_price`.
+ *  - POST   /api/playbook/publish  → 200; V2 → `published`, V1 →
+ *                                    `archived` (flip atómico).
+ *  - GET    /api/playbook/versions → incluye la V2 recién publicada.
+ *  - POST   /api/playbook/rollback → 200 con V1; el contenido publicado
+ *                                    vuelve al de la V1.
+ *  - DELETE /api/playbook/draft    → 200 y el draft desaparece (T406,
+ *                                    solo permitido con publicada activa).
+ *  - tenant isolation: la sesión de otra org NO ve este playbook.
+ */
+async function runSection013() {
+  console.log("\n== 008-sales-playbook: setup ==");
+  const email = "e2e-008@vocero.test";
+  const password = "password-e2e-123";
+  let reg = await api("/api/auth/sign-up/email", {
+    method: "POST",
+    body: JSON.stringify({ email, password, name: "Operador 008" }),
+  });
+  if (!reg.res.ok) {
+    reg = await api("/api/auth/sign-in/email", {
+      method: "POST",
+      body: JSON.stringify({ email, password }),
+    });
+  }
+  ok("013 · signup/login operador 008", reg.res.ok, JSON.stringify(reg.json));
+  const cookieA = cookie;
+
+  // El registro NO crea organización (Better Auth organization plugin sin
+  // `createOrganizationOnSignUp`): sin un tenant, `requireSession` responde
+  // 401 y no hay contra qué sembrar. Reutilizamos la primera org del
+  // usuario o creamos una propia.
+  let orgsA = orgListFrom((await api("/api/auth/organization/list")).json);
+  let orgA = orgsA[0];
+  if (!orgA) {
+    const createdOrg = await api("/api/auth/organization/create", {
+      method: "POST",
+      body: JSON.stringify({
+        name: "Playbook E2E 008",
+        slug: `playbook-e2e-008-${Date.now()}`,
+      }),
+    });
+    orgA = createdOrg.json?.id
+      ? { id: createdOrg.json.id }
+      : orgListFrom((await api("/api/auth/organization/list")).json)[0];
+  }
+  ok("013 · organización del operador 008", !!orgA?.id, JSON.stringify(orgA));
+  if (orgA?.id) {
+    await api("/api/auth/organization/set-active", {
+      method: "POST",
+      body: JSON.stringify({ organizationId: orgA.id }),
+    });
+  }
+
+  // --- 0) Baseline: sembramos la V1 con el mock del arnés -----------
+  const boot = await api("/api/dev/playbook-bootstrap", { method: "POST" });
+  ok(
+    "013 · bootstrap V1 (mock) siembra o ya existe",
+    boot.res.ok &&
+      (boot.json?.status === "created" || boot.json?.status === "skipped"),
+    JSON.stringify(boot.json)
+  );
+
+  // --- 1) GET /api/playbook → 200 con V1 ----------------------------
+  let state0 = await api("/api/playbook");
+  const v1 = state0.json?.published;
+  ok("013 · GET /api/playbook → 200", state0.res.ok, JSON.stringify(state0.json));
+
+  // La sección es dueña de su org: si una corrida anterior (o el recorrido
+  // visual del editor) dejó un draft abierto, lo eliminamos para partir de
+  // un estado conocido. Es seguro porque hay una publicada activa.
+  if (state0.json?.draft) {
+    const cleaned = await api("/api/playbook/draft", { method: "DELETE" });
+    ok(
+      "013 · draft previo eliminado para partir de un estado conocido",
+      cleaned.res.ok,
+      JSON.stringify(cleaned.json)
+    );
+    state0 = await api("/api/playbook");
+  }
+
+  // No fijamos `version_number === 1`: la arnés es re-ejecutable y esta
+  // org puede llevar varias publicaciones. Lo que importa es que haya una
+  // versión publicada, con schema soportado y sin draft abierto.
+  ok(
+    "013 · hay versión publicada, schema 1.0, sin draft",
+    typeof v1?.version_number === "number" &&
+      v1.version_number >= 1 &&
+      v1?.status === "published" &&
+      v1?.schema_version === "1.0" &&
+      state0.json?.draft === null,
+    JSON.stringify({
+      version_number: v1?.version_number,
+      status: v1?.status,
+      schema: v1?.schema_version,
+      draft: state0.json?.draft === null ? null : "ABIERTO",
+    })
+  );
+  ok(
+    "013 · la V1 trae los bloques del playbook (no es un doc vacío)",
+    Boolean(
+      v1?.product?.name &&
+        v1?.offer?.currency &&
+        v1?.priorities?.primary?.length > 0 &&
+        v1?.writer?.present_price &&
+        Object.keys(v1?.jev_questions ?? {}).length > 0
+    ),
+    JSON.stringify({
+      product: v1?.product?.name,
+      currency: v1?.offer?.currency,
+      primary: v1?.priorities?.primary?.length,
+      questions: Object.keys(v1?.jev_questions ?? {}).length,
+    })
+  );
+
+  // Badges por clase de pregunta Jev que pinta la UI.
+  const jevKeys = Object.keys(v1?.jev_questions ?? {});
+  const engineRequired = jevKeys.filter(
+    (k) => k === "next_action" || k === "needs_human_call"
+  ).length;
+  const knownSignals = jevKeys.filter((k) =>
+    [
+      "real_operational_need",
+      "product_fit",
+      "motivation_to_change",
+      "purchase_intent",
+      "buying_timing",
+      "main_value_proposition",
+    ].includes(k)
+  ).length;
+  ok(
+    "013 · badges de clase Jev: 2 engine-required + 6 known signals",
+    engineRequired === 2 && knownSignals === 6,
+    JSON.stringify({ engineRequired, knownSignals, total: jevKeys.length })
+  );
+
+  // --- 2) Validación: 422 con details (lo que el editor pinta) -------
+  const docRoto = { ...v1, product: { ...v1.product, name: "" } };
+  const valRoto = await api("/api/playbook/validate", {
+    method: "POST",
+    body: JSON.stringify(docRoto),
+  });
+  ok(
+    "013 · validate rechaza un doc roto devolviendo details[]",
+    valRoto.res.status === 422 &&
+      Array.isArray(valRoto.json?.details) &&
+      valRoto.json.details.length > 0,
+    JSON.stringify(valRoto.json)
+  );
+  const valOk = await api("/api/playbook/validate", {
+    method: "POST",
+    body: JSON.stringify(v1),
+  });
+  ok(
+    "013 · validate acepta la V1 intacta",
+    valOk.res.ok && valOk.json?.ok === true,
+    JSON.stringify(valOk.json)
+  );
+
+  // --- 3) POST /api/playbook/draft → 201 ---------------------------
+  // La arnés debe ser RE-EJECUTABLE (Constitución IV). `createDraft`
+  // numera como `max(version_number) + 1` sobre TODAS las versiones (no
+  // solo la publicada), así que derivamos el número esperado del
+  // historial en lugar de asumir V2.
+  const vsPre = (await api("/api/playbook/versions")).json?.versions ?? [];
+  const maxPre = vsPre.reduce((m, v) => Math.max(m, v.version_number), 0);
+  const vNext = maxPre + 1;
+  const created = await api("/api/playbook/draft", {
+    method: "POST",
+    body: JSON.stringify({}),
+  });
+  const draft = created.json?.draft;
+  ok("013 · POST draft → 201", created.res.status === 201, JSON.stringify(created.json));
+  ok(
+    `013 · el draft es V${vNext} y clona la publicada`,
+    draft?.version_number === vNext &&
+      draft?.status === "draft" &&
+      draft?.writer?.present_price === v1?.writer?.present_price,
+    JSON.stringify({
+      version_number: draft?.version_number,
+      status: draft?.status,
+      esperado: vNext,
+    })
+  );
+  if (!draft?.writer) {
+    // Sin draft no hay nada que seguir probando (PUT/publish/rollback):
+    // cortamos la sección con un FAIL claro en vez de reventar el arnés.
+    console.error(
+      "013 · no se pudo crear el draft; se aborta la sección (ver check anterior)"
+    );
+    return;
+  }
+
+  // Un segundo draft debe rebotar (invariante: un draft por playbook).
+  const dup = await api("/api/playbook/draft", { method: "POST", body: "{}" });
+  ok(
+    "013 · segundo draft → 409 draft_already_open",
+    dup.res.status === 409 && dup.json?.code === "draft_already_open",
+    JSON.stringify(dup.json)
+  );
+
+  // --- 4) PUT /api/playbook/draft (writer.present_price) → 200 -----
+  const nuevoPrecio =
+    "Presenta el precio del ciclo 2026: setup único más mensualidad base por número de alumnos activos.";
+  const put = await api("/api/playbook/draft", {
+    method: "PUT",
+    body: JSON.stringify({ writer: { ...draft.writer, present_price: nuevoPrecio } }),
+  });
+  ok("013 · PUT draft → 200", put.res.ok, JSON.stringify(put.json).slice(0, 300));
+  ok(
+    "013 · el cambio en writer.present_price quedó persistido",
+    put.json?.draft?.writer?.present_price === nuevoPrecio,
+    JSON.stringify(put.json?.draft?.writer?.present_price)
+  );
+
+  // Un patch inválido debe rebotar con 422 y NO persistir. El rechazo llega
+  // en la puerta del body (`parseBody` valida el patch contra
+  // `ConfigV1ObjectSchema.shape.writer`), así que el `code` es
+  // `invalid_body`; si el body pasara y fallara el documento completo,
+  // sería `validation_failed`. Aceptamos ambos: lo que importa es que
+  // sea 422 y nada quede escrito.
+  const putMalo = await api("/api/playbook/draft", {
+    method: "PUT",
+    body: JSON.stringify({ writer: { ...draft.writer, present_price: "" } }),
+  });
+  // `apiError` anida el code bajo `error`; otros handlers lo devuelven
+  // plano. Aceptamos ambas formas: lo que importa es el 422.
+  const putMaloCode = putMalo.json?.code ?? putMalo.json?.error?.code;
+  ok(
+    "013 · PUT con writer vacío → 422 (invalid_body|validation_failed)",
+    putMalo.res.status === 422 &&
+      (putMaloCode === "invalid_body" || putMaloCode === "validation_failed"),
+    JSON.stringify(putMalo.json).slice(0, 300)
+  );
+  const trasMalo = await api("/api/playbook");
+  ok(
+    "013 · el PUT inválido NO dejó basura en el draft",
+    trasMalo.json?.draft?.writer?.present_price === nuevoPrecio,
+    JSON.stringify(trasMalo.json?.draft?.writer?.present_price)
+  );
+
+  // --- 5) POST /api/playbook/publish → 200 --------------------------
+  const pub = await api("/api/playbook/publish", {
+    method: "POST",
+    body: JSON.stringify({ notes: "E2E 008: precio del ciclo 2026" }),
+  });
+  ok("013 · POST publish → 200", pub.res.ok, JSON.stringify(pub.json).slice(0, 300));
+  ok(
+    `013 · V${vNext} queda published y V${v1?.version_number} archivada (flip atómico)`,
+    pub.json?.published?.version_number === vNext &&
+      pub.json?.published?.status === "published" &&
+      pub.json?.archived?.version_number === v1?.version_number &&
+      pub.json?.archived?.status === "archived",
+    JSON.stringify({
+      published: pub.json?.published?.version_number,
+      publishedStatus: pub.json?.published?.status,
+      archived: pub.json?.archived?.version_number,
+      archivedStatus: pub.json?.archived?.status,
+    })
+  );
+  ok(
+    "013 · tras publicar no queda draft abierto",
+    (await api("/api/playbook")).json?.draft === null
+  );
+
+  // `notes` es obligatorio: sin comentario válido el publish rebota.
+  const pubSinNotas = await api("/api/playbook/publish", {
+    method: "POST",
+    body: JSON.stringify({ notes: "x" }),
+  });
+  ok(
+    "013 · publish sin comentario válido → 422",
+    pubSinNotas.res.status === 422,
+    JSON.stringify(pubSinNotas.json)
+  );
+
+  // --- 6) GET /api/playbook/versions → incluye la nueva ------------
+  const list = await api("/api/playbook/versions");
+  const vs = list.json?.versions ?? [];
+  ok(
+    `013 · el historial incluye la V${vNext} publicada y la V${v1?.version_number} archivada`,
+    vs.some((v) => v.version_number === vNext && v.status === "published") &&
+      vs.some(
+        (v) => v.version_number === v1?.version_number && v.status === "archived"
+      ),
+    JSON.stringify(vs.map((v) => ({ n: v.version_number, s: v.status })))
+  );
+  ok(
+    "013 · el historial viene ordenado de la más nueva a la más vieja",
+    vs.length > 1 && vs[0].version_number >= vs[vs.length - 1].version_number,
+    JSON.stringify(vs.map((v) => v.version_number))
+  );
+
+  // --- 7) POST /api/playbook/rollback con V1 → 200 ------------------
+  const v1Id = vs.find((v) => v.version_number === v1?.version_number)?.id;
+  const roll = await api("/api/playbook/rollback", {
+    method: "POST",
+    body: JSON.stringify({ version_id: v1Id, notes: "E2E 008: revertimos el precio" }),
+  });
+  ok("013 · POST rollback a V1 → 200", roll.res.ok, JSON.stringify(roll.json).slice(0, 300));
+  ok(
+    `013 · el rollback devuelve a la V${v1?.version_number} como publicada`,
+    roll.json?.published?.version_number === v1?.version_number &&
+      roll.json?.published?.status === "published",
+    JSON.stringify({
+      n: roll.json?.published?.version_number,
+      esperado: v1?.version_number,
+      s: roll.json?.published?.status,
+    })
+  );
+  const trasRoll = await api("/api/playbook");
+  ok(
+    "013 · el contenido publicado tras el rollback es el de la V1",
+    trasRoll.json?.published?.writer?.present_price === v1?.writer?.present_price,
+    JSON.stringify({
+      actual: trasRoll.json?.published?.writer?.present_price,
+      v1: v1?.writer?.present_price,
+    })
+  );
+
+  // Rollback a una versión ajena/no existente debe dar 404 (no leak).
+  const rollForeign = await api("/api/playbook/rollback", {
+    method: "POST",
+    body: JSON.stringify({ version_id: "sbv_no_existe_otra_org", notes: "no debe pasar" }),
+  });
+  ok(
+    "013 · rollback a una versión inexistente → 404 version_not_found",
+    rollForeign.res.status === 404 && rollForeign.json?.code === "version_not_found",
+    JSON.stringify(rollForeign.json)
+  );
+
+  // --- 8) DELETE /api/playbook/draft (T406) -------------------------
+  const draft2 = await api("/api/playbook/draft", { method: "POST", body: "{}" });
+  ok(
+    "013 · draft de prueba creado",
+    draft2.res.status === 201,
+    JSON.stringify(draft2.json).slice(0, 200)
+  );
+  const del = await api("/api/playbook/draft", { method: "DELETE" });
+  ok(
+    "013 · DELETE draft → 200 con la versión eliminada",
+    del.res.ok &&
+      del.json?.deleted?.version_number === draft2.json?.draft?.version_number,
+    JSON.stringify({ deleted: del.json?.deleted, created: draft2.json?.draft?.version_number })
+  );
+  ok(
+    "013 · tras eliminar, no queda draft",
+    (await api("/api/playbook")).json?.draft === null
+  );
+  // Idempotente: borrar sin draft no es error.
+  const del2 = await api("/api/playbook/draft", { method: "DELETE" });
+  ok(
+    "013 · DELETE sin draft → 200 deleted:null (idempotente)",
+    del2.res.ok && del2.json?.deleted === null,
+    JSON.stringify(del2.json)
+  );
+  // La publicada sigue viva: el guardarraíl hizo su trabajo.
+  const trasDel = await api("/api/playbook");
+  ok(
+    "013 · la publicada sigue en vigor tras eliminar el draft",
+    trasDel.json?.published?.version_number === v1?.version_number,
+    JSON.stringify(trasDel.json?.published?.version_number)
+  );
+
+  // --- 9) Tenant isolation: otra org NO ve este playbook ------------
+  let regB = await api("/api/auth/sign-up/email", {
+    method: "POST",
+    body: JSON.stringify({
+      email: "e2e-008-orgb@vocero.test",
+      password: "password-e2e-123",
+      name: "Operador 008B",
+    }),
+  });
+  if (!regB.res.ok) {
+    regB = await api("/api/auth/sign-in/email", {
+      method: "POST",
+      body: JSON.stringify({
+        email: "e2e-008-orgb@vocero.test",
+        password: "password-e2e-123",
+      }),
+    });
+  }
+  ok("013 · signup/login org B", regB.res.ok, JSON.stringify(regB.json));
+
+  // Igual que A: la org B necesita su propio tenant para que la prueba de
+  // aislamiento signifique algo (si no, 401 y no probaríamos nada).
+  let orgsB = orgListFrom((await api("/api/auth/organization/list")).json);
+  let orgB013 = orgsB[0];
+  if (!orgB013) {
+    const createdOrgB = await api("/api/auth/organization/create", {
+      method: "POST",
+      body: JSON.stringify({
+        name: "Playbook E2E 008 B",
+        slug: `playbook-e2e-008b-${Date.now()}`,
+      }),
+    });
+    orgB013 = createdOrgB.json?.id
+      ? { id: createdOrgB.json.id }
+      : orgListFrom((await api("/api/auth/organization/list")).json)[0];
+  }
+  ok("013 · organización de la org B", !!orgB013?.id, JSON.stringify(orgB013));
+  if (orgB013?.id) {
+    await api("/api/auth/organization/set-active", {
+      method: "POST",
+      body: JSON.stringify({ organizationId: orgB013.id }),
+    });
+  }
+
+  const stateB = await api("/api/playbook");
+  const pb = stateB.json ?? {};
+  const versB = (await api("/api/playbook/versions")).json?.versions ?? [];
+  // 404 es el resultado esperado (la org B todavía no tiene playbook);
+  // si devolviera 200, ninguna referencia puede apuntar a la org A.
+  const fuga =
+    pb.published?.id === v1?.id ||
+    pb.draft?.id === draft?.id ||
+    pb.playbook?.id === state0.json?.playbook?.id ||
+    versB.some((v) => v.id === v1Id);
+  ok(
+    "013 · tenant isolation: la org B NO ve el playbook de la org A",
+    stateB.res.status === 404 ? true : !fuga,
+    JSON.stringify({
+      status: stateB.res.status,
+      published: pb.published?.id,
+      versions: versB.length,
+    })
+  );
+  ok(
+    "013 · la org B tampoco puede leer una versión concreta de la org A",
+    (await api(`/api/playbook/versions/${v1Id}`)).res.status === 404
+  );
+
+  // Restauramos la sesión de la org A.
+  cookie = cookieA;
 }

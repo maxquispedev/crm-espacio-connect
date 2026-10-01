@@ -34,7 +34,7 @@ import type {
   PlaybookRow,
   PlaybookVersionRow,
 } from "@/lib/sales/playbook/store";
-import { DraftAlreadyOpenError } from "@/lib/sales/playbook/store";
+import { DraftAlreadyOpenError, NoPublishedVersionError } from "@/lib/sales/playbook/store";
 
 /* ============================================================
  * Mocks — `withAuth` y store en memoria
@@ -254,6 +254,21 @@ vi.mock("@/lib/sales/playbook/store", async () => {
       }
     ),
     loadActiveQuestionsForVersion: vi.fn(async () => null),
+    deleteDraft: vi.fn(async (orgId: string) => {
+      // Mismo contrato que el store real (T406): solo se borra si hay
+      // una `published` activa; si no hay draft, devuelve null.
+      const published = (versionsByOrg.get(orgId) ?? []).find(
+        (v) => v.status === "published"
+      );
+      if (!published) {
+        throw new NoPublishedVersionError();
+      }
+      const arr = versionsByOrg.get(orgId) ?? [];
+      const idx = arr.findIndex((v) => v.status === "draft");
+      if (idx === -1) return null;
+      const [row] = arr.splice(idx, 1);
+      return row ?? null;
+    }),
     _countDraftsForPlaybook: vi.fn(async () => 0),
   };
 });
@@ -762,5 +777,145 @@ describe("GET /api/playbook/versions (T207) — aislamiento por org", () => {
     const b = body as { versions: { id: string; version_number: number }[] };
     expect(b.versions).toHaveLength(1);
     expect(b.versions[0]?.id).toBe("spv_v1_org_a");
+  });
+});
+
+/* ============================================================
+ * T406 — DELETE /api/playbook/draft (Corte 4)
+ * ============================================================ */
+
+describe("DELETE /api/playbook/draft (T406) — eliminar el draft abierto", () => {
+  it("elimina el draft y devuelve su versión", async () => {
+    resetStore();
+    const v1 = seedOrgWithPublishedV1("org_a");
+    setSession(fakeSession);
+
+    const { POST: createDraft } = await import("@/app/api/playbook/draft/route");
+    const created = await call(
+      Promise.resolve({ POST: createDraft }),
+      "POST",
+      new Request("http://test/api/playbook/draft", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: "{}",
+      })
+    );
+    expect(created.status).toBe(201);
+    const draft = (created.body as { draft: { id: string; version_number: number } })
+      .draft;
+    expect(draft.version_number).toBe(2);
+
+    const { DELETE } = await import("@/app/api/playbook/draft/route");
+    const { status, body } = await call(
+      Promise.resolve({ DELETE }),
+      "DELETE",
+      new Request("http://test/api/playbook/draft", { method: "DELETE" })
+    );
+    expect(status).toBe(200);
+    expect(body).toEqual({
+      deleted: { id: draft.id, version_number: 2 },
+    });
+    // La publicada sigue viva: el guardarraíl hizo su trabajo.
+    expect(
+      versionsByOrg.get("org_a")?.some((v) => v.id === v1.id && v.status === "published")
+    ).toBe(true);
+  });
+
+  it("es idempotente: sin draft devuelve 200 deleted:null", async () => {
+    resetStore();
+    seedOrgWithPublishedV1("org_a");
+    setSession(fakeSession);
+
+    const { DELETE } = await import("@/app/api/playbook/draft/route");
+    const { status, body } = await call(
+      Promise.resolve({ DELETE }),
+      "DELETE",
+      new Request("http://test/api/playbook/draft", { method: "DELETE" })
+    );
+    expect(status).toBe(200);
+    expect(body).toEqual({ deleted: null });
+  });
+
+  it("409 si no hay versión publicada activa (nunca dejar sin playbook)", async () => {
+    resetStore();
+    // Org con playbook pero SIN ninguna `published` (solo un draft).
+    const pb: PlaybookRow = {
+      id: "pb_org_solo_draft",
+      organizationId: "org_a",
+      slug: "vende-veloz-365",
+      label: "Vende Veloz 365",
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    };
+    playbookByOrg.set("org_a", pb);
+    versionCounter += 1;
+    versionsByOrg.set("org_a", [
+      {
+        id: `spv_${versionCounter}`,
+        organizationId: "org_a",
+        playbookId: pb.id,
+        versionNumber: 1,
+        status: "draft",
+        schemaVersion: "1.0",
+        productJson: VENDE_VELOZ_PLAYBOOK_V1.product,
+        policyJson: VENDE_VELOZ_PLAYBOOK_V1.commercial_policy,
+        offerJson: VENDE_VELOZ_PLAYBOOK_V1.offer,
+        prioritiesJson: VENDE_VELOZ_PLAYBOOK_V1.priorities,
+        writerJson: VENDE_VELOZ_PLAYBOOK_V1.writer,
+        jevQuestionsJson: VENDE_VELOZ_PLAYBOOK_V1.jev_questions,
+        prohibitionsJson: VENDE_VELOZ_PLAYBOOK_V1.prohibitions,
+        handoffJson: VENDE_VELOZ_PLAYBOOK_V1.handoff,
+        urgencyRules: VENDE_VELOZ_PLAYBOOK_V1.urgency_rules ?? null,
+        notes: null,
+        createdBy: "user_a",
+        createdAt: new Date(),
+        publishedAt: null,
+        publishedBy: null,
+        archivedAt: null,
+      },
+    ]);
+    setSession(fakeSession);
+
+    const { DELETE } = await import("@/app/api/playbook/draft/route");
+    const { status, body } = await call(
+      Promise.resolve({ DELETE }),
+      "DELETE",
+      new Request("http://test/api/playbook/draft", { method: "DELETE" })
+    );
+    expect(status).toBe(409);
+    expect((body as { code: string }).code).toBe("no_published_version");
+    // El draft NO se borró: sigue ahí.
+    expect(versionsByOrg.get("org_a")?.some((v) => v.status === "draft")).toBe(true);
+  });
+
+  it("aislamiento: org B no puede borrar el draft de org A", async () => {
+    resetStore();
+    seedOrgWithPublishedV1("org_a");
+    seedOrgWithPublishedV1("org_b");
+    setSession(fakeSession);
+
+    const { POST: createDraft } = await import("@/app/api/playbook/draft/route");
+    await call(
+      Promise.resolve({ POST: createDraft }),
+      "POST",
+      new Request("http://test/api/playbook/draft", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: "{}",
+      })
+    );
+    expect(versionsByOrg.get("org_a")?.some((v) => v.status === "draft")).toBe(true);
+
+    // Org B pide borrar: su propio draft (no existe) y el de A intacto.
+    setSession(fakeSessionB);
+    const { DELETE } = await import("@/app/api/playbook/draft/route");
+    const { status, body } = await call(
+      Promise.resolve({ DELETE }),
+      "DELETE",
+      new Request("http://test/api/playbook/draft", { method: "DELETE" })
+    );
+    expect(status).toBe(200);
+    expect(body).toEqual({ deleted: null });
+    expect(versionsByOrg.get("org_a")?.some((v) => v.status === "draft")).toBe(true);
   });
 });

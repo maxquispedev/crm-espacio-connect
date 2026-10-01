@@ -376,29 +376,94 @@ NO empieces Corte 4.
 
 ## Corte 4 — UI Playbook (T401..T407)
 
-- [ ] **T401** — Refactor `agent-client.tsx`: introducir navegación
-  con tabs `Comportamiento` / `Conocimiento` / `Sales Playbook`.
-  Mantener comportamiento actual.
-- [ ] **T402** — `components/agent/playbook/playbook-client.tsx`:
-  contenedor. Refetch al montar.
-- [ ] **T403** — `playbook-published-card.tsx`: muestra la versión
-  publicada con badges para distinguir `engine-required` vs
-  `known signals` vs `analytical/custom`.
-- [ ] **T404** — `playbook-draft-editor.tsx`: editor por bloques
+- [x] **T401** — Refactor `agent-client.tsx`: navegación con tabs
+  `Comportamiento` / `Conocimiento` / `Sales Playbook`. El switch
+  Encendido/Apagado sigue en el header y los cards existentes
+  (`SalesOrchestratorCard`, `SalesFollowUpsCard`, `ProfileSection`,
+  `KbSection`) se conservan sin reescribir.
+  → ✅ tabs `role="tablist"`; el tab de Sales Playbook monta
+  `<PlaybookClient />`. Solo se **agrega** navegación.
+- [x] **T402** — `components/agent/playbook/playbook-client.tsx`:
+  contenedor con `playbook`/`published`/`draft`/`versions`/`error`/
+  `saving`/`busy`, refetch al montar y tras cada mutación. Estado vacío
+  con el mensaje del bootstrap y botón `Crear draft` administrativo
+  (la UI **no** siembra bajo demanda) + `Refetch`.
+  → ✅ sin cache en memoria (Corte 1 la retiró a propósito).
+- [x] **T403** — `playbook-published-card.tsx`: versión publicada con
+  `version_number`, `schema_version`, `published_at`, `notes`,
+  mini-resumen (producto, prioridades primarias, precio
+  `S/{setup} + S/{monthlyBase}/mes hasta {N} activos`) y badges
+  🔒 `engine-required` / 📊 `known signals` / ➕ `analytical`.
+  Botones `Crear draft desde esta versión` (deshabilitado si ya hay
+  draft) y `Ver historial`.
+  → ✅ los catálogos de clase se leen de
+  `lib/sales/playbook/constants.ts` (módulo **sin Zod**) para no
+  arrastrar el validador al bundle del cliente; `schema.ts` los
+  re-exporta para no romper imports.
+- [x] **T404** — `playbook-draft-editor.tsx`: ocho bloques
   (Producto, Oferta, Política, Prioridades, Writer, Prohibiciones,
-  Handoff, Urgencia). NO JSON crudo.
-- [ ] **T405** — `playbook-versions-list.tsx`: historial con
-  `version_number`, `schema_version`, `status`, `published_at`,
-  `archived_at`, `notes`.
-- [ ] **T406** — Acciones: `Crear draft` / `Guardar` / `Validar` /
-  `Publicar` / `Rollback` con `notes`.
-- [ ] **T407** — E2E (`tests/e2e/us-sales-playbook.md` +
-  `scripts/e2e-selftest.mjs` sección 012).
+  Handoff, Urgencia) con sus formularios. Writer = 7 textareas (una por
+  `next_action`), Handoff = 5, Prioridades con flechas ↑/↓ y tope 8,
+  `neverPromise` de la Oferta como referencia en Prohibiciones.
+  Validación cliente con throttle de 300 ms contra
+  `POST /api/playbook/validate` (documento entero), errores en rojo bajo
+  el campo. `Guardar cambios` → `PUT` + refetch; `Descartar cambios` →
+  refetch. **Las preguntas Jev no se editan aquí** (Corte 5): solo el
+  total y el badge por clase.
+  → ✅ sin JSON crudo en la UI.
+- [x] **T405** — `playbook-versions-list.tsx`: tabla con
+  `version_number`, `status`, `created_at`, `published_at`,
+  `archived_at`, `notes` (+ tamaño). Click en la fila despliega el
+  detalle pidiéndolo a `GET /api/playbook/versions/:id`; si la fila es
+  `archived` y **no** es la publicada actual, aparece `Rollback a V{n}`.
+- [x] **T406** — Acciones: `Crear draft` / `Guardar` / `Validar` /
+  `Publicar` / `Rollback` con `notes` obligatorio (modales) y
+  `Eliminar draft`.
+  → ✅ se **agrega** `DELETE /api/playbook/draft` (el corte 2 no lo
+  tenía): 200 `{deleted:{id,version_number}}`, 200 `{deleted:null}`
+  si no había draft (idempotente) y **409 `no_published_version`** si
+  no hay publicada activa — para no dejar al negocio sin playbook en
+  vigor. Guardarraíl en `store.deleteDraft` + `NoPublishedVersionError`.
+  Cubierto por 4 casos en `tests/unit/playbook-api.test.ts`.
+- [x] **T407** — E2E: `tests/e2e/us-sales-playbook.md` (guiado) +
+  `scripts/e2e-selftest.mjs`.
+  → ✅ automatizado como **sección 013**, no 012: la 012 ya la ocupa el
+  spec 007 (Meta CAPI) y sobrescribirla perdería esa cobertura.
+  35 checks: GET 200 con V1, POST draft 201, PUT
+  `writer.present_price` 200, publish 200 (flip atómico), versions
+  incluye la nueva, rollback a V1 200, DELETE draft 200, y aislamiento
+  de tenant (otra org no ve el playbook ni puede leer una versión).
+  Re-ejecutable: los números de versión se derivan del historial, no se
+  asumen.
+
+### Hallazgos del corte 4 (arreglados aquí)
+
+1. **`drizzle/0008_sales_playbook.sql` estaba huérfano**: el archivo
+   existe (commit `d08c59c`) pero **no estaba en
+   `drizzle/meta/_journal.json`**, así que `drizzle-kit migrate` nunca lo
+   aplicaba: `relation "sales_playbook" does not exist`. El modelo del
+   playbook era indeployable. Registrado en el journal (idx 8).
+2. **`scripts/e2e-selftest.mjs` no parseaba**: `const board` duplicado
+   en el mismo scope de `main()` (línea 1805) → `SyntaxError`, la E2E
+   entera no arrancaba. Renombrado a `boardFollowUps`.
+3. **`publish`/`rollback` devolvían un estado obsoleto**: el objeto
+   `archived` de la respuesta era el snapshot leído antes del flip, con
+   `status: "published"` aunque la fila ya estaba archivada. Ahora se
+   reporta `status: "archived"`.
+4. **`POST /api/dev/playbook-bootstrap`** (nuevo, solo mocks): el
+   bootstrap real dispara en `instrumentation` al boot y solo enumera
+   orgs que ya tuvieran `sales_orchestrator_enabled = true`; en una base
+   nueva ninguna cumple, así que la E2E no tenía baseline. Va tras
+   `mockGuard()`: 404 incondicional fuera del entorno de pruebas.
 
 **Cierre del corte 4**:
 
 - Gate técnico + E2E Playwright en verde.
 - Working tree limpio, un commit: `feat(playbook): UI editor por bloques`.
+- ✅ `pnpm typecheck && pnpm lint && pnpm build && pnpm test` en verde
+  (741 tests).
+- ✅ Sección 013 verde contra la app real con mocks: **35/35**, y verde
+  de nuevo en una segunda ejecución consecutiva (re-ejecutable).
 
 ---
 

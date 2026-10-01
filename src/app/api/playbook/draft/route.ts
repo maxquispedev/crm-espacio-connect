@@ -29,9 +29,11 @@ import {
 } from "@/lib/sales/playbook/schema";
 import {
   createDraft,
+  deleteDraft,
   DraftAlreadyOpenError,
   getDraftVersionForOrg,
   getPublishedVersionForOrg,
+  NoPublishedVersionError,
   updateDraft,
 } from "@/lib/sales/playbook/store";
 import { versionRowToDto } from "../_dto";
@@ -185,6 +187,49 @@ export const PUT = withAuth(async (session, request: Request) => {
   }
 
   return Response.json({ draft: versionRowToDto(updated) }, { status: 200 });
+});
+
+/* ============================================================
+ * T406 — DELETE /api/playbook/draft
+ * ============================================================ */
+
+/**
+ * Elimina el draft abierto. Solo se permite si la organización tiene
+ * una versión `published` activa (guardarraíl de negocio: nunca dejar
+ * al negocio sin playbook en vigor).
+ *
+ * - 200 `{ deleted: { id, version_number } }` si había draft.
+ * - 200 `{ deleted: null }` si no había draft (idempotente).
+ * - 409 `no_published_version` si no hay publicada activa.
+ */
+export const DELETE = withAuth(async (session) => {
+  try {
+    const deleted = await deleteDraft(session.organizationId);
+    if (!deleted) {
+      return Response.json({ deleted: null }, { status: 200 });
+    }
+    return Response.json(
+      {
+        deleted: {
+          id: deleted.id,
+          version_number: deleted.versionNumber,
+        },
+      },
+      { status: 200 }
+    );
+  } catch (err) {
+    if (err instanceof NoPublishedVersionError) {
+      return Response.json(
+        {
+          code: "no_published_version",
+          message:
+            "No se puede eliminar el draft: no hay una versión publicada activa.",
+        },
+        { status: 409 }
+      );
+    }
+    throw err;
+  }
 });
 
 /* ============================================================

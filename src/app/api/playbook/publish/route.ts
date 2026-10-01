@@ -69,8 +69,15 @@ export const POST = withAuth(async (session, request: Request) => {
     return Response.json(
       {
         published: versionRowToDto(published),
+        // `previouslyPublished` es el snapshot leído ANTES del flip: su
+        // objeto en memoria conserva `status: "published"` aunque la fila
+        // ya quedó archivada en BD. Lo reportamos explícitamente como
+        // `archived` para que el contrato no devuelva un estado obsoleto.
         archived: previouslyPublished
-          ? versionRowToDto(previouslyPublished)
+          ? {
+              ...versionRowToDto(previouslyPublished),
+              status: "archived" as const,
+            }
           : null,
       },
       { status: 200 }
