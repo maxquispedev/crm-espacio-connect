@@ -1,5 +1,17 @@
 # CURRENT STATE — Espacio Connect
 
+## Checkpoint de handoff — campaña Vende Veloz lista para operar (2026-10-01)
+
+Corte para retomar en una nueva sesión sin reconstruir contexto:
+
+- Runtime comercial real de Vende Veloz queda deliberadamente en defaults hardcodeados de lanzamiento (`SALES_PLAYBOOK_RUNTIME_ENABLED=false`); Feature 008 queda preservada para V2.
+- `JEV_SALES_QUESTIONS_V2`, producto/policy/offer y writer defaults son la fuente operativa de V1; Meta Ads context, resolver, lanes, handoff y CRM effects siguen activos.
+- Follow-ups automáticos están estabilizados y verificados: scheduling, worker, cancelación por inbound/manual, 3 intentos, Dormido/STOP, ventana 24 h, retries, lease, concurrencia y tenant isolation.
+- Últimos commits de cierre: `dbb0731` (freeze configurable runtime) y `ec70a79` (follow-ups worker).
+- Gates del cierre: 818/818 tests; E2E follow-ups 40/40 en entorno real local con PostgreSQL 18.4 + mocks; sin pendiente técnico conocido dentro del objetivo de lanzamiento.
+- Configuración operativa requerida en producción: Agente ON + Sales Orchestrator ON + Follow-ups ON; para continuidad fuera de 24 h seleccionar plantilla WhatsApp approved y 0 variables BODY.
+- No reabrir Playbook/Lab antes de lanzar salvo bug que afecte conversaciones reales. El siguiente trabajo principal es comercial/marketing: campaña Meta Ads → WhatsApp → Espacio Connect.
+
 **2026-10-01 — Hotfix bloqueante de follow-ups cerrado.**
 Reproducido POST `/api/dev/follow-ups/run` → 500 `ERR_INVALID_ARG_TYPE`
 con postgres-js/PostgreSQL 18.4 antes de editar: raw SQL recibía `Date` JS.
