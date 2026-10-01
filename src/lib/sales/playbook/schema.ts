@@ -189,22 +189,28 @@ const HandoffSchema = z.object({
  * ConfigV1 — schema_version "1.0"
  * ============================================================ */
 
-export const ConfigV1Schema = z
-  .object({
-    schema_version: z.literal("1.0"),
-    product: ProductSchema,
-    offer: OfferSchema,
-    commercial_policy: PolicySchema,
-    priorities: PrioritiesSchema,
-    writer: WriterSchema,
-    jev_questions: QuestionsSchema,
-    prohibitions: ProhibitionsSchema,
-    handoff: HandoffSchema,
-    urgency_rules: z.string().max(1000).nullable().optional(),
-  })
-  .superRefine((cfg, ctx) => {
-    refineConfigV1(cfg, ctx);
-  });
+/**
+ * Forma estructural de `ConfigV1` **sin** las guardarraíles Jev.
+ * Se exporta aparte para que callers (ej. `parseBody` en routes de
+ * patch) puedan acceder a `.shape.<bloque>` para construir patches
+ * parciales; `ConfigV1Schema` es un `ZodEffects` que oculta `.shape`.
+ */
+export const ConfigV1ObjectSchema = z.object({
+  schema_version: z.literal("1.0"),
+  product: ProductSchema,
+  offer: OfferSchema,
+  commercial_policy: PolicySchema,
+  priorities: PrioritiesSchema,
+  writer: WriterSchema,
+  jev_questions: QuestionsSchema,
+  prohibitions: ProhibitionsSchema,
+  handoff: HandoffSchema,
+  urgency_rules: z.string().max(1000).nullable().optional(),
+});
+
+export const ConfigV1Schema = ConfigV1ObjectSchema.superRefine((cfg, ctx) => {
+  refineConfigV1(cfg, ctx);
+});
 
 export type ConfigV1 = z.infer<typeof ConfigV1Schema>;
 

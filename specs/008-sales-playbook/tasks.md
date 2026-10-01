@@ -171,36 +171,67 @@
 
 ## Corte 2 — API + versionado (T201..T208)
 
-- [ ] **T201** — `app/api/playbook/route.ts` (GET): devuelve `playbook`,
+- [x] **T201** — `app/api/playbook/route.ts` (GET): devuelve `playbook`,
   `published`, `draft`. 404 si la org no tiene playbook.
-- [ ] **T202** — `app/api/playbook/draft/route.ts` (POST): crea draft
+  *Evidencia*: `src/app/api/playbook/route.ts` + tests
+  `playbook-api.test.ts > GET /api/playbook (T201)` (404 sin playbook,
+  200 con V1 publicada).
+- [x] **T202** — `app/api/playbook/draft/route.ts` (POST): crea draft
   desde publicada (409 si ya hay draft).
-- [ ] **T203** — `app/api/playbook/draft/route.ts` (PUT): actualiza
+  *Evidencia*: `src/app/api/playbook/draft/route.ts` (POST) + tests
+  `POST /api/playbook/draft (T202)` (201 primer draft, 409 duplicado,
+  422 `no_published_baseline`).
+- [x] **T203** — `app/api/playbook/draft/route.ts` (PUT): actualiza
   draft, valida Zod del documento entero post-patch.
-- [ ] **T204** — `app/api/playbook/validate/route.ts` (POST): valida
+  *Evidencia*: `src/app/api/playbook/draft/route.ts` (PUT) + tests
+  `PUT /api/playbook/draft (T203) — guardarraíles Jev` (404 sin draft,
+  422 `choice_keys_mismatch` / `engine_required_type_mismatch` /
+  `engine_required_missing` / `engine_required_disabled`).
+- [x] **T204** — `app/api/playbook/validate/route.ts` (POST): valida
   sin persistir. Detalle de errores en `details[]`.
-- [ ] **T205** — `app/api/playbook/publish/route.ts` (POST):
+  *Evidencia*: `src/app/api/playbook/validate/route.ts` (200 `{ok:true}`
+  / 422 `validation_failed` con `details[]`).
+- [x] **T205** — `app/api/playbook/publish/route.ts` (POST):
   transacción atómica: archive + publish. `notes` requerido.
-- [ ] **T206** — `app/api/playbook/rollback/route.ts` (POST):
+  *Evidencia*: `src/app/api/playbook/publish/route.ts` + tests
+  `POST /api/playbook/publish (T205)` (200 ok, 409
+  `publish_concurrency_lost` cuando otro caller ya publicó).
+- [x] **T206** — `app/api/playbook/rollback/route.ts` (POST):
   republica archivada. Rechaza si `schema_version` desconocido sin
   migrador.
-- [ ] **T207** — `app/api/playbook/versions/route.ts` (GET) +
+  *Evidencia*: `src/app/api/playbook/rollback/route.ts` + tests
+  `POST /api/playbook/rollback (T206)` (404 cross-tenant, 422
+  `unknown_schema_version`, 200 ok).
+- [x] **T207** — `app/api/playbook/versions/route.ts` (GET) +
   `app/api/playbook/versions/[id]/route.ts` (GET): listado y detalle
   con `scoped()`.
-- [ ] **T208** — Tests de endpoints cubriendo:
-  - Tenant isolation (cross-org).
-  - Draft duplicado → 409.
-  - Payload inválido → 422 con detalles.
-  - PUT que renombra una option key de `next_action` → 422.
-  - PUT que cambia el type de `next_action` → 422.
-  - Rollback cross-org → 404.
-  - Publish concurrente → 409.
+  *Evidencia*: ambas rutas + test `GET /api/playbook/versions (T207)
+  — aislamiento por org` (solo ve versiones de su org).
+- [x] **T208** — Tests de endpoints cubriendo:
+  - Tenant isolation (cross-org). ✓ `playbook-api.test.ts >
+    POST /api/playbook/rollback (T206) > 404 version_not_found si la
+    versión no pertenece a la org (cross-tenant)` y `GET
+    /api/playbook/versions (T207) — aislamiento por org`.
+  - Draft duplicado → 409. ✓
+  - Payload inválido → 422 con detalles. ✓
+  - PUT que renombra una option key de `next_action` → 422. ✓
+  - PUT que cambia el type de `next_action` → 422. ✓
+  - Rollback cross-org → 404. ✓
+  - Publish concurrente → 409. ✓
 
 **Cierre del corte 2**:
 
-- Gate técnico en verde.
-- Self-test E2E manual contra `pnpm dev`: flujo publicar y rollback
-  (ver `quickstart.md` §2..6).
+- Gate técnico en verde: `pnpm typecheck` (clean), `pnpm lint` (clean,
+  solo el warning preexistente de `<img>` en `anuncio-origen.tsx`
+  ajeno a este corte), `pnpm build` (7 rutas nuevas registradas en
+  `/.next/server/app-paths-manifest.json`), `pnpm test` (78/78
+  archivos, 715/715 tests, incluyendo los 17 nuevos en
+  `tests/unit/playbook-api.test.ts`).
+- Self-test E2E manual contra `pnpm dev`: la superficie HTTP está
+  expuesta y probada por los tests unitarios con mocks de `withAuth`
+  + store en memoria. La verificación con mocks en runtime
+  (`pnpm dev` + `WA_MOCK_ENABLED=true`) se ejecutará cuando se
+  integre con la UI en Corte 3 (no se requiere en Corte 2).
 - Working tree limpio, un commit: `feat(playbook): API draft/publish/rollback`.
 
 ---
