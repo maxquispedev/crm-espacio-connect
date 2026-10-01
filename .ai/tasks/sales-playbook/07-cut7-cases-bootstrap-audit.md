@@ -9,52 +9,60 @@ Lee obligatoriamente, en este orden:
 - `specs/008-sales-playbook/plan.md`
 - `specs/008-sales-playbook/tasks.md`
 - `specs/008-sales-playbook/contracts/playbook-api.md`
-- `src/components/inbox/conversation-patch.ts` (referencia de helper puro)
+- `src/components/inbox/conversation-patch.ts` (referencia de
+  helper puro)
 - `src/components/inbox/contact-panel.tsx` (UI del panel lateral)
 - `src/server/inbox/identity.ts` (cómo se identifica al contacto)
 - `src/server/lab/runner.ts` (Corte 6)
 - `src/lib/sales/playbook/bootstrap.ts` (Corte 1)
 - `src/server/sales/vende-veloz.ts` (DEFAULTS_ONLY)
+- `src/lib/sales/playbook/store.ts` (Corte 1)
+- `src/lib/sales/playbook/loader.ts` (Corte 3)
 
 Objetivo único:
 
-implementar T701–T708 del Corte 7. "Guardar conversación como caso"
-con PII minimizada. Decisión documentada sobre el fallback. E2E
-final. Docs. Cierre.
+implementar T701–T708 del Corte 7. "Guardar conversación como
+caso" con PII minimizada. Decisión documentada sobre el fallback.
+E2E final. Docs. Cierre.
 
 Tareas concretas:
 
 1. **T701** — UI "Guardar conversación como caso".
    - Botón en el panel lateral de la conversación
      (`contact-panel.tsx` o donde viva el botón de acciones).
-   - Confirmación: "¿Guardar esta conversación como caso de
-     evaluación? No se incluirá número de teléfono, email ni
-     identificador de contacto."
+   - Confirmación explícita: "¿Guardar esta conversación como
+     caso de evaluación? No se incluirá número de teléfono,
+     email ni identificador de contacto."
    - Al confirmar: POST a un nuevo endpoint
-     `POST /api/lab/cases/from-conversation` con `{ conversation_id }`.
+     `POST /api/lab/cases/from-conversation` con
+     `{ conversation_id }`.
 
 2. **T702** — Endpoint server-side.
    - `app/api/lab/cases/from-conversation/route.ts`.
-   - Solo permitido si la conversación es del tenant de la sesión.
-   - Solo permitido si Sales Orchestrator está activo (no tiene sentido
-     guardar como caso sin Sales Orchestrator).
+   - Solo permitido si la conversación es del tenant de la
+     sesión.
+   - Solo permitido si Sales Orchestrator está activo (no tiene
+     sentido guardar como caso sin Sales Orchestrator).
    - Server-side:
-     1. Leer la conversación con `scoped()`. Si no existe → 404.
+     1. Leer la conversación con `scoped()`. Si no existe →
+        404.
      2. Leer mensajes en orden cronológico.
      3. **PII minimizada**: el caso persistido contiene:
-        - `transcript: [{ role: 'cliente' | 'agente', text: string }]`
-          (solo texto; nunca adjuntos binarios, nunca URLs, nunca
-          `mediaAssetId`).
-        - `playbook_version_id` (la que esté publicada al guardar).
+        - `transcript: [{ role: 'cliente' | 'agente', text:
+          string }]` (solo texto; nunca adjuntos binarios, nunca
+          URLs, nunca `mediaAssetId`).
+        - `playbook_version_id` (la que esté publicada al
+          guardar).
         - `playbook_schema_version`.
-        - `lead_id` (nullable).
-        - `expected_next_action` (editable después; default null).
+        - `lead_id` (opcional).
+        - `expected_next_action` (editable después; default
+          null).
         - `expected_lane` (editable; default null).
         - `expected_handoff` (editable; default null).
         - **NO** contiene: `phone`, `email`, `wa_identity`,
           `ctwa_clid`, `source_id`, `source_url`,
-          `meta_credentials.token*`, ni IDs internos que permitan
-          reconstruir el contacto.
+          `meta_credentials.token*`, ni IDs internos que
+          permitan reconstruir el contacto.
      4. Persistir en una nueva tabla `lab_case` (o reusar
         `agent_test_case` con `is_from_conversation = true`).
      5. Devolver 201 con `{ case_id }`.
@@ -62,19 +70,18 @@ Tareas concretas:
      laboratorio.
 
 3. **T703** — Confirmar bootstrap al boot.
-   - `instrumentation.ts`: después de inicializar la DB, llamar a
-     `bootstrapOrgIfNeeded` para cada `organization.id` que tenga
-     `salesOrchestratorEnabled = true`. Best-effort, no bloquea.
-   - Agregar log explícito:
+   - `instrumentation.ts`: después de inicializar la DB,
+     ejecutar `bootstrapAllEnabledOrgs()` (Corte 1).
+   - Logs explícitos por org:
      - "Playbook V1 sembrada para org X" si created.
      - "Playbook V1 ya existente para org X" si no created.
      - "Org X no tiene Sales Orchestrator; sin playbook" si
        `salesOrchestratorEnabled = false`.
    - **Decisión documentada**: el fallback a `VENDE_VELOZ_*` y
-     `JEV_SALES_QUESTIONS_V2` **se mantiene** como `DEFAULTS_ONLY`.
-     El runtime prefiere la publicada siempre. Los tests siguen
-     funcionando porque importan los defaults directamente. NO se
-     borra el hardcode.
+     `JEV_SALES_QUESTIONS_V2` **se mantiene** como
+     `DEFAULTS_ONLY`. El runtime prefiere la publicada
+     siempre. Los tests siguen funcionando porque importan los
+     defaults directamente. NO se borra el hardcode.
 
 4. **T704** — `docs/playbook.md`.
    - Guía del dueño:
@@ -82,29 +89,45 @@ Tareas concretas:
      - Cómo crear un draft.
      - Cómo publicar (qué pasa con la versión anterior).
      - Cómo hacer rollback.
-     - Cómo funciona el fallback (visible solo si no hay publicada).
-     - Qué hace el editor Jev (qué puede y qué no).
-     - Cómo correr el laboratorio comercial (Published vs Draft).
-     - Cómo guardar una conversación como caso.
-     - Cómo migrar desde el hardcode antiguo (no requiere acción; el
-       runtime cambia automáticamente cuando publicas la V1).
+     - Cómo funciona el fallback (visible solo si no hay
+       publicada).
+     - Qué hace el editor Jev (tres clases:
+       `engine-required` 🔒 / `known signal` 📊 /
+       `analytical/custom` ➕).
+     - Cómo correr el laboratorio comercial (Published vs
+       Draft, Archived:N, Both).
+     - Cómo guardar una conversación como caso (con PII
+       minimizada).
+     - Cómo migrar desde el hardcode antiguo (no requiere
+       acción; el runtime cambia automáticamente cuando publicas
+       la V1).
      - Riesgos conocidos.
 
 5. **T705** — E2E final (`scripts/e2e-selftest.mjs` sección 013).
    - Flujo completo en las dos configuraciones:
        a. **Configuración A — publicada cargada**:
           - GET `/api/playbook` → 200 con V1.
-          - POST inbound sintético → `lead.last_jev_playbook_version_id`
-            poblado.
-          - System prompt del writer cita `product.name` de la V1.
-          - `lead.last_jev_decision` JSONB tiene `playbook_version_id`.
+          - POST inbound sintético →
+            `lead.last_jev_playbook_version_id` poblado.
+          - System prompt del writer cita `product.name` de la
+            V1.
+          - `lead.last_jev_decision` JSONB tiene
+            `playbook_version_id`.
+          - **Sin** filas en `sales_follow_up_job` durante una
+            corrida sandbox.
        b. **Configuración B — fallback forzado**:
           - Borrar la publicada en test.
           - POST inbound → `last_jev_playbook_version_id = null`.
-          - System prompt del writer cita `VENDE_VELOZ_PRODUCT.name`.
+          - System prompt del writer cita
+            `VENDE_VELOZ_PRODUCT.name`.
           - Warning en logs (una vez por proceso).
-       c. **Cross-tenant**: GET `/api/playbook` con sesión de otra
-          org → no leak.
+       c. **Cross-tenant**: GET `/api/playbook` con sesión de
+          otra org → no leak.
+       d. **Override rechazado en producción**: simulando un
+          caller que pase `playbookOverride` a
+          `runSalesOrchestratorTurn` con `is_test=false` → el
+          orquestador lanza
+          `playbook_override_forbidden_in_production`.
 
 6. **T706** — `docs/CURRENT_STATE.md`.
    - Sección de specs formales: 008 cerrado.
@@ -114,11 +137,20 @@ Tareas concretas:
        `DEFAULTS_ONLY`.
      - El runtime prefiere published; el fallback es explícito.
      - 1 playbook por org en V1; multi-playbook reservado.
+     - **Sin cache** de playbook en runtime.
+     - **Bootstrap multi-org determinista** (enumera
+       `agent_profile.salesOrchestratorEnabled=true`).
+     - **Override de Playbook solo en `is_test=true`**.
+     - **Tres clases de preguntas Jev**: `engine-required` /
+       `known signals` / `analytical/custom`.
+     - **Sandbox suprime scheduling de follow-ups** para
+       garantizar cero efectos residuales.
    - Riesgos conocidos.
 
 7. **T707** — Verificación global:
    - `bash -n scripts/ai/run-sales-playbook.sh` verde.
-   - `pnpm typecheck && pnpm lint && pnpm build && pnpm test` verde.
+   - `pnpm typecheck && pnpm lint && pnpm build && pnpm test`
+     verde.
    - `pnpm test:e2e` (lo que el entorno permita; documentar
      pendiente si no es posible).
 
@@ -135,6 +167,8 @@ Restricciones:
 - **NO** romper la compatibilidad de los snapshots
   `last_jev_decision` históricos.
 - **NO** filtrar PII en el caso persistido.
+- **NO** cambiar el comportamiento del bootstrap
+  multi-org determinista.
 
 Verificación final:
 
@@ -144,5 +178,5 @@ Verificación final:
 - Working tree limpio.
 - Commit de cierre.
 
-NO hay siguiente corte. La feature 008 está cerrada al terminar este
-corte.
+NO hay hay siguiente corte. La feature 008 está cerrada al
+terminar este corte.

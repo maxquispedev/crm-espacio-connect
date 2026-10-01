@@ -1,15 +1,17 @@
 # Data Model — 008 Sales Playbook
 
 > Schema version **1.0** (semver: mayor = breaking, menor = aditivo,
-> patch = fix interno). El loader rechaza `schema_version` desconocido.
+> patch = fix interno). El loader rechaza `schema_version`
+> desconocido.
 
 ## Tablas
 
 ### `sales_playbook`
 
-Un playbook por organización en V1 (UNIQUE `organization_id`). La forma
-está lista para multi-playbook (futuro): se identifica por `slug` dentro
-de la organización, pero **no se expone gestión multi en V1**.
+Un playbook por organización en V1 (UNIQUE `organization_id`). La
+forma está lista para multi-playbook (futuro): se identifica por
+`slug` dentro de la organización, pero **no se expone gestión multi
+en V1**.
 
 | Columna | Tipo | Notas |
 |---|---|---|
@@ -21,6 +23,7 @@ de la organización, pero **no se expone gestión multi en V1**.
 | `updated_at` | timestamptz NOT NULL default now() | |
 
 Índices:
+
 - UNIQUE(`organization_id`)
 - INDEX(`slug`)
 
@@ -44,7 +47,7 @@ transacción.
 | `priorities_json` | jsonb NOT NULL DEFAULT '{}'::jsonb | `primary`/`secondary`/`tertiary` |
 | `writer_json` | jsonb NOT NULL DEFAULT '{}'::jsonb | instrucciones por `next_action` |
 | `jev_questions_json` | jsonb NOT NULL | mapa de preguntas |
-| `prohibitions_json` | jsonb NOT NULL DEFAULT '{}'::jsonb | `neverPromise` (también en offer) + `prohibitedClaims` |
+| `prohibitions_json` | jsonb NOT NULL DEFAULT '{}'::jsonb | `neverPromise` + `prohibitedClaims` |
 | `handoff_json` | jsonb NOT NULL DEFAULT '{}'::jsonb | `handoffByLane` |
 | `urgency_rules` | text | default `null` |
 | `notes` | text | comentario humano del cambio |
@@ -55,6 +58,7 @@ transacción.
 | `archived_at` | timestamptz | NULL hasta archivar |
 
 Índices:
+
 - UNIQUE(`playbook_id`, `version_number`)
 - UNIQUE INDEX parcial: `WHERE status = 'published'` por `playbook_id`
 - UNIQUE INDEX parcial: `WHERE status = 'draft'` por `playbook_id`
@@ -67,13 +71,29 @@ Dos columnas nuevas, ambas NULL mientras no haya playbook:
 
 | Columna | Tipo | Notas |
 |---|---|---|
-| `last_jev_playbook_version_id` | text FK→sales_playbook_version.id NULL | snapshot de la versión |
+| `last_jev_playbook_version_id` | text NULL | snapshot de la versión |
 | `last_jev_playbook_schema_version` | text NULL | snapshot del schema_version |
 
-No FK física (CONSTRAINT) opcional; el spec la deja FK lógica. Razón:
-permitir limpieza de versiones viejas sin romper FK de snapshots
-históricos. La trazabilidad por la versión congelada en el JSONB
-`last_jev_decision` se mantiene incluso si la fila se borra.
+No FK física (CONSTRAINT) opcional; el spec la deja FK lógica.
+Razón: permitir limpieza de versiones viejas sin romper FK de
+snapshots históricos. La trazabilidad por la versión congelada en
+el JSONB `last_jev_decision` se mantiene incluso si la fila se
+borra.
+
+### `agent_test_case` (migración 0008b, Corte 6)
+
+Columnas nuevas:
+
+| Columna | Tipo | Notas |
+|---|---|---|
+| `playbook_version_id` | text NULL | qué versión atendió esta corrida |
+| `playbook_schema_version` | text NULL | `schema_version` del config |
+| `expected_next_action` | text NULL | expectation humana (editable) |
+| `expected_lane` | text NULL | expectation humana |
+| `expected_handoff` | boolean NULL | expectation humana |
+
+Migración aditiva con `ALTER TABLE … ADD COLUMN IF NOT EXISTS`
+(re-ejecutable).
 
 ## Config shape (schema_version 1.0)
 
@@ -90,7 +110,7 @@ const Product = z.object({
 });
 
 const Implementation = z.object({
-  price: z.string().min(1).max(20), // texto para el writer (ej. "S/497")
+  price: z.string().min(1).max(20),
   kind: z.string().min(1).max(40),
   includes: z.array(z.string().min(1).max(300)).min(1).max(20),
   does_not_include: z.array(z.string().min(1).max(300)).max(20),
@@ -104,7 +124,7 @@ const Subscription = z.object({
 });
 
 const Offer = z.object({
-  currency: z.enum(["PEN", "USD", "MXN", "EUR"]), // set inicial; se amplía si la org lo necesita
+  currency: z.enum(["PEN", "USD", "MXN", "EUR"]),
   setup: z.number().int().min(0).max(1_000_000),
   monthlyBase: z.number().int().min(0).max(1_000_000),
   includedActiveStudents: z.number().int().min(1).max(100000),
@@ -145,11 +165,14 @@ const Writer = z.object({
   disqualify: z.string().min(1).max(1500),
 });
 
+// Tipos de pregunta Jev
 const QuestionChoice = z.object({
   type: z.literal("choice"),
   enabled: z.boolean(),
   instructions: z.string().min(1).max(2000),
-  criteria: z.record(z.string(), z.string().min(1).max(500)),
+  criteria: z.record(z.string().min(1).max(500), z.string().min(1).max(500)),
+  // option_keys (Zod refine): las engine-required/known signals choice
+  // deben tener EXACTAMENTE el set de keys del V1.
 });
 
 const QuestionNoul = z.object({
@@ -171,62 +194,67 @@ const QuestionScore = z.object({
 
 const Question = z.union([QuestionChoice, QuestionNoul, QuestionScore]);
 
-const ProtectedKeys = z.enum(["next_action", "needs_human_call"]);
-
+// Tres clases (ver § Guardarraíles Jev)
 const Questions = z.record(
   z.string().min(1).max(60).regex(/^[a-z_]+$/),
   Question
-).refine(
-  (qs) => qs.next_action?.type === "choice" && qs.needs_human_call?.type === "noul",
-  "next_action y needs_human_call son estructurales: deben existir con su tipo."
 );
-
-const Prohibitions = z.object({
-  neverPromise: z.array(z.string().min(1).max(200)).max(20),
-  prohibitedClaims: z.array(z.string().min(1).max(200)).max(20),
-});
-
-const Handoff = z.object({
-  auto: z.string().max(500).optional(),
-  auto_close: z.string().max(500).optional(),
-  human: z.string().max(500).optional(),
-  wait: z.string().max(500).optional(),
-  stop: z.string().max(500).optional(),
-});
-
-const ConfigV1 = z.object({
-  schema_version: z.literal("1.0"),
-  product: Product,
-  offer: Offer,
-  commercial_policy: Policy,
-  priorities: Priorities,
-  writer: Writer,
-  jev_questions: Questions,
-  prohibitions: Prohibitions,
-  handoff: Handoff.default({}),
-  urgency_rules: z.string().max(1000).nullable().default(null),
-});
 ```
 
 ### Guardarraíles Jev (Corte 5)
 
-- `next_action` y `needs_human_call` deben estar presentes.
-- Sus `type` (`choice` y `noul` respectivamente) son inmutables.
-- Sus `criteria`/`instructions` son editables.
-- Preguntas estructurales adicionales (`real_operational_need`,
-  `product_fit`, `motivation_to_change`, `purchase_intent`,
-  `buying_timing`, `main_value_proposition`) son **requeridas** en V1.
-  Editables en `instructions`/`criteria`. Su `type` no se cambia. pueden
-  desactivarse (`enabled: false`), en cuyo caso el motor las omite del
-  state — pero las dos protegidas siguen.
-- Preguntas nuevas (`key` libre) son **analíticas**: el motor no las
-  consume, solo las persiste para análisis. Su `type` es cualquiera de
-  los 3 soportados. No cuentan para `next_action` ni `needs_human_call`.
+El Zod hace dos pasadas:
+
+1. **Structural**: que el documento entero sea válido.
+2. **Contractual** (`superRefine`): que las clases protegidas cumplan
+   el contrato.
+
+**`engine-required` (inmutables)**:
+
+| key | type | option keys |
+|---|---|---|
+| `next_action` | `choice` | **exactamente** `['ask_more_questions', 'show_operations_demo', 'show_online_enrollment_demo', 'present_price', 'schedule_call', 'schedule_follow_up', 'disqualify']` |
+| `needs_human_call` | `noul` | — |
+
+Reglas:
+
+- Si la key no existe → `fail('engine_required_missing', key)`.
+- Si `type` ≠ el esperado → `fail('engine_required_type_mismatch', key)`.
+- Si `enabled === false` → `fail('engine_required_disabled', key)`.
+- En `next_action.criteria`, las keys deben ser **exactamente** el
+  set de arriba (ninguna extra, ninguna faltante). Las
+  descripciones son editables.
+
+**`known signals` (desactivables con fallback)**:
+
+| key | type | option keys | fallback si ausente |
+|---|---|---|---|
+| `real_operational_need` | `noul` | — | resolver no usa la señal |
+| `product_fit` | `score` | — | sin efecto en plan |
+| `motivation_to_change` | `score` | — | sin efecto en plan |
+| `purchase_intent` | `score` | — | sin efecto en plan |
+| `buying_timing` | `choice` | **exactamente** `['now', 'soon', 'future_season', 'unknown', 'no_current_plan']` | resolver trata como `"unknown"`; writer omite línea |
+| `main_value_proposition` | `choice` | **exactamente** las 5 del V1 | writer continúa sin ángulo |
+
+Reglas:
+
+- `key`, `type` y (cuando `choice`) option keys son inmutables.
+- `enabled = false` es válido (desactivar).
+- En `criteria`, las keys deben ser **exactamente** el set de
+  arriba (las descripciones sí cambian).
+
+**`analytical/custom` (libres)**:
+
+- `key` libre validado `^[a-z_]+$`, ≤ 60 chars.
+- `type` libre: `choice` / `noul` / `score`.
+- Creadas, desactivadas, renombradas y eliminadas libremente.
+- Su presencia/ausencia no afecta al resolver ni al writer.
 
 ## Anexo V1 — "Vende Veloz 365 — Academia Bajo Control"
 
-El bootstrap siembra este objeto (resumen; el detalle literal vive en
-`src/lib/sales/playbook/v1.ts`):
+El bootstrap siembra este objeto (resumen; el detalle literal vive
+en `src/lib/sales/playbook/v1.ts`) para cada organización con
+`salesOrchestratorEnabled=true`:
 
 ```yaml
 schema_version: "1.0"
@@ -328,32 +356,48 @@ urgency_rules: "Preparación antes de temporada alta cuando el contexto
 ```
 
 > El detalle de las instrucciones del writer vive en
-> `src/lib/sales/playbook/v1.ts` (literal exportado) para que el editor
-> pueda mostrarlo como default y para que tests snapshot lo bloqueen.
+> `src/lib/sales/playbook/v1.ts` (literal exportado) para que el
+> editor pueda mostrarlo como default y para que tests snapshot lo
+> bloqueen.
 
 ## Estado en `lead`
 
-Se agregan dos columnas (migration aditiva en 0008):
+Se agregan dos columnas (migración aditiva en 0008):
 
 - `last_jev_playbook_version_id text NULL`
 - `last_jev_playbook_schema_version text NULL`
 
-Persistencia: en `runSalesOrchestratorTurn.persistDecision`, antes del
-update, se obtiene `playbook_version_id` del loader y se guarda junto
-con `schema_version`. El snapshot completo (`lead.last_jev_decision`
-JSONB) sigue conteniendo el config relevante para reproducibilidad.
+Persistencia: en `runSalesOrchestratorTurn.persistDecision`, antes
+del update, se obtiene `playbook_version_id` del loader y se guarda
+junto con `schema_version`. El snapshot completo
+(`lead.last_jev_decision` JSONB) sigue conteniendo el config
+relevante para reproducibilidad.
 
-## Loader runtime
+## Loader runtime (sin cache en V1)
 
 ```ts
 // src/lib/sales/playbook/loader.ts
-export async function getPublishedForOrg(orgId: string): Promise<ConfigV1 | null>;
-export async function getDraftForOrg(orgId: string): Promise<ConfigV1 | null>;
-export async function getConfigByVersionId(versionId: string): Promise<{config: ConfigV1; schema_version: string; playbook_id: string; version_number: number}>;
+export async function getPublishedConfigForOrg(
+  orgId: string
+): Promise<ConfigV1 | null>;
+
+export async function getDraftConfigForOrg(
+  orgId: string
+): Promise<ConfigV1 | null>;
+
+export async function getConfigByVersionId(
+  orgId: string,
+  versionId: string
+): Promise<{
+  config: ConfigV1;
+  schema_version: string;
+  version_number: number;
+  status: 'draft' | 'published' | 'archived';
+} | null>;
 ```
 
-Cache: por organización, TTL 60s, invalidado por `POST /api/playbook/publish`
-y `POST /api/playbook/rollback`.
+**Sin cache en memoria**, **sin TTL**, **sin invalidación**.
+Publish/rollback toma efecto en el siguiente turno.
 
 ## Snapshot esperado del `last_jev_decision` JSONB
 
@@ -363,12 +407,41 @@ y `POST /api/playbook/rollback`.
   "playbook_schema_version": "1.0",
   "playbook_version_number": 3,
   "snapshot": { /* mismo de hoy */ },
-  "decision": { /* mismo de hoy */ },
+  "decision": { /* mismo de hoy, pero con campos nullable */ },
   "plan": { /* mismo de hoy */ },
   "requestId": null,
   "model": null
 }
 ```
 
-Las claves nuevas (`playbook_*`) son aditivas. El reader del runtime las
-ignora si están ausentes (compatibilidad con snapshots históricos).
+Las claves nuevas (`playbook_*`) son aditivas. Las keys de
+`decision` que pasan a nullable mantienen el nombre existente
+(`buyingTiming`, `mainValueProposition`, etc.); los consumidores
+toleran `null`.
+
+## Refactor compatible de `SalesDecision`
+
+```ts
+// src/server/sales/decision.ts
+
+// engine-required (siguen siendo requeridos):
+export type SalesDecision = {
+  nextAction: NextActionAnswer;            // choice, 7 option keys
+  needsHumanCall: NeedsHumanCallAnswer;    // noul
+  // known signals (nullable; fallback documentado):
+  realOperationalNeed: RealOperationalNeedAnswer | null;
+  productFit: ProductFitAnswer | null;
+  motivationToChange: MotivationToChangeAnswer | null;
+  purchaseIntent: PurchaseIntentAnswer | null;
+  buyingTiming: BuyingTimingAnswer | null;
+  mainValueProposition: MainValuePropositionAnswer | null;
+  // analytics/custom preservadas:
+  signals: Record<string, NormalizedAnswer>;
+};
+```
+
+`normalizeJevResponse(raw, activeQuestions, knownSignalKeys)` se
+vuelve el constructor de esa `SalesDecision`. Si una `known signal`
+está activa pero la respuesta no llega o es mal formada, devuelve
+`null` (no lanza). Si una `engine-required` falta o es mal
+formada, **lanza** (es un fallo de Jev).

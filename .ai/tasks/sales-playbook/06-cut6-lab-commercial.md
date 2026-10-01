@@ -1,4 +1,4 @@
-# CUT 6 — Sales Playbook: laboratorio comercial
+# CUT 6 — Sales Playbook: laboratorio comercial (Published vs Draft, sin efectos residuales)
 
 Lee obligatoriamente, en este orden:
 
@@ -15,14 +15,20 @@ Lee obligatoriamente, en este orden:
 - `src/components/lab/lab-client.tsx` (extender)
 - `src/app/api/lab/runs/route.ts`
 - `src/app/api/lab/runs/[id]/route.ts`
-- tests existentes del lab (`tests/unit/lab-sandbox.test.ts`, `judge.test.ts`)
+- `src/server/sales/orchestrator.ts` (override guard del Corte 3)
+- `src/server/ai/delivery.ts` (sender de WhatsApp en `is_test`)
+- tests existentes del lab (`tests/unit/lab-sandbox.test.ts`,
+  `judge.test.ts`)
 
 Objetivo único:
 
 implementar T601–T608 del Corte 6. Ejecutar el pipeline REAL
 (orchestrator + Jev + resolver + writer) sobre conversaciones
-sandbox. Persistir `playbook_version_id` por caso. Soportar
-expected outcomes humanos. Comparar Published vs Draft.
+sandbox con override de Playbook (solo porque `is_test=true`).
+Persistir `playbook_version_id` por caso. Soportar expected
+outcomes humanos. Comparar Published vs Draft. Garantizar **cero
+efectos residuales**: cero WhatsApp real, cero follow-ups
+pendientes, cero CAPI.
 
 Tareas concretas:
 
@@ -41,81 +47,113 @@ Tareas concretas:
 
 2. **T602** — `src/server/lab/runner.ts`.
    - En lugar de `runAgentTurn(convId)` (legacy), usar
-     `runSalesOrchestratorTurn(...)` cuando el modo lo indique.
+     `runSalesOrchestratorTurn(conv, { playbookOverride? })`
+     cuando el modo lo indique.
    - **Nuevo**: cada `agent_test_case` debe persistir
-     `playbook_version_id` (columna nueva; migración aditiva 0008b)
-     y `playbook_schema_version`.
+     `playbook_version_id` (columna nueva; migración aditiva
+     0008b) y `playbook_schema_version`.
    - En el runner, antes de crear el caso:
-     1. Cargar el `playbook_version_id` según el modo (`published`
-        o `draft`).
-     2. Pasarlo a `runSalesOrchestratorTurn` y guardarlo en la fila
-        del test case.
-   - El modo legacy (sin Sales Orchestrator) sigue funcionando con
-     las personas legacy y `playbook_version_id = null`.
+     1. Cargar el `playbook_version_id` según el modo
+        (`published`, `draft`, `archived:N`).
+     2. Cargar el config por `getConfigByVersionId(orgId,
+        versionId)` (del Corte 3).
+     3. Pasarlo a `runSalesOrchestratorTurn` como
+        `playbookOverride`. El orquestador verificará
+        `is_test=true` (las conversaciones sandbox lo son).
+   - El modo legacy (sin Sales Orchestrator) sigue funcionando
+     con las personas legacy y `playbook_version_id = null`.
 
 3. **T603** — Migración 0008b.
-   - ALTER TABLE `agent_test_case` ADD COLUMN
-     `playbook_version_id text NULL`,
-     `playbook_schema_version text null`,
+   - `ALTER TABLE agent_test_case ADD COLUMN
+     playbook_version_id text NULL`,
+     `playbook_schema_version text NULL`,
      `expected_next_action text NULL`,
      `expected_lane text NULL`,
      `expected_handoff boolean NULL`.
-   - Editada a mano con el patrón `IF NOT EXISTS` (en Postgres 9.6+
-     `ADD COLUMN IF NOT EXISTS` es válido; documentar en la migración).
+   - Editada a mano con `ADD COLUMN IF NOT EXISTS` (Postgres
+     9.6+).
    - Re-ejecutable.
 
 4. **T604** — Expected outcomes.
-   - La UI permite setear `expected_next_action`, `expected_lane`,
-     `expected_handoff` por caso (modo manual; no se autocompleta).
-   - En el reporte, mostrar ✅ cuando coinciden, ❌ cuando difieren,
-     "—" cuando no hay expected.
+   - La UI permite setear `expected_next_action`,
+     `expected_lane`, `expected_handoff` por caso (modo manual;
+     no se autocompleta).
+   - En el reporte, mostrar ✅ cuando coinciden, ❌ cuando
+     difieren, "—" cuando no hay expected.
 
 5. **T605** — Comparación Published vs Draft.
-   - `POST /api/lab/runs` con `{ "playbook_mode": "draft" }` ejecuta
-     la corrida usando el draft activo (en lugar de la publicada).
+   - `POST /api/lab/runs` con `{ "playbook_mode": "draft" }`
+     ejecuta la corrida usando el draft activo (en lugar de la
+     publicada).
    - `playbook_mode: "published"` (default) usa la publicada.
-   - `playbook_mode: "both"` ejecuta dos corridas en paralelo: una
-     contra published y otra contra draft. Persistir ambas.
-   - La UI muestra diff lado a lado por caso.
+   - `playbook_mode: "archived:VERSION_ID"` usa la versión
+     archivada solicitada.
+   - `playbook_mode: "both"` ejecuta dos corridas en paralelo:
+     una contra published y otra contra draft. Persistir ambas.
+   - El override llega al orquestador por
+     `runSalesOrchestratorTurn` (T306 del Corte 3) y se
+     valida con `is_test === true`.
 
 6. **T606** — UI del Laboratorio.
-   - Selector de modo (Published / Draft / Both).
-   - Si hay expected outcomes, mostrar ✅/❌ por campo esperado.
+   - Selector de modo (Published / Draft / Archived:N / Both).
+   - Si hay expected outcomes, mostrar ✅/❌ por campo
+     esperado.
    - Diff side-by-side para `both`: cada caso muestra dos cards
-     (uno por versión), con tilde verde/rojo donde difieren los
-     outcomes esperados.
-   - Mantener compatibilidad con las personas legacy (sin Sales
-     Orchestrator).
+     (uno por versión), con tilde verde/rojo donde difieren
+     los outcomes esperados.
+   - Mantener compatibilidad con las personas legacy (sin
+     Sales Orchestrator).
 
 7. **T607** — Tests del runner:
    - `tests/unit/lab-pipeline-real.test.ts`:
      - sandbox no toca WhatsApp real (spy sobre `graphRequest` /
-       `metaSend`);
-     - persiste `playbook_version_id`;
-     - respeta fallback si no hay publicada (`playbook_version_id = null`);
-     - personas legacy siguen funcionando.
+     `metaSend`);
+     - persiste `playbook_version_id` y `playbook_schema_version`
+       por caso;
+     - override rechazado si `is_test=false` (cubierto por
+       `tests/unit/playbook-override-guard.test.ts` del Corte
+       3; verificar que el runner no rompe esa garantía);
+     - cero filas en `sales_follow_up_job` tras corrida
+       `is_test=true` (cubierto por
+       `playbook-lab-suppress-followups.test.ts` del Corte 3);
+     - respeta fallback si no hay publicada
+     (`playbook_version_id = null`);
+     - personas legacy siguen funcionando;
+     - `playbook_mode: "both"` ejecuta dos corridas con
+       `playbook_version_id` distintos.
 
 8. **T608** — E2E:
    - Lanzar corrida Published → 200 con casos V1.
    - Lanzar corrida Draft → 200 con casos V1.
    - Verificar que ambos persisten versión distinta.
    - Con expected set, ver tilde correcto.
+   - Verificar en BD que NO hay filas en `sales_follow_up_job`
+     para la conversación sandbox.
+   - Verificar que `GET /api/dev/wa-mock/outbox` está vacío.
 
 Restricciones:
 
 - **NO** eliminar las personas legacy.
-- **NO** romper `tests/unit/judge.test.ts` ni `lab-sandbox.test.ts`.
-- **NO** hacer llamadas reales a WhatsApp/Jev.
+- **NO** romper `tests/unit/judge.test.ts` ni
+  `lab-sandbox.test.ts`.
+- **NO** hacer llamadas reales a WhatsApp/Jev/CAPI.
 - **NO** introducir dependencias nuevas.
+- **NO** override de Playbook sobre conversaciones reales (el
+  orquestador lanza si llega override con `is_test=false`).
+- **NO** dejar jobs sandbox activos al final de la corrida
+  (el orquestador ya suprime scheduling; verificar en tests).
 
 Verificación:
 
-- `pnpm typecheck && pnpm lint && pnpm build && pnpm test` en verde.
+- `pnpm typecheck && pnpm lint && pnpm build && pnpm test` en
+  verde.
 - E2E Playwright verde.
 - Self-test manual con `pnpm dev` + mocks:
   - `POST /api/lab/runs` → 200 con casos V1.
   - `playbook_version_id` poblado.
   - Sin WhatsApp real (`/api/dev/wa-mock/outbox` sigue vacío).
+  - Sin filas en `sales_follow_up_job` por la conversación
+    sandbox.
 
 Cierre:
 
