@@ -2,6 +2,7 @@ import type { SalesDecision } from "@/server/sales/decision";
 import type { DurableSalesFacts } from "@/server/sales/resolve-plan";
 import type {
   BuyingTimingChoice,
+  MainValuePropositionChoice,
   NextActionChoice,
 } from "@/server/sales/answers";
 
@@ -17,6 +18,7 @@ export const BASE_FACTS: DurableSalesFacts = {
 export function makeDecision(overrides?: {
   nextAction?: NextActionChoice;
   buyingTiming?: BuyingTimingChoice;
+  mainValueProposition?: MainValuePropositionChoice;
   needsHumanNoul?: number;
   needsHumanTrue?: number;
 }): SalesDecision {
@@ -39,13 +41,14 @@ export function makeDecision(overrides?: {
     },
     mainValueProposition: {
       type: "choice",
-      choice: "operational_control",
+      choice: overrides?.mainValueProposition ?? "operations",
     },
     nextAction: {
       type: "choice",
       choice: overrides?.nextAction ?? "ask_more_questions",
     },
     needsHumanCall,
+    signals: {},
   };
 }
 
@@ -63,7 +66,7 @@ export function validJevRaw(nextAction: string = "ask_more_questions"): {
       buying_timing: { type: "choice", choice: "unknown" },
       main_value_proposition: {
         type: "choice",
-        choice: "operational_control",
+        choice: "operations",
       },
       next_action: { type: "choice", choice: nextAction },
       needs_human_call: { type: "noul", noul: 0.12 },

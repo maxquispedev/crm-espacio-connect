@@ -83,6 +83,14 @@ export function resolveSalesPlan(input: ResolveSalesPlanInput): SalesPlan {
   }
 
   if (nextAction === "schedule_follow_up") {
+    // T305: tolerar `buyingTiming === null` (T304: el playbook puede
+    // apagar la pregunta, o el proveedor no la trae). En ese caso,
+    // NO se ramifica a `future_season`: el plan cae al camino por
+    // defecto (`scheduled_follow_up`).
+    // V2: el set de claves se actualizó. `this_year` y `exploring`
+    // son las dos claves de buying_timing que NO son inmediatas
+    // (no son `now`/`this_quarter`).
+    const buyingTimingChoice = input.decision.buyingTiming?.choice ?? null;
     return makePlan({
       lane: "wait",
       nextAction,
@@ -92,7 +100,7 @@ export function resolveSalesPlan(input: ResolveSalesPlanInput): SalesPlan {
       followUpDirective: {
         kind: "schedule",
         reason:
-          input.decision.buyingTiming.choice === "future_season"
+          buyingTimingChoice === "this_year" || buyingTimingChoice === "exploring"
             ? "future_season"
             : "scheduled_follow_up",
       },

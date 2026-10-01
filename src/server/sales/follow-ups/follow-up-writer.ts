@@ -151,8 +151,10 @@ function frozenDecisionBlock(input: WriteFollowUpInput): string {
   const fromDecision = input.lastDecision
     ? {
         next_action: input.lastDecision.nextAction.choice,
-        angle: input.lastDecision.mainValueProposition.choice,
-        timing: input.lastDecision.buyingTiming.choice,
+        // T305: tolerar `null` en los known signals. El fallback es
+        // "unknown"/"unspecified" según contexto; nunca lanzamos.
+        angle: pickNullableChoice(input.lastDecision.mainValueProposition, "unspecified"),
+        timing: pickNullableChoice(input.lastDecision.buyingTiming, "unknown"),
       }
     : snapshotHints(input.lastJevSnapshot);
 
@@ -164,6 +166,31 @@ function frozenDecisionBlock(input: WriteFollowUpInput): string {
     "Contexto congelado de la última decisión (NO lo cambies, NO lo reevalúes):",
     `reason=${input.reason}; intento=${input.attemptNumber}; next_action=${fromDecision.next_action}; ángulo=${fromDecision.angle}; timing=${fromDecision.timing}.`,
   ].join("\n");
+}
+
+/**
+ * Helper tolerante a `null`: devuelve `choice` si la respuesta es un
+ * `{type:'choice', choice}` válido; en cualquier otro caso
+ * (`null`, shape inválido, type incorrecto, choice vacío) devuelve
+ * el fallback. Es la fuente de verdad para `decision.buyingTiming`
+ * y `decision.mainValueProposition` cuando el playbook los apaga o
+ * el proveedor no los emite (T305).
+ */
+function pickNullableChoice(
+  answer:
+    | {
+        type: "choice";
+        choice: string;
+        confidence?: number;
+        probabilities?: Record<string, number>;
+      }
+    | null,
+  fallback: string
+): string {
+  if (!answer) return fallback;
+  if (answer.type !== "choice") return fallback;
+  if (typeof answer.choice !== "string" || answer.choice.length === 0) return fallback;
+  return answer.choice;
 }
 
 function snapshotHints(

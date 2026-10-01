@@ -73,10 +73,10 @@ export const NEXT_ACTION_LABELS: Record<string, string> = {
 
 export const BUYING_TIMING_LABELS: Record<string, string> = {
   now: "Ahora",
-  soon: "Pronto",
-  future_season: "Temporada futura",
+  this_quarter: "Este trimestre",
+  this_year: "Este año",
+  exploring: "Explorando",
   unknown: "Desconocido",
-  no_current_plan: "Sin plan actual",
 };
 
 const PRODUCT_FIT_LABELS = [

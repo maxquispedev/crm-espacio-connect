@@ -615,7 +615,7 @@ function SalesSection({
           <SalesRow
             label="Necesidad operativa"
             value={
-              snap.realOperationalNeed !== null
+              snap.realOperationalNeed !== undefined
                 ? labelForNoul(snap.realOperationalNeed)
                 : null
             }
@@ -625,7 +625,7 @@ function SalesSection({
           <SalesRow
             label="Encaje"
             value={
-              snap.productFit !== null
+              snap.productFit !== undefined
                 ? labelForScore(snap.productFit, "product_fit")
                 : null
             }
@@ -634,7 +634,7 @@ function SalesSection({
           <SalesRow
             label="Intención de compra"
             value={
-              snap.purchaseIntent !== null
+              snap.purchaseIntent !== undefined
                 ? labelForScore(snap.purchaseIntent, "purchase_intent")
                 : null
             }

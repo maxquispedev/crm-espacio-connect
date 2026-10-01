@@ -73,7 +73,7 @@ describe("resolveSalesPlan", () => {
     const plan = resolveSalesPlan({
       decision: makeDecision({
         nextAction: "schedule_follow_up",
-        buyingTiming: "future_season",
+        buyingTiming: "this_year",
       }),
       currentSalesState: BASE_FACTS,
       currentPipelineStage: "interested",

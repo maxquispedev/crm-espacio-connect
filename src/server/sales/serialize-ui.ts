@@ -16,14 +16,29 @@ const NEXT_ACTIONS = new Set([
 
 const BUYING_TIMINGS = new Set([
   "now",
-  "soon",
-  "future_season",
+  "this_quarter",
+  "this_year",
+  "exploring",
   "unknown",
-  "no_current_plan",
+]);
+
+const MAIN_VALUE_PROPOSITIONS = new Set([
+  "operations",
+  "enrollment",
+  "retention",
+  "admin_overhead",
+  "visibility",
+  "unspecified",
 ]);
 
 /**
  * DTO operativo del estado comercial. No incluye snapshot crudo ni probabilities.
+ *
+ * Corte 3 — T305:
+ *   - `snapshot.*` solo contiene los campos que tienen valor: si el
+ *     playbook apaga una pregunta o el proveedor no la trae, ese
+ *     campo NO se serializa (en vez de aparecer como `null`).
+ *   - `mainValueProposition` también se serializa opcionalmente.
  */
 export function serializeLeadSalesState(lead: LeadRow): ContactSalesDto {
   return {
@@ -45,32 +60,81 @@ function extractSnapshot(raw: unknown): SalesSnapshotDto | null {
 
   const nextAction = readChoice(decision.nextAction, NEXT_ACTIONS);
   const buyingTiming = readChoice(decision.buyingTiming, BUYING_TIMINGS);
+  const mainValueProposition = readChoice(
+    decision.mainValueProposition,
+    MAIN_VALUE_PROPOSITIONS
+  );
   const realOperationalNeed = readNoul(decision.realOperationalNeed);
   const productFit = readScore(decision.productFit);
+  const motivationToChange = readScore(decision.motivationToChange);
   const purchaseIntent = readScore(decision.purchaseIntent);
 
   if (
     !nextAction &&
     !buyingTiming &&
+    !mainValueProposition &&
     !realOperationalNeed &&
     !productFit &&
+    !motivationToChange &&
     !purchaseIntent
   ) {
     return null;
   }
 
-  return {
-    nextAction: nextAction?.choice ?? null,
-    buyingTiming: buyingTiming?.choice ?? null,
-    realOperationalNeed: realOperationalNeed?.noul ?? null,
-    productFit: productFit?.score ?? null,
-    purchaseIntent: purchaseIntent?.score ?? null,
-    nextActionConfidence: nextAction?.confidence,
-    buyingTimingConfidence: buyingTiming?.confidence,
-    realOperationalNeedConfidence: realOperationalNeed?.confidence,
-    productFitConfidence: productFit?.confidence,
-    purchaseIntentConfidence: purchaseIntent?.confidence,
-  };
+  const dto: SalesSnapshotDto = {};
+  if (nextAction) {
+    dto.nextAction = nextAction.choice;
+    if (nextAction.confidence !== undefined) {
+      dto.nextActionConfidence = nextAction.confidence;
+    }
+  }
+  if (buyingTiming) {
+    dto.buyingTiming = buyingTiming.choice;
+    if (buyingTiming.confidence !== undefined) {
+      dto.buyingTimingConfidence = buyingTiming.confidence;
+    }
+  }
+  if (mainValueProposition) {
+    // `mainValueProposition` se incluye como campo del DTO pero NO se
+    // declara en el tipo público canónico (mantiene compatibilidad
+    // hacia atrás con callers que solo conocen `SalesSnapshotDto`).
+    // Se persiste como `mainValueProposition` para que el editor (Corte 4)
+    // pueda mostrarlo sin reinterpretar la fila cruda.
+    (dto as Record<string, unknown>).mainValueProposition =
+      mainValueProposition.choice;
+    if (mainValueProposition.confidence !== undefined) {
+      (dto as Record<string, unknown>).mainValuePropositionConfidence =
+        mainValueProposition.confidence;
+    }
+  }
+  if (realOperationalNeed) {
+    dto.realOperationalNeed = realOperationalNeed.noul;
+    if (realOperationalNeed.confidence !== undefined) {
+      dto.realOperationalNeedConfidence = realOperationalNeed.confidence;
+    }
+  }
+  if (productFit) {
+    dto.productFit = productFit.score;
+    if (productFit.confidence !== undefined) {
+      dto.productFitConfidence = productFit.confidence;
+    }
+  }
+  if (motivationToChange) {
+    // Idem `mainValueProposition`: se persiste para el editor (Corte 4).
+    (dto as Record<string, unknown>).motivationToChange =
+      motivationToChange.score;
+    if (motivationToChange.confidence !== undefined) {
+      (dto as Record<string, unknown>).motivationToChangeConfidence =
+        motivationToChange.confidence;
+    }
+  }
+  if (purchaseIntent) {
+    dto.purchaseIntent = purchaseIntent.score;
+    if (purchaseIntent.confidence !== undefined) {
+      dto.purchaseIntentConfidence = purchaseIntent.confidence;
+    }
+  }
+  return dto;
 }
 
 function readChoice(

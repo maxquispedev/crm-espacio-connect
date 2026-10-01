@@ -1,6 +1,10 @@
 import { desc, eq } from "drizzle-orm";
 import { getDb, schema } from "@/lib/db";
 import { scoped } from "@/lib/db/tenant";
+import {
+  getPublishedConfigForOrg,
+  type LoadedPlaybookVersion,
+} from "@/lib/sales/playbook/loader";
 import type {
   JevAdContext,
   JevConversationTurn,
@@ -11,7 +15,29 @@ import type {
 import {
   VENDE_VELOZ_COMMERCIAL_POLICY,
   VENDE_VELOZ_PRODUCT,
+  type VendeVelozCommercialPolicy,
+  type VendeVelozProduct,
 } from "@/server/sales/vende-veloz";
+
+/**
+ * Set<orgId> en memoria de proceso: emitimos `console.warn` solo la
+ * PRIMERA vez que una organización NO tiene playbook publicado. Esto
+ * evita spam en logs cuando hay muchos turnos concurrentes y deja
+ * trazabilidad clara cuando un tenant corre sin playbook.
+ *
+ * No es cache de la config (el loader no cachea). Solo es el set
+ * "ya avisado" del warning. Se descarta al reiniciar el proceso.
+ */
+const warnedNoPlaybookOrgs = new Set<string>();
+
+/**
+ * Solo para tests: limpia el set de orgs ya avisadas para que el
+ * guard `warn-once-per-process` se pueda validar entre tests del
+ * mismo archivo sin importar el orden.
+ */
+export function __resetWarnedNoPlaybookOrgs(): void {
+  warnedNoPlaybookOrgs.clear();
+}
 
 /**
  * Política de contexto (sin resumen LLM):
@@ -48,6 +74,17 @@ export type BuildJevSalesStateSuccess = {
   ok: true;
   state: JevSalesState;
   persist: JevPersistTarget;
+  /**
+   * Playbook cargado para este turno. `null` si no hay publicada
+   * (runtime cae a VENDE_VELOZ_* y emite warning una vez por proceso).
+   * El orquestador usa esto para derivar:
+   *   - `activeQuestions` (T303): preguntas con `enabled=true`.
+   *   - `offer`, `writer.instructions` y `urgency_rules` para el
+   *     writer (T307).
+   *   - snapshot a persistir en `lead.last_jev_playbook_version_id`
+   *     y `last_jev_decision` (T308).
+   */
+  playbook: LoadedPlaybookVersion | null;
 };
 
 export type BuildJevSalesStateFailure = {
@@ -169,9 +206,44 @@ export async function buildJevSalesState(
     .limit(1);
   const adContext = toAdContext(adRows[0]);
 
+  // T302 — Playbook publicado (sin cache). Si el playbook existe, sus
+  // bloques `product` y `commercial_policy` pisan los defaults
+  // VENDE_VELOZ_*. Si no existe, fallback a los defaults y emitimos
+  // warning una sola vez por proceso por organización.
+  let playbook: LoadedPlaybookVersion | null = null;
+  try {
+    playbook = await getPublishedConfigForOrg(organizationId);
+  } catch (err) {
+    // Una fila publicada que no cumple ConfigV1 no debe tumbar el
+    // turno. Degradamos al default y registramos para diagnóstico.
+    if (!warnedNoPlaybookOrgs.has(organizationId)) {
+      warnedNoPlaybookOrgs.add(organizationId);
+      // eslint-disable-next-line no-console
+      console.warn(
+        `[sales] playbook publicado inválido en org=${organizationId}: ${(err as Error).message}. Fallback a VENDE_VELOZ_*.`
+      );
+    }
+    playbook = null;
+  }
+
+  if (!playbook && !warnedNoPlaybookOrgs.has(organizationId)) {
+    warnedNoPlaybookOrgs.add(organizationId);
+    // eslint-disable-next-line no-console
+    console.warn(
+      `[sales] sin playbook publicado en org=${organizationId}; fallback a VENDE_VELOZ_*.`
+    );
+  }
+
+  const productFromPlaybook: VendeVelozProduct = playbook
+    ? ({ ...VENDE_VELOZ_PRODUCT, ...playbook.config.product } as unknown as VendeVelozProduct)
+    : ({ ...VENDE_VELOZ_PRODUCT } as VendeVelozProduct);
+  const policyFromPlaybook: VendeVelozCommercialPolicy = playbook
+    ? ({ ...VENDE_VELOZ_COMMERCIAL_POLICY, ...playbook.config.commercial_policy } as unknown as VendeVelozCommercialPolicy)
+    : ({ ...VENDE_VELOZ_COMMERCIAL_POLICY } as VendeVelozCommercialPolicy);
+
   const state: JevSalesState = {
-    product: VENDE_VELOZ_PRODUCT,
-    commercial_policy: VENDE_VELOZ_COMMERCIAL_POLICY,
+    product: productFromPlaybook,
+    commercial_policy: policyFromPlaybook,
     crm_state: toCrmState(leadRow),
     conversation,
     ...(adContext
@@ -191,6 +263,7 @@ export async function buildJevSalesState(
       contactId,
       leadId: leadRow?.lead.id ?? null,
     },
+    playbook,
   };
 }
 
@@ -262,13 +335,13 @@ function toAdContext(
 }
 
 function toTurn(
-  message: typeof schema.message.$inferSelect,
+  message: typeof schema.message.$inferSelect | null | undefined,
   media: typeof schema.mediaAsset.$inferSelect | null
 ): JevConversationTurn | null {
   const text = turnText(message, media);
   if (!text) return null;
   return {
-    from: message.direction === "in" ? "lead" : "seller",
+    from: message?.direction === "in" ? "lead" : "seller",
     text,
   };
 }
@@ -278,12 +351,12 @@ function toTurn(
  * del tipo de adjunto. Nunca inventa el contenido del archivo.
  */
 function turnText(
-  message: typeof schema.message.$inferSelect,
+  message: typeof schema.message.$inferSelect | null | undefined,
   media: typeof schema.mediaAsset.$inferSelect | null
 ): string | null {
-  const real = (message.text ?? media?.caption ?? "").trim();
+  const real = (message?.text ?? media?.caption ?? "").trim();
   if (real) return real;
-  return mediaPlaceholder(media?.kind ?? message.type);
+  return mediaPlaceholder(media?.kind ?? message?.type ?? "unknown");
 }
 
 function mediaPlaceholder(kind: string): string | null {

@@ -10,7 +10,7 @@ describe("normalizeJevResponse", () => {
     expect(result.decision.nextAction.choice).toBe("present_price");
     expect(result.decision.nextAction.confidence).toBeUndefined();
     expect(result.decision.nextAction.probabilities).toBeUndefined();
-    expect(result.decision.realOperationalNeed.noul).toBe(0.82);
+    expect(result.decision.realOperationalNeed?.noul).toBe(0.82);
   });
 
   it("conserva confidence y probabilities cuando vienen en el raw", () => {
@@ -35,7 +35,7 @@ describe("normalizeJevResponse", () => {
     const result = normalizeJevResponse({ model: "x" });
     expect(result.ok).toBe(false);
     if (result.ok) return;
-    expect(result.error).toMatch(/answers/);
+    expect(result.error.detail).toMatch(/answers/);
   });
 
   it("falla si next_action no está en el contrato", () => {
@@ -50,9 +50,13 @@ describe("normalizeJevResponse", () => {
     expect(normalizeJevResponse(null).ok).toBe(false);
   });
 
-  it("falla si falta una pregunta del contrato", () => {
+  it("falla si falta una engine-required (next_action) en la respuesta", () => {
+    // Corte 3: solo las engine-required (next_action + needs_human_call)
+    // son obligatorias. Los known signals son nullable. Esta prueba
+    // verifica la primera parte: si el motor apagó next_action o el
+    // proveedor la omitió, el normalize hace fail con missing_required.
     const raw = validJevRaw();
-    delete (raw.answers as { product_fit?: unknown }).product_fit;
+    delete (raw.answers as { next_action?: unknown }).next_action;
     expect(normalizeJevResponse(raw).ok).toBe(false);
   });
 });

@@ -103,7 +103,10 @@ const CONVERSATION = {
   id: "cv_1",
   organizationId: "org_1",
   contactId: "ct_1",
-  isTest: true,
+  // Corte 3: las pruebas del happy path modelan producción
+  // (`isTest=false`). Los efectos del sandbox del Laboratorio se
+  // verifican en `tests/unit/playbook-lab-suppress-followups.test.ts`.
+  isTest: false,
   aiEnabled: true,
   handoffAt: null,
 };
@@ -265,7 +268,7 @@ describe("runSalesOrchestratorTurn", () => {
       ok: true,
       decision: makeDecision({
         nextAction: "schedule_follow_up",
-        buyingTiming: "future_season",
+        buyingTiming: "this_year",
       }),
       snapshot: {},
     });

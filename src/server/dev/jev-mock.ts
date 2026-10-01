@@ -1,4 +1,5 @@
 import { normalizeJevResponse } from "@/server/sales/normalize";
+import { JEV_SALES_QUESTIONS_V2 } from "@/server/sales/questions";
 import type { SalesDecision } from "@/server/sales/decision";
 
 /**
@@ -20,7 +21,7 @@ export function mockJevRaw(): {
       buying_timing: { type: "choice", choice: "unknown" },
       main_value_proposition: {
         type: "choice",
-        choice: "operational_control",
+        choice: "operations",
       },
       next_action: { type: "choice", choice: "ask_more_questions" },
       needs_human_call: { type: "noul", noul: 0.12 },
@@ -33,12 +34,16 @@ export function evaluateJevMock():
   | { ok: true; decision: SalesDecision; model: string; snapshot: unknown }
   | { ok: false; error: "invalid_response"; detail: string; snapshot: unknown } {
   const body = mockJevRaw();
-  const normalized = normalizeJevResponse(body);
+  // El mock siempre asume el set activo completo (defaults V2 sin
+  // `enabled` explicito, lo que el runtime trata como activo):
+  // preserva el contrato actual y permite que los tests que esperan
+  // todas las preguntas pobladas sigan funcionando.
+  const normalized = normalizeJevResponse(body, JEV_SALES_QUESTIONS_V2);
   if (!normalized.ok) {
     return {
       ok: false,
       error: "invalid_response",
-      detail: normalized.error,
+      detail: normalized.error.detail,
       snapshot: body,
     };
   }

@@ -25,19 +25,26 @@ export type NormalizedChoice<T extends string> = {
   probabilities?: Record<string, number>;
 };
 
+/**
+ * Set de claves V2 del contrato de preguntas. El orquestrador las
+ * acepta como `choice` cuando la pregunta `buying_timing` está activa.
+ * El runtime valida contra `JEV_SALES_QUESTIONS_V2.buying_timing.criteria`
+ * — esta unión debe coincidir con esas claves.
+ */
 export type BuyingTimingChoice =
   | "now"
-  | "soon"
-  | "future_season"
-  | "unknown"
-  | "no_current_plan";
+  | "this_quarter"
+  | "this_year"
+  | "exploring"
+  | "unknown";
 
 export type MainValuePropositionChoice =
-  | "operational_control"
-  | "reduce_whatsapp_dependency"
-  | "online_enrollment"
-  | "reduce_manual_work"
-  | "no_relevant_value_now";
+  | "operations"
+  | "enrollment"
+  | "retention"
+  | "admin_overhead"
+  | "visibility"
+  | "unspecified";
 
 export type NextActionChoice =
   | "ask_more_questions"
@@ -57,3 +64,14 @@ export type MainValuePropositionAnswer =
   NormalizedChoice<MainValuePropositionChoice>;
 export type NextActionAnswer = NormalizedChoice<NextActionChoice>;
 export type NeedsHumanCallAnswer = NormalizedNoul;
+
+/**
+ * Forma normalizada genérica de cualquier respuesta Jev (sin narrow
+ * por key). El runtime la usa para el buffer `signals` y para
+ * preservar preguntas `analytical/custom` arbitrarias que el
+ * playbook pueda activar.
+ */
+export type NormalizedAnswer =
+  | NormalizedNoul
+  | NormalizedScore
+  | (NormalizedChoice<string>);

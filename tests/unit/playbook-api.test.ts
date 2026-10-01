@@ -568,10 +568,10 @@ describe("PUT /api/playbook/draft (T203) — guardarraíles Jev", () => {
       ...buyingTiming,
       criteria: {
         inmediatamente: buyingTiming.criteria.now,
-        soon: buyingTiming.criteria.soon,
-        future_season: buyingTiming.criteria.future_season,
+        this_quarter: buyingTiming.criteria.this_quarter,
+        this_year: buyingTiming.criteria.this_year,
+        exploring: buyingTiming.criteria.exploring,
         unknown: buyingTiming.criteria.unknown,
-        no_current_plan: buyingTiming.criteria.no_current_plan,
       },
     } as never;
     const req = new Request("http://test/api/playbook/draft", {

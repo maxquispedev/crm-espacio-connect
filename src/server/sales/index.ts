@@ -41,10 +41,10 @@ export type {
 } from "@/server/sales/state";
 
 export {
-  JEV_QUESTION_KEYS,
   JEV_SALES_QUESTIONS_V2,
-  type JevQuestionKey,
-  type JevSalesQuestionsV2,
+  type JevQuestionDefinition,
+  type JevQuestions,
+  pickActiveQuestions,
 } from "@/server/sales/questions";
 
 export {

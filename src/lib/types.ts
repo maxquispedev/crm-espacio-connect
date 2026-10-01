@@ -152,13 +152,21 @@ export type StageDto = {
   kind: "open" | "won" | "lost";
 };
 
-/** Snapshot operativo de Jev (sin probabilities crudas). */
+/**
+ * Snapshot operativo de Jev (sin probabilities crudas).
+ *
+ * Corte 3 — T305: los campos son opcionales. Si el playbook publicado
+ * apaga una pregunta o el proveedor no la trae, el campo se OMITE del
+ * DTO (no se serializa como `null` ni se inventa un default). El
+ * cliente puede distinguir "no presente" de "valor neutral" con
+ * `'nextAction' in dto.snapshot`.
+ */
 export type SalesSnapshotDto = {
-  nextAction: string | null;
-  buyingTiming: string | null;
-  realOperationalNeed: number | null;
-  productFit: number | null;
-  purchaseIntent: number | null;
+  nextAction?: string;
+  buyingTiming?: string;
+  realOperationalNeed?: number;
+  productFit?: number;
+  purchaseIntent?: number;
   nextActionConfidence?: number;
   buyingTimingConfidence?: number;
   realOperationalNeedConfidence?: number;

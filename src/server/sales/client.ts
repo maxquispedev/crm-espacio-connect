@@ -4,7 +4,8 @@ import type { SalesDecision } from "@/server/sales/decision";
 import { normalizeJevResponse } from "@/server/sales/normalize";
 import {
   JEV_SALES_QUESTIONS_V2,
-  type JevSalesQuestionsV2,
+  type JevQuestions,
+  pickActiveQuestions,
 } from "@/server/sales/questions";
 import type { JevSalesState } from "@/server/sales/state";
 
@@ -23,7 +24,13 @@ const RETRYABLE_STATUS = new Set([429, 529]);
 
 export type JevEvaluateInput = {
   state: JevSalesState;
-  questions?: JevSalesQuestionsV2;
+  /**
+   * Contrato genérico runtime (Corte 3). El cliente filtra por
+   * `enabled === true` antes de enviar el payload al proveedor.
+   * Si llega `undefined`, se usa el snapshot V2 por defecto y se
+   * asume todo activo.
+   */
+  questions?: JevQuestions;
 };
 
 export type EvaluateJevOptions = {
@@ -89,12 +96,13 @@ export async function evaluateJev(
   }
 
   const questions = input.questions ?? JEV_SALES_QUESTIONS_V2;
+  const activeQuestions = pickActiveQuestions(questions);
   const timeoutMs = opts?.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   const sleep = opts?.sleep ?? defaultSleep;
   const payload = JSON.stringify({
     model,
     state: input.state,
-    questions,
+    questions: activeQuestions,
   });
 
   let requestId: string | undefined;
@@ -120,12 +128,12 @@ export async function evaluateJev(
       const body = await readBody(response);
 
       if (response.ok) {
-        const normalized = normalizeJevResponse(body);
+        const normalized = normalizeJevResponse(body, activeQuestions);
         if (!normalized.ok) {
           return {
             ok: false,
             error: "invalid_response",
-            detail: normalized.error,
+            detail: `${normalized.error.code}: ${normalized.error.detail}`,
             requestId,
             snapshot: body,
           };
