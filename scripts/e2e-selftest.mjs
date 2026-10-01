@@ -3257,8 +3257,563 @@ async function runSection013() {
     (await api(`/api/playbook/versions/${v1Id}`)).res.status === 404
   );
 
+  // --- 10) Corte 7 (T705): el comportamiento final del feature --------
+  // Turno real con playbook publicado, fallback, aislamiento del endpoint
+  // "guardar conversación como caso" y su política de minimización de PII.
+  // Vive en un helper aparte (abajo) para no reordenar ni reescribir los
+  // checks de arriba. Se invoca con la sesión de la org A ya restaurada y
+  // vuelve a dejarla activa, así que el `cookie = cookieA` de cierre sigue
+  // siendo la restauración final de la sección.
+  cookie = cookieA;
+  await runSection013Corte7({ v1, cookieA });
+
   // Restauramos la sesión de la org A.
   cookie = cookieA;
+}
+
+/**
+ * 008 — Sección 013, corte 7 (T705): el comportamiento final del feature
+ * sobre la app real (no sobre la UI del editor).
+ *
+ * ORDEN DE LOS BLOQUES: A → B → E → C → D. C va DESPUÉS de E a propósito: su
+ * segunda aserción (el listado de casos de la org B) necesita un caso REAL
+ * de la org A, no uno hipotético. D va al final porque es una nota, no un
+ * check.
+ *
+ * A — Playbook publicado cargado (configuración A).
+ *   La conversación real que crea el inbound tiene que resolver la versión
+ *   PUBLICADA de su org. `lead.last_jev_playbook_version_id` y
+ *   `last_jev_decision.playbook_version_id` los escribe el orquestador, pero
+ *   NINGUNA superficie HTTP autenticada los expone: el DTO de
+ *   `GET /api/contacts/:id` los descarta a propósito (`serializeLeadSalesState`
+ *   solo serializa el snapshot operable) y `GET /api/pipeline/board` no
+ *   incluye la fila cruda del lead. Por eso el arnés mide lo observable —el
+ *   turno real (conversación + lead) y la MISMA resolución de playbook que
+ *   hace el runtime, leída del caso guardado— en vez de inventar un endpoint
+ *   para leer columnas internas.
+ *   La cita del `product.name` en el system prompt del writer tampoco es
+ *   observable por HTTP: el ai-mock no expone log de requests y su respuesta
+ *   es un canned determinista. La cubren `tests/unit/playbook-fallback.test.ts`
+ *   (`state.product` refleja la config publicada) y
+ *   `tests/unit/sales-writer.test.ts` (el writer se arma con esa oferta).
+ *
+ * B — Fallback forzado (configuración B). NO es forzable en vivo y el arnés no
+ *   finge lo contrario: no existe ruta que Archive la versión PUBLICADA
+ *   (`DELETE /api/playbook/draft` solo borra un draft y exige que haya una
+ *   publicada), y añadir un endpoint de dev está prohibido. El check verifica
+ *   justo eso —la publicada no se puede quitar por API, que es la razón del
+ *   skip— y la degradación en sí (`playbook_version_id = null` + warning una
+ *   vez por proceso) queda cubierta por `tests/unit/playbook-fallback.test.ts`.
+ *   De la degradación sí es observable el residuo: cero jobs de follow-up
+ *   para conversaciones sandbox.
+ *
+ * E — "Guardar conversación como caso": 201 + `case_id`, el caso aparece en el
+ *   listado, el transcript trae SOLO `role`/`text`, no aparece ninguna clave
+ *   de identidad (ni como clave ni como valor), la PII escrita por el cliente
+ *   DENTRO del texto se persiste como `[telefono]`/`[email]` y nunca cruda, y
+ *   los caminos infelices (404 y 422).
+ *
+ * C — Aislamiento: la org B recibe 404 al pedir el caso de una conversación de
+ *   la org A, y su listado no incluye los casos de la org A.
+ *
+ * Re-ejecutable (Constitución IV): credenciales, teléfonos y `wa_message_id`
+ * fijos —el dedup por `wa_message_id` hace que la segunda corrida reutilice el
+ * mensaje ya insertado— y el Sales Orchestrator se devuelve al valor con el
+ * que se encontró. La sesión de la org A queda activa al salir.
+ */
+async function runSection013Corte7({ v1, cookieA }) {
+  console.log(
+    "\n== 008-sales-playbook: corte 7 · playbook publicado en runtime, fallback y «guardar conversación como caso» =="
+  );
+  // El bloque 9 anterior dejó activa la sesión de la org B; aquí volvemos a
+  // la org A (la dueña del playbook publicado) y mantenemos la convención
+  // de que al salir la sesión activa es la de la org A.
+  cookie = cookieA;
+
+  /**
+   * Devuelve el estado global (flag del orquestador) y deja activa la sesión
+   * de la org A. Se ESPERA el PUT: la sección 014 corre justo después sobre
+   * la misma org y leería el flag a medio escribir.
+   */
+  const restaurar = async () => {
+    if (!orchOnAntes) {
+      await api("/api/agent/profile", {
+        method: "PUT",
+        body: JSON.stringify({ salesOrchestratorEnabled: false }),
+      });
+      console.log(
+        "  -- 013 · Sales Orchestrator devuelto a apagado (valor con el que estaba la org)"
+      );
+    }
+    cookie = cookieA;
+  };
+
+  // --- 0) WhatsApp PROPIO de esta sección --------------------------
+  // El webhook enruta por `phone_number_id` GLOBAL (no por sesión), así que
+  // esta sección registra un id exclusivo: si reutilizáramos `PN-E2E-1` el
+  // inbound caería en la org del setup principal y no tendríamos una
+  // conversación de ESTA org con la que ejercitar el endpoint.
+  const conn = await api("/api/settings/whatsapp", {
+    method: "PUT",
+    body: JSON.stringify({
+      wabaId: "WABA-E2E-013",
+      phoneNumberId: "PN-E2E-013",
+      token: "tok-e2e-013",
+    }),
+  });
+  ok(
+    "013 · credenciales WhatsApp de la sección (PN-E2E-013) guardadas",
+    conn.res.ok,
+    `${conn.res.status} ${JSON.stringify(conn.json).slice(0, 160)}`
+  );
+
+  // --- A) Configuración A: playbook publicado cargado ---------------
+  console.log("\n== 008 · corte 7 A: playbook publicado en runtime (conversación real) ==");
+
+  // Guardar una conversación como caso exige el Sales Orchestrator encendido
+  // (opt-in por org). Lo leemos y lo encendemos SOLO si hace falta, devolviendo
+  // el valor original al final: la sección debe ser re-ejecutable.
+  const profAntes = await api("/api/agent/profile");
+  const orchOnAntes = profAntes.json?.profile?.salesOrchestratorEnabled === true;
+  if (!orchOnAntes) {
+    const profPut = await api("/api/agent/profile", {
+      method: "PUT",
+      body: JSON.stringify({ salesOrchestratorEnabled: true }),
+    });
+    ok(
+      "013 · Sales Orchestrator encendido en la org (opt-in que exige el endpoint de casos)",
+      profPut.res.ok,
+      `${profPut.res.status} ${JSON.stringify(profPut.json).slice(0, 160)}`
+    );
+  } else {
+    console.log(
+      "  -- 013 · el Sales Orchestrator ya estaba encendido en esta org: no se toca"
+    );
+  }
+
+  await api("/api/dev/wa-mock/outbox", { method: "DELETE" });
+
+  const inbA = await api("/api/dev/wa-mock/inbound", {
+    method: "POST",
+    body: JSON.stringify({
+      phoneNumberId: "PN-E2E-013",
+      from: "521555888001",
+      name: "Lead Corte 7 Playbook",
+      text: "Hola, quiero informacion del ciclo 2026 y cuanto cuesta",
+      waMessageId: "wamid.e2e.013.playbook",
+    }),
+  });
+  ok(
+    "013 · configuración A · inbound sintético entregado al webhook",
+    inbA.res.ok,
+    `${inbA.res.status} ${JSON.stringify(inbA.json).slice(0, 120)}`
+  );
+
+  // El webhook procesa en `after()`: hay que ESPERAR a que la conversación
+  // exista en vez de asumir que el POST la creó de forma síncrona.
+  const convA = await waitFor(
+    async () => {
+      const convs = (await api("/api/conversations")).json?.conversations ?? [];
+      return (
+        convs.find((c) => c.contact?.name === "Lead Corte 7 Playbook") ?? null
+      );
+    },
+    20000,
+    400
+  );
+  ok(
+    "013 · configuración A · el inbound crea una conversación real de la org A",
+    !!convA?.id,
+    JSON.stringify({ conversation: convA?.id ?? null })
+  );
+
+  // El lead se crea en el primer inbound (`onLeadActivity`), también en
+  // `after()`: lo esperamos con la misma paciencia que la conversación.
+  const leadA = await waitFor(
+    async () => {
+      if (!convA?.contact?.id) return null;
+      const board = (await api("/api/pipeline/board")).json ?? {};
+      return (
+        (board.leads ?? []).find((l) => l.contact?.id === convA.contact.id) ??
+        null
+      );
+    },
+    20000,
+    400
+  );
+  ok(
+    "013 · configuración A · el turno real deja el lead en el kanban de la org",
+    !!leadA?.id,
+    JSON.stringify({ lead: leadA?.id ?? null, lane: leadA?.automationLane })
+  );
+
+  if (!convA?.id) {
+    console.log(
+      "  -- 013 · sin conversación real no se puede seguir: se omiten los checks\n" +
+        "     que dependen de ella (caso guardado, PII, aislamiento del endpoint)"
+    );
+    await restaurar();
+    return;
+  }
+
+  console.log(
+    "  -- 013 · NOTA: `last_jev_playbook_version_id` y\n" +
+      "     `last_jev_decision.playbook_version_id` los escribe el orquestador pero\n" +
+      "     no los expone ninguna superficie HTTP (el DTO de /api/contacts/:id los\n" +
+      "     descarta a propósito). El arnés no inventa un endpoint para leerlos: la\n" +
+      "     resolución de la versión publicada se comprueba más abajo, con la misma\n" +
+      "     lectura que hace el runtime, sobre el caso guardado. La cita del\n" +
+      "     `product.name` en el prompt del writer la cubren\n" +
+      "     tests/unit/playbook-fallback.test.ts y tests/unit/sales-writer.test.ts."
+  );
+
+  // --- B) Configuración B: fallback y efectos residuales -----------
+  console.log("\n== 008 · corte 7 B: fallback sin playbook publicado y cero residuos ==");
+
+  // El fallback NO se puede forzar por API: no hay ruta que quite la versión
+  // publicada. Este check deja constancia de la razón del skip y, de paso,
+  // protege la publicada que el resto del bloque necesita.
+  const sinDraft = await api("/api/playbook/draft", { method: "DELETE" });
+  const publicadaTras = (await api("/api/playbook")).json?.published;
+  ok(
+    "013 · configuración B · ninguna vía de API quita la publicada (el fallback no es forzable en vivo)",
+    sinDraft.res.ok && publicadaTras?.id === v1?.id,
+    JSON.stringify({
+      deleteDraft: sinDraft.json,
+      publicada: publicadaTras?.id ?? null,
+    })
+  );
+  console.log(
+    "  -- 013 · SKIP deliberado: la degradación real (sin playbook →\n" +
+      "     `playbook_version_id = null` + warning una vez por proceso) no es\n" +
+      "     alcanzable desde la API: `DELETE /api/playbook/draft` solo borra un\n" +
+      "     draft y exige publicada activa, y este arnés no añade endpoints de dev.\n" +
+      "     Cubierto por tests/unit/playbook-fallback.test.ts."
+  );
+
+  // Lo que SÍ es observable de esa degradación es que no deja residuos: la
+  // sonda separa los jobs de conversaciones sandbox de los reales.
+  const fu = await api("/api/dev/follow-ups/run");
+  ok(
+    "013 · configuración B · cero jobs de follow-up en conversaciones sandbox",
+    fu.res.ok && fu.json?.sandboxJobs === 0,
+    JSON.stringify(fu.json ?? { status: fu.res.status })
+  );
+
+  // --- E) Guardar conversación como caso ---------------------------
+  console.log("\n== 008 · corte 7 E: guardar conversación como caso (minimización de PII) ==");
+
+  // Contador del outbox del wa-mock ANTES de guardar: guardar un caso es una
+  // lectura + INSERT, no debe emitir NADA a WhatsApp. No se puede afirmar
+  // "outbox vacío" porque el turno real del bloque A sí deja ahí la respuesta
+  // del agente (y el outbox es estado GLOBAL del proceso, compartido por todas
+  // las orgs); lo que vale es que no CREZCA. Antes de tomar la línea base
+  // esperamos a que se estabilice: si el mensaje del agente aterrizara durante
+  // el guardado, el "no crece" daría un falso positivo.
+  let outboxAhora = (await api("/api/dev/wa-mock/outbox")).json?.outbox ?? [];
+  for (let i = 0; i < 20; i++) {
+    const previo = outboxAhora.length;
+    await sleep(500);
+    outboxAhora = (await api("/api/dev/wa-mock/outbox")).json?.outbox ?? [];
+    if (outboxAhora.length === previo) break;
+  }
+  const outboxAntes = outboxAhora.length;
+
+  const savedA = await api("/api/lab/cases/from-conversation", {
+    method: "POST",
+    body: JSON.stringify({ conversation_id: convA.id }),
+  });
+  const casoA = savedA.json?.case_id ?? null;
+  ok(
+    "013 · guardar conversación como caso → 201 con case_id",
+    savedA.res.status === 201 && !!casoA,
+    `${savedA.res.status} ${JSON.stringify(savedA.json).slice(0, 200)}`
+  );
+  ok(
+    "013 · configuración A · el runtime resuelve la versión publicada que la sección leyó al inicio",
+    savedA.json?.playbook_version_id === v1?.id &&
+      savedA.json?.playbook_schema_version === v1?.schema_version,
+    JSON.stringify({
+      playbook_version_id: savedA.json?.playbook_version_id ?? null,
+      esperado: v1?.id ?? null,
+      schema: savedA.json?.playbook_schema_version ?? null,
+    })
+  );
+  ok(
+    "013 · el caso cuenta los turnos guardados",
+    (savedA.json?.turns ?? 0) > 0,
+    JSON.stringify({ turns: savedA.json?.turns ?? null })
+  );
+  const mdA = savedA.json?.metadata ?? null;
+  ok(
+    "013 · la metadata del caso es acotada y no identificante",
+    mdA !== null &&
+      typeof mdA === "object" &&
+      Object.keys(mdA).sort().join(",") ===
+        "chars_total,detected_language,turns_approx" &&
+      (mdA.turns_approx ?? 0) >= 1 &&
+      (mdA.chars_total ?? 0) > 0 &&
+      ["es", "en", "und"].includes(mdA.detected_language),
+    JSON.stringify(mdA)
+  );
+
+  const outboxDespues = (
+    (await api("/api/dev/wa-mock/outbox")).json?.outbox ?? []
+  ).length;
+  ok(
+    "013 · guardar el caso NO emite nada al outbox del wa-mock",
+    outboxDespues === outboxAntes,
+    JSON.stringify({ antes: outboxAntes, despues: outboxDespues })
+  );
+
+  // Listado: el caso existe y su transcript trae solo `role`/`text`.
+  const lista = await api("/api/lab/cases/from-conversation");
+  const caso = (lista.json?.cases ?? []).find((c) => c.id === casoA);
+  ok(
+    "013 · el caso guardado aparece en el listado de la org",
+    lista.res.ok && !!caso,
+    JSON.stringify({ status: lista.res.status, id: casoA })
+  );
+  const turnos = caso?.transcript ?? [];
+  ok(
+    "013 · cada turno del caso trae SOLO `role` y `text`",
+    turnos.length > 0 &&
+      turnos.every(
+        (t) =>
+          Object.keys(t)
+            .sort()
+            .join(",") === "role,text" &&
+          (t.role === "cliente" || t.role === "agente") &&
+          typeof t.text === "string"
+      ),
+    JSON.stringify(turnos.slice(0, 2))
+  );
+  ok(
+    "013 · el transcript conserva la voz del cliente",
+    turnos.some((t) => t.role === "cliente"),
+    JSON.stringify(turnos.map((t) => t.role))
+  );
+  // La voz del agente solo se exige si el turno ENVIO algo: lo sabemos por el
+  // outbox (destacado con los últimos dígitos del teléfono que usamos). Así el
+  // check no ata la validity del caso a que el LLM conteste.
+  const contestoElAgente = outboxAhora.some((m) =>
+    String(m?.to ?? "").includes("88001")
+  );
+  ok(
+    "013 · el transcript trae la voz del agente cuando el turno envió respuesta",
+    !contestoElAgente || turnos.some((t) => t.role === "agente"),
+    JSON.stringify({
+      outbox: outboxAhora.length,
+      envio: contestoElAgente,
+      roles: turnos.map((t) => t.role),
+    })
+  );
+
+  // Claves prohibidas. Se buscan como CLAVES y no como subcadena del JSON:
+  // el transcript saneado contiene literalmente "[email]" y "[telefono]", así
+  // que una búsqueda por texto daría un falso positivo.
+  const CLAVES_PROHIBIDAS = [
+    "contact_id",
+    "conversation_id",
+    "lead_id",
+    "phone",
+    "email",
+    "wa_identity",
+    "ctwa_clid",
+    "source_id",
+    "source_url",
+  ];
+  const clavesDe = (obj) => {
+    const out = [];
+    if (Array.isArray(obj)) {
+      for (const v of obj) out.push(...clavesDe(v));
+      return out;
+    }
+    if (obj && typeof obj === "object") {
+      for (const [k, v] of Object.entries(obj)) {
+        out.push(k);
+        out.push(...clavesDe(v));
+      }
+    }
+    return out;
+  };
+  const halladas = clavesDe(caso).filter((k) => CLAVES_PROHIBIDAS.includes(k));
+  ok(
+    "013 · el caso no expone ninguna clave de identidad (contact/conversation/lead/phone/email/clid/source)",
+    !!caso && halladas.length === 0,
+    JSON.stringify({ halladas, claves: [...new Set(clavesDe(caso))] })
+  );
+  const serializadoCaso = JSON.stringify(caso ?? {});
+  const filtraIds =
+    serializadoCaso.includes(convA.id) ||
+    (!!convA.contact?.id && serializadoCaso.includes(convA.contact.id));
+  ok(
+    "013 · el caso tampoco filtra los ids de conversación/contacto como valor",
+    !!caso && !filtraIds,
+    JSON.stringify({ conversation: convA.id, contacto: convA.contact?.id ?? null })
+  );
+
+  // --- PII escrita por el cliente DENTRO del texto ------------------
+  const inbPII = await api("/api/dev/wa-mock/inbound", {
+    method: "POST",
+    body: JSON.stringify({
+      phoneNumberId: "PN-E2E-013",
+      from: "521555888002",
+      name: "Lead Corte 7 PII",
+      text: "Mi numero es +51 999 888 777 y mi correo es lead.proveedor@example.com, quiero el precio del ciclo",
+      waMessageId: "wamid.e2e.013.pii",
+    }),
+  });
+  ok(
+    "013 · inbound con PII en el texto entregado al webhook",
+    inbPII.res.ok,
+    `${inbPII.res.status} ${JSON.stringify(inbPII.json).slice(0, 120)}`
+  );
+  const convPII = await waitFor(
+    async () => {
+      const convs = (await api("/api/conversations")).json?.conversations ?? [];
+      return convs.find((c) => c.contact?.name === "Lead Corte 7 PII") ?? null;
+    },
+    20000,
+    400
+  );
+  ok(
+    "013 · la conversación con PII existe en la org",
+    !!convPII?.id,
+    JSON.stringify({ conversation: convPII?.id ?? null })
+  );
+  const savedPII = convPII?.id
+    ? await api("/api/lab/cases/from-conversation", {
+        method: "POST",
+        body: JSON.stringify({ conversation_id: convPII.id }),
+      })
+    : { res: { status: 0 }, json: null };
+  ok(
+    "013 · la conversación con PII también se guarda como caso",
+    savedPII.res.status === 201 && !!savedPII.json?.case_id,
+    `${savedPII.res.status} ${JSON.stringify(savedPII.json).slice(0, 160)}`
+  );
+  const listaPII = (await api("/api/lab/cases/from-conversation")).json?.cases ?? [];
+  const casoPII = listaPII.find((c) => c.id === savedPII.json?.case_id);
+  const textoPII = (casoPII?.transcript ?? []).map((t) => t.text).join(" ");
+  ok(
+    "013 · el transcript persistido marca el teléfono y el email del cliente",
+    textoPII.includes("[telefono]") && textoPII.includes("[email]"),
+    JSON.stringify(textoPII.slice(0, 240))
+  );
+  ok(
+    "013 · el transcript persistido NO guarda el teléfono ni el email crudos",
+    !textoPII.includes("999888777") &&
+      !textoPII.includes("999 888 777") &&
+      !textoPII.includes("lead.proveedor@example.com"),
+    JSON.stringify(textoPII.slice(0, 240))
+  );
+
+  // --- Caminos infelices del endpoint -------------------------------
+  const noExiste = await api("/api/lab/cases/from-conversation", {
+    method: "POST",
+    body: JSON.stringify({ conversation_id: "cv_inexistente_013" }),
+  });
+  ok(
+    "013 · conversation_id desconocido → 404 conversation_not_found",
+    noExiste.res.status === 404 &&
+      (noExiste.json?.error?.code ?? noExiste.json?.code) ===
+        "conversation_not_found",
+    `${noExiste.res.status} ${JSON.stringify(noExiste.json).slice(0, 160)}`
+  );
+  const sinId = await api("/api/lab/cases/from-conversation", {
+    method: "POST",
+    body: JSON.stringify({}),
+  });
+  ok(
+    "013 · body sin conversation_id → 422 invalid_body",
+    sinId.res.status === 422 &&
+      (sinId.json?.error?.code ?? sinId.json?.code) === "invalid_body",
+    `${sinId.res.status} ${JSON.stringify(sinId.json).slice(0, 160)}`
+  );
+
+  // --- C) Aislamiento: la org B no toca los casos de la org A -------
+  console.log("\n== 008 · corte 7 C: aislamiento del endpoint entre organizaciones ==");
+
+  // Sesión de la org B. Repetimos el mismo login que usa el bloque 9 para no
+  // depender del estado en que quedó aquella parte de la sección.
+  let regB7 = await api("/api/auth/sign-up/email", {
+    method: "POST",
+    body: JSON.stringify({
+      email: "e2e-008-orgb@vocero.test",
+      password: "password-e2e-123",
+      name: "Operador 008B",
+    }),
+  });
+  if (!regB7.res.ok) {
+    regB7 = await api("/api/auth/sign-in/email", {
+      method: "POST",
+      body: JSON.stringify({
+        email: "e2e-008-orgb@vocero.test",
+        password: "password-e2e-123",
+      }),
+    });
+  }
+  ok("013 · login de la org B para el check de aislamiento", regB7.res.ok, JSON.stringify(regB7.json).slice(0, 160));
+  const orgsB7 = orgListFrom((await api("/api/auth/organization/list")).json);
+  if (orgsB7[0]?.id) {
+    await api("/api/auth/organization/set-active", {
+      method: "POST",
+      body: JSON.stringify({ organizationId: orgsB7[0].id }),
+    });
+  }
+
+  const cruz = await api("/api/lab/cases/from-conversation", {
+    method: "POST",
+    body: JSON.stringify({ conversation_id: convA.id }),
+  });
+  ok(
+    "013 · aislamiento: la org B NO puede guardar como caso una conversación de la org A (404, no 201)",
+    cruz.res.status === 404 &&
+      (cruz.json?.error?.code ?? cruz.json?.code) === "conversation_not_found",
+    `${cruz.res.status} ${JSON.stringify(cruz.json).slice(0, 160)}`
+  );
+  const listaB = await api("/api/lab/cases/from-conversation");
+  ok(
+    "013 · aislamiento: el listado de la org B no incluye los casos de la org A",
+    listaB.res.ok &&
+      !(listaB.json?.cases ?? []).some(
+        (c) => c.id === casoA || c.id === savedPII.json?.case_id
+      ),
+    JSON.stringify({
+      status: listaB.res.status,
+      n: (listaB.json?.cases ?? []).length,
+    })
+  );
+
+  // --- D) Guard de override en producción ---------------------------
+  console.log(
+    "\n== 008 · corte 7 D: guard de override en producción ==" +
+      "\n  -- 013 · SIN CHECK DELIBERADO: `runSalesOrchestratorTurn` lanza\n" +
+      "     playbook_override_forbidden_in_production cuando recibe\n" +
+      "     `playbookOverride` en una conversación que NO es is_test. Ese guard es\n" +
+      "     in-process y no tiene superficie HTTP: el único que pasa el override es\n" +
+      "     el runner del Laboratorio, y siempre con is_test=true. El arnés no añade\n" +
+      "     un endpoint para alcanzarlo; lo cubre\n" +
+      "     tests/unit/playbook-override-guard.test.ts."
+  );
+
+  // Dejamos el outbox del wa-mock como lo encontramos. Es estado GLOBAL del
+  // proceso (no por org) y las secciones siguientes asertan que sigue vacío,
+  // así que primero esperamos a que el turno de PII termine de escribir y solo
+  // después lo vaciamos.
+  for (let i = 0; i < 20; i++) {
+    const previo = ((await api("/api/dev/wa-mock/outbox")).json?.outbox ?? []).length;
+    await sleep(500);
+    const actual = ((await api("/api/dev/wa-mock/outbox")).json?.outbox ?? []).length;
+    if (actual === previo) break;
+  }
+  const limpio = await api("/api/dev/wa-mock/outbox", { method: "DELETE" });
+  console.log(
+    `  -- 013 · outbox del wa-mock limpiado para las secciones siguientes (${limpio.res.status})`
+  );
+
+  await restaurar();
 }
 
 /**
@@ -3753,7 +4308,9 @@ async function runSection015() {
   );
 
   // --- 5) CERO EFECTOS RESIDUALES --------------------------------
-  const jobs = await api("/api/dev/follow-ups");
+  // La sonda vive en `/api/dev/follow-ups/run` (no en `/api/dev/follow-ups`,
+  // que no existe: el check fallaba con 404 antes de comparar nada).
+  const jobs = await api("/api/dev/follow-ups/run");
   ok(
     "015 · cero jobs de follow-up en conversaciones sandbox",
     jobs.res.ok && jobs.json?.sandboxJobs === 0,

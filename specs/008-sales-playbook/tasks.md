@@ -673,9 +673,16 @@ NO empieces Corte 7.
 
 ## Corte 7 — Casos reales + auditoría + cierre (T701..T708)
 
-- [ ] **T701** — UI "Guardar conversación como caso" en el panel
+- [x] **T701** — UI "Guardar conversación como caso" en el panel
   lateral con confirmación explícita de minimización de PII.
-- [ ] **T702** — Endpoint `POST /api/lab/cases/from-conversation` con
+  → ✅ Sección nueva en `contact-panel.tsx` ("Laboratorio comercial"),
+  deshabilitada sin Sales Orchestrator (con la razón a la vista).
+  El diálogo de confirmación **no es genérico**: nombra qué NO se
+  guarda (teléfono, email, identificador de contacto) y lista qué sí
+  entra, con los marcadores `[telefono]`/`[email]`/`[enlace]`
+  a la vista. Camino infeliz: si el server responde error, se muestra
+  el mensaje en el modal y el panel sigue usable.
+- [x] **T702** — Endpoint `POST /api/lab/cases/from-conversation` con
   minimización estricta de PII:
   - El caso persistido contiene únicamente `transcript` (texto),
     `playbook_version_id`, `playbook_schema_version`, expected
@@ -690,13 +697,62 @@ NO empieces Corte 7.
     guarda dentro del caso anonimizado.
   - Tests de minimización verifican explícitamente la
     **ausencia** de estos campos en el caso persistido.
-- [ ] **T703** — Confirmar al boot que el bootstrap multi-org es
+  → ✅ **Tabla NUEVA `lab_case`** (`drizzle/0008c_lab_case.sql`, idx 10
+  del journal, `CREATE TABLE/INDEX IF NOT EXISTS` → re-ejecutable).
+  Decisión documentada: NO se reusó `agent_test_case` porque tiene una
+  columna `conversation_id` y un `run_id` NOT NULL, y porque guardar
+  una conversación real ahí obligaría a fabricar una corrida. En
+  `lab_case` la garantía de PII es **estructural**: no existe la
+  columna, así que no se puede filtrar aunque alguien añada un campo
+  al INSERT. El endpoint lee con `scoped()` (cross-org → 404, nunca
+  leak de existencia), exige Sales Orchestrator (409 si está apagado),
+  persiste solo turnos de texto en orden cronológico y devuelve 201
+  con `{ case_id }`.
+  → ✅ **Segunda capa: saneado del CONTENIDO**
+  (`src/server/lab/case-pii.ts`, helper puro). Sin esto la garantía
+  estructural no bastaba: un cliente suele dictar su propio número
+  dentro del mensaje, y ese texto sí se persiste porque es lo que el
+  juez evalúa. Teléfonos → `[telefono]`, emails → `[email]`, enlaces
+  → `[enlace]`, tokens de plataforma → `[id]`. Precios, fechas y
+  números cortos se conservan (no son identidad y sí son señal para
+  el juez). `GET` en la misma ruta lista los casos con la misma
+  promesa de minimización.
+  → ✅ Tests: `tests/unit/lab-case-from-conversation.test.ts`
+  (**20 tests**). Nivel 1 (saneador puro, 13 tests). Nivel 2
+  (endpoint, 7 tests) con un doble de BD que captura el INSERT
+  literal: las aserciones se hacen sobre el objeto que habría ido a
+  Postgres, e iteran sobre `FORBIDDEN_CASE_KEYS` para que la ausencia
+  de campos no dependa de que alguien recuerde escribirla.
+- [x] **T703** — Confirmar al boot que el bootstrap multi-org es
   idempotente; logs explícitos por org; **decisión** sobre el
   fallback: se mantiene `VENDE_VELOZ_*` y `JEV_SALES_QUESTIONS_V2`
   como `DEFAULTS_ONLY` reusables en tests; el runtime prefiere la
   publicada.
-- [ ] **T704** — `docs/playbook.md`: guía del dueño.
-- [ ] **T705** — E2E final (`scripts/e2e-selftest.mjs` sección 013)
+  → ✅ `instrumentation.ts` ya llamaba a `bootstrapAllEnabledOrgs()`
+  best-effort tras `cleanupOrphanRuns()`; verificado y **sin cambios**.
+  Lo que faltaba eran los logs explícitos, ahora en
+  `bootstrapAllEnabledOrgs()`: "Playbook V1 sembrada para org X",
+  "Playbook V1 ya existente para org X", y "Org X no tiene Sales
+  Orchestrator; sin playbook" (este último requiere enumerar también
+  las orgs deshabilitadas: sin él, un opt-in apagado por error era
+  indistinguible de "ya sembrada"). La enumeración de las
+  deshabilitadas es solo diagnóstica y best-effort: si falla, el
+  bootstrap de las habilitadas continúa.
+  → ✅ **Decisión documentada** en el header de `bootstrap.ts`:
+  `VENDE_VELOZ_*` y `JEV_SALES_QUESTIONS_V2` **NO se borran**. Son
+  `DEFAULTS_ONLY`: red de arranque (si el bootstrap falla, el negocio
+  degrada a la estrategia conocida en vez de quedarse sin agente),
+  red de regresión de los tests (baseline congelado) y contrato de
+  arranque. El runtime los consume SOLO sin publicada, de forma
+  visible. Borrarlos would be tirar dos redes a cambio de nada.
+- [x] **T704** — `docs/playbook.md`: guía del dueño.
+  → ✅ Escrita con las 10 secciones pedidas: qué es y por qué existe,
+  crear draft, publicar (qué pasa con la anterior), rollback,
+  fallback, las tres clases del editor Jev, el Laboratorio comercial
+  (modos y expected outcomes manuales), guardar conversación como
+  caso con la política de PII, migración desde el hardcode (no
+  requiere acción) y riesgos conocidos.
+- [x] **T705** — E2E final (`scripts/e2e-selftest.mjs` sección 013)
   en las dos configuraciones:
   - Publicada cargada → decisión cita el producto del playbook;
     snapshot `playbook_version_id` poblado.
@@ -704,14 +760,86 @@ NO empieces Corte 7.
     en logs; cero filas en `sales_follow_up_job`.
   - Cross-tenant: GET `/api/playbook` con sesión de otra org → no
     leak.
-- [ ] **T706** — `docs/CURRENT_STATE.md`: sección 008 cerrado,
+  → ✅ Sección 013 extendida (checks nuevos con prefijo `013 ·`):
+  endpoint de caso real (201 + transcript con solo `role`/`text` +
+  barrido de claves prohibidas), PII en contenido (un inbound con
+  teléfono y email se persiste como `[telefono]`/`[email]`),
+  caminos negativos (404 / 422), y cross-tenant del endpoint nuevo.
+  Configuración A (publicada → `playbook_version_id` poblado) queda
+  cubierta; los caminos que **no son observables por HTTP** (el
+  `console.warn` del fallback y el guard
+  `playbook_override_forbidden_in_production`, que es in-process)
+  quedan marcados en el propio arnés como cubiertos por test
+  unitario, SIN inventar endpoints nuevos para exponerlos.
+  → ⚠️ **`pnpm test:e2e` NO ejecutado**: no hay Docker, `psql` ni
+  PostgreSQL en este entorno, y la app no está levantada
+  (`/api/health` sin respuesta). El arnés **parsea**
+  (`node --check` en verde), pero por Constitución IX/V el E2E en
+  vivo sigue PENDIENTE. Ver "Cierre del corte 7".
+- [x] **T706** — `docs/CURRENT_STATE.md`: sección 008 cerrado,
   historia técnica, decisiones, riesgos.
-- [ ] **T707** — Verificación global:
+  → ✅ Sección "Estado del spec 008" con: tabla de fechas de cierre
+  de los 7 cortes, las 8 decisiones (incluidas `DEFAULTS_ONLY`,
+  runtime prefiere published, 1 playbook por org, sin cache,
+  bootstrap multi-org determinista, override solo `is_test`, tres
+  clases Jev, sandbox sin follow-ups, y la tabla `lab_case`), política
+  de PII minimizada, tabla de verificación y riesgos conocidos.
+  El encabezado del doc se actualizó con el estado de este corte.
+- [x] **T707** — Verificación global:
   `bash -n scripts/ai/run-sales-playbook.sh`,
   `pnpm typecheck && pnpm lint && pnpm build && pnpm test`,
   `pnpm test:e2e` (lo que el entorno permita).
-- [ ] **T708** — Cierre: commit final
+  → ✅ `bash -n` verde · `pnpm typecheck` verde (clean) ·
+  `pnpm lint` verde (0 errores; los warnings son preexistentes de
+  `<img>` en `anuncio-origen.tsx`, ajenos a este corte) ·
+  `pnpm build` verde · `pnpm test` verde (**88 archivos, 810 tests**,
+  incluidos 23 nuevos).
+  ⚠️ `pnpm test:e2e` **PENDIENTE** (sin stack local); el arnés parsea.
+- [x] **T708** — Cierre: commit final
   `feat(playbook): cerrar feature 008 — playbook durable V1 publicado`.
+
+### Hallazgos del corte 7
+
+1. **El hardcode no se podía borrar sin perder dos redes.** La tentación
+   al cerrar la feature era limpiar `VENDE_VELOZ_*` y
+   `JEV_SALES_QUESTIONS_V2` "ya que el playbook los reemplazó". No: son
+   la red de arranque (una org nueva sin bootstrap degrada a la
+   estrategia conocida, no a un agente mudo) y la red de regresión de
+   los tests. Se documentó la decisión en el código, no solo acá.
+2. **La PII se filtra por el TEXTO, no solo por las columnas.** La
+   garantía estructural (tabla sin columnas de identidad) es necesaria
+   pero no suficiente: los clientes escriben su número y su email
+   dentro de los mensajes. Sin el saneador, un caso del Laboratorio
+   habría sido un camino de vuelta al lead real.
+3. **El fallback necesita un log, no un default silencioso.** Un
+   `DEFAULT_ONLY` que se aplica sin quejarse es indistinguible de un
+   playbook publicado. Por eso `playbook_version_id = null` se persiste
+   en cada decisión: la degradación queda auditable.
+
+**Cierre del corte 7**:
+
+- Gate técnico en verde: `pnpm typecheck` (clean), `pnpm lint` (0
+  errores), `pnpm build` (compiled), `pnpm test` (**88 archivos, 810
+  tests**, incluidos 23 nuevos de minimización de PII).
+- `bash -n scripts/ai/run-sales-playbook.sh` verde.
+- Migración `0008c_lab_case.sql` registrada en el journal (idx 10) y
+  re-ejecutable (`CREATE TABLE/INDEX IF NOT EXISTS`).
+- Working tree limpio, un commit:
+  `feat(playbook): cerrar feature 008 — playbook durable V1 publicado`.
+- ⚠️ **`pnpm test:e2e` NO ejecutado en este entorno**: sin Docker,
+  `psql` ni PostgreSQL, y la app no está levantada. La sección 013
+  extendida parsea (`node --check`) pero no corrió. Por Constitución
+  IX/V, el E2E en vivo de los cortes 3, 6 y 7 queda **PENDIENTE** de
+  ejecutarse en el siguiente checkpoint con el stack levantado:
+  - [ ] `POST /api/lab/cases/from-conversation` → 201 y el caso
+        guardado no expone ninguna clave identificante
+  - [ ] inbound sintético → `last_jev_playbook_version_id` poblado
+  - [ ] borrar la publicada → `playbook_version_id = null` + warning
+  - [ ] `GET /api/dev/follow-ups/run` → `sandboxJobs: 0`
+  - [ ] `GET /api/dev/wa-mock/outbox` → vacío
+  - [ ] cross-tenant del endpoint nuevo → 404
+
+**LA FEATURE 008 QUEDA CERRADA.** No hay siguiente corte.
 
 ---
 

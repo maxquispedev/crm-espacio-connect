@@ -27,6 +27,8 @@ const prefixes = {
   salesPlaybook: "sp",
   /** 008 — Versión inmutable de un playbook (draft/published/archived). */
   salesPlaybookVersion: "spv",
+  /** 008 Corte 7 — Caso de evaluación anonimizado desde conversación real. */
+  labCase: "lbc",
 } as const;
 
 export type IdKind = keyof typeof prefixes;

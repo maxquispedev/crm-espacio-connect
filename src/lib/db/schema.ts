@@ -577,6 +577,67 @@ export const agentTestCase = pgTable(
 );
 
 /**
+ * 008 Corte 7 — Caso de evaluación creado desde una conversación REAL.
+ *
+ * Tabla APARTE (no reutiliza `agent_test_case`) por una razón de
+ * Constitución I: aquí **no existe ninguna columna** capaz de guardar
+ * identidad. `agent_test_case` tiene `conversation_id` y `persona`, y su
+ * `run_id` es NOT NULL; guardar una conversación real ahí obligaría a
+ * crear una corrida sintética y dejaría la puerta abierta a que un id
+ * se colara. Aquí la política de PII es **estructural**, no una
+ * disciplina de código: no hay `contact_id`, ni `conversation_id`, ni
+ * `phone`, ni `email`, ni `wa_identity`, ni `ctwa_clid`, ni `source_*`,
+ * ni columna de texto libre donde colar un token de Meta.
+ *
+ * El `conversation_id` que recibe `POST /api/lab/cases/from-conversation`
+ * se usa SOLO como input autenticado para leer la conversación del
+ * tenant y nunca se persiste (spec 008 § "PII minimizada estricta").
+ *
+ * `transcript` es JSONB con forma `{ role, text }[]` — solo texto ya
+ * saneado. Los outcomes esperados son editables por el dueño después
+ * (mismo editor manual del Corte 6, nunca autocompletado).
+ */
+export const labCase = pgTable(
+  "lab_case",
+  {
+    id: text("id").primaryKey(),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organization.id, { onDelete: "cascade" }),
+    /** `{ role: 'cliente' | 'agente', text: string }[]`. Solo texto. */
+    transcript: jsonb("transcript")
+      .notNull()
+      .$type<Array<{ role: "cliente" | "agente"; text: string }>>(),
+    /**
+     * Versión del playbook PUBLICADA al momento de guardar. `null` si la
+     * organización no tenía publicada (fallback a defaults): queda
+     * visible, no ambiguo.
+     */
+    playbookVersionId: text("playbook_version_id"),
+    playbookSchemaVersion: text("playbook_schema_version"),
+    /** Outcomes esperados declarados a mano por el dueño. */
+    expectedNextAction: text("expected_next_action"),
+    expectedLane: text("expected_lane"),
+    expectedHandoff: boolean("expected_handoff"),
+    /**
+     * Metadata NO identificante y estrictamente necesaria:
+     * `{ turns_approx, chars_total, detected_language }`.
+     * Nunca contiene timestamps exactos ni longitudes de contacto.
+     */
+    metadata: jsonb("metadata").$type<{
+      turns_approx: number;
+      chars_total: number;
+      detected_language: string;
+    }>(),
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+  },
+  (t) => [
+    index("lab_case_org_idx").on(t.organizationId, t.createdAt),
+    index("lab_case_playbook_version_idx").on(t.playbookVersionId),
+  ]
+);
+
+/**
  * Reserva durable de eventos de integraciones externas (WHMCS, etc.).
  * Unique (org, source, event_type, external_id) = barrera de envío a Meta.
  */

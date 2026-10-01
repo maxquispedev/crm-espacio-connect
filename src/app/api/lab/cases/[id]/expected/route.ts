@@ -46,6 +46,14 @@ const ExpectedPatch = z.object({
  * Es **manual por diseño**: la UI no autocompleta el esperado a partir
  * del actual (eso haría la comparación tautológica). `null` limpia el
  * campo y la UI vuelve a mostrar "—".
+ *
+ * Corte 7 (T702): los casos guardados desde una conversación real viven
+ * en `lab_case` (tabla sin columnas de identidad). El editor de
+ * expected outcomes es el MISMO para los dos orígenes, así que este
+ * endpoint acepta ambos: primero busca en `agent_test_case` y, si no
+ * está, en `lab_case`. Ambas lecturas son tenant-safe, así que un id
+ * de otra organización sigue siendo un 404 indistinguible de "no
+ * existe".
  */
 export const PATCH = withAuth(async (session, req: Request, ctx: Params) => {
   const { id } = await ctx.params;
@@ -65,8 +73,11 @@ export const PATCH = withAuth(async (session, req: Request, ctx: Params) => {
   }
 
   const db = getDb();
+
   // Tenant-safe: el caso debe ser de la organización de la sesión.
-  const existing = await db
+  // Se prueban los dos orígenes (caso de corrida del Laboratorio y caso
+  // guardado desde conversación real).
+  const agentCases = await db
     .select({ id: schema.agentTestCase.id })
     .from(schema.agentTestCase)
     .where(
@@ -77,7 +88,24 @@ export const PATCH = withAuth(async (session, req: Request, ctx: Params) => {
       )
     )
     .limit(1);
-  if (!existing[0]) {
+
+  const fromConversation = agentCases[0]
+    ? null
+    : (
+        await db
+          .select({ id: schema.labCase.id })
+          .from(schema.labCase)
+          .where(
+            scoped(
+              schema.labCase.organizationId,
+              session.organizationId,
+              eq(schema.labCase.id, id)
+            )
+          )
+          .limit(1)
+      )[0];
+
+  if (!agentCases[0] && !fromConversation) {
     return apiError(404, "not_found", "Caso no encontrado");
   }
 
@@ -93,6 +121,30 @@ export const PATCH = withAuth(async (session, req: Request, ctx: Params) => {
   }
   if (Object.keys(patch).length === 0) {
     return apiError(422, "empty_patch", "No enviaste ningún campo a actualizar");
+  }
+
+  if (fromConversation) {
+    const updated = await db
+      .update(schema.labCase)
+      .set(patch)
+      .where(
+        scoped(
+          schema.labCase.organizationId,
+          session.organizationId,
+          eq(schema.labCase.id, id)
+        )
+      )
+      .returning();
+    const c = updated[0];
+    return Response.json({
+      case: {
+        id: c?.id ?? id,
+        origin: "from_conversation",
+        expectedNextAction: c?.expectedNextAction ?? null,
+        expectedLane: c?.expectedLane ?? null,
+        expectedHandoff: c?.expectedHandoff ?? null,
+      },
+    });
   }
 
   const updated = await db
@@ -111,6 +163,7 @@ export const PATCH = withAuth(async (session, req: Request, ctx: Params) => {
   return Response.json({
     case: {
       id: c?.id ?? id,
+      origin: "lab_run",
       expectedNextAction: c?.expectedNextAction ?? null,
       expectedLane: c?.expectedLane ?? null,
       expectedHandoff: c?.expectedHandoff ?? null,

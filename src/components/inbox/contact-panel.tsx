@@ -5,6 +5,7 @@ import Link from "next/link";
 import {
   Check,
   ChevronRight,
+  FlaskConical,
   Pencil,
   Sparkles,
   UserRound,
@@ -83,6 +84,11 @@ export function ContactPanel({
   // cuando el agente aún no se ha configurado/encendido.
   const [agentEnabled, setAgentEnabled] = useState(false);
   const [aiConfigured, setAiConfigured] = useState(false);
+  // 008 Corte 7 (T701) — "Guardar conversación como caso".
+  const [confirmCase, setConfirmCase] = useState(false);
+  const [savingCase, setSavingCase] = useState(false);
+  const [caseError, setCaseError] = useState<string | null>(null);
+  const [salesOrchestratorEnabled, setSalesOrchestratorEnabled] = useState(false);
 
   const contactId = conversation.contact.id;
 
@@ -109,6 +115,11 @@ export function ContactPanel({
     if (stagesRes) setStages(stagesRes.stages);
     setAgentEnabled(Boolean(agentRes?.profile?.enabled));
     setAiConfigured(Boolean(agentRes?.aiConfigured));
+    // 008 Corte 7 (T701): el botón de guardar caso solo habilita con el
+    // Sales Orchestrator encendido; el server lo vuelve a exigir (409).
+    setSalesOrchestratorEnabled(
+      Boolean(agentRes?.profile?.salesOrchestratorEnabled)
+    );
     setNotesLoaded(true);
   }, [contactId]);
 
@@ -160,6 +171,38 @@ export function ContactPanel({
       body: JSON.stringify({ notes }),
     }).catch(() => null);
     setSavingNotes(false);
+  }
+
+  /**
+   * 008 Corte 7 (T701). El `conversation_id` viaja como input
+   * autenticado para que el server lea la conversación del tenant; el
+   * server NO lo persiste en el caso (garantía de PII minimizada).
+   */
+  async function saveConversationAsCase() {
+    setSavingCase(true);
+    setCaseError(null);
+    try {
+      const res = await fetch("/api/lab/cases/from-conversation", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ conversation_id: conversation.id }),
+      });
+      if (!res.ok) {
+        const body = (await res.json().catch(() => null)) as {
+          error?: { message?: string };
+        } | null;
+        setCaseError(
+          body?.error?.message ?? `No se pudo guardar el caso (${res.status})`
+        );
+        return;
+      }
+      setConfirmCase(false);
+    } catch {
+      // Camino infeliz: degradar sin colgarse ni romper el panel.
+      setCaseError("No se pudo guardar el caso. Revisa tu conexión.");
+    } finally {
+      setSavingCase(false);
+    }
   }
 
   const currentIndex = stages.findIndex((s) => s.id === currentStageId);
@@ -372,7 +415,103 @@ export function ContactPanel({
             {savingNotes ? "Guardando…" : "Guardar notas"}
           </Button>
         </section>
+
+        {/* 008 Corte 7 (T701) — Guardar conversación como caso de evaluación */}
+        <section className="border-t p-4">
+          <p className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-text-3">
+            Laboratorio comercial
+          </p>
+          <p className="mb-2 text-[12px] leading-relaxed text-text-2">
+            Convierte esta conversación en un caso de evaluación del
+            Laboratorio, con la política comercial activa.
+          </p>
+          <Button
+            size="sm"
+            variant="secondary"
+            className="w-full"
+            disabled={savingCase || !salesOrchestratorEnabled}
+            onClick={() => setConfirmCase(true)}
+          >
+            <FlaskConical className="mr-1.5 h-3.5 w-3.5" strokeWidth={1.8} />
+            {savingCase ? "Guardando caso…" : "Guardar conversación como caso"}
+          </Button>
+          {!salesOrchestratorEnabled && (
+            <p className="mt-2 text-[11px] leading-relaxed text-text-3">
+              Requiere el Sales Orchestrator encendido en Ajustes → Agente.
+            </p>
+          )}
+        </section>
       </div>
+
+      {/* Confirmación explícita de minimización de PII (T701).
+          No es un confirm genérico: el texto dice exactamente qué NO
+          se guarda, porque es la decisión que el dueño está tomando. */}
+      {confirmCase && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="confirm-case-title"
+        >
+          <div className="w-full max-w-md rounded-lg border bg-background p-5 shadow-xl">
+            <h4
+              id="confirm-case-title"
+              className="mb-2 text-[15px] font-semibold"
+            >
+              ¿Guardar esta conversación como caso de evaluación?
+            </h4>
+            <p className="mb-3 text-[13px] leading-relaxed text-text-2">
+              No se incluirá número de teléfono, email ni identificador de
+              contacto.
+            </p>
+            <ul className="mb-4 space-y-1.5 text-[12px] leading-relaxed text-text-2">
+              <li>
+                Se guarda el <strong>texto</strong> de la conversación (el
+                agente y el cliente), con teléfonos, emails y enlaces
+                reemplazados por <code className="text-[11px]">[telefono]</code>,{" "}
+                <code className="text-[11px]">[email]</code> y{" "}
+                <code className="text-[11px]">[enlace]</code>.
+              </li>
+              <li>
+                Se guarda qué versión del playbook estaba publicada, para
+                poder comparar después.
+              </li>
+              <li>
+                <strong>No</strong> se guarda ninguna referencia a este
+                contacto, lead o conversación: el caso no permite
+                reconstruir quién era.
+              </li>
+              <li>
+                Después declaras a mano el resultado esperado en el
+                Laboratorio.
+              </li>
+            </ul>
+            {caseError && (
+              <p className="mb-3 text-[12px] text-destructive">{caseError}</p>
+            )}
+            <div className="flex justify-end gap-2">
+              <Button
+                size="sm"
+                variant="ghost"
+                disabled={savingCase}
+                onClick={() => {
+                  setConfirmCase(false);
+                  setCaseError(null);
+                }}
+              >
+                Cancelar
+              </Button>
+              <Button
+                size="sm"
+                disabled={savingCase}
+                onClick={() => void saveConversationAsCase()}
+              >
+                {savingCase ? "Guardando…" : "Guardar como caso"}
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

@@ -71,6 +71,13 @@
       "when": 1789965700000,
       "tag": "0008b_lab_playbook",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1789965800000,
+      "tag": "0008c_lab_case",
+      "breakpoints": true
     }
   ]
 }

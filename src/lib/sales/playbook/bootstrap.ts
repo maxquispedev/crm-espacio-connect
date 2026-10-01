@@ -10,6 +10,28 @@
  *
  * Disparado desde `instrumentation.ts` (best-effort, no bloquea el
  * boot; la BD puede no estar lista aún).
+ *
+ * ─────────────────────────────────────────────────────────────
+ * DECISIÓN DOCUMENTADA — el fallback (T703, Corte 7)
+ * ─────────────────────────────────────────────────────────────
+ * `VENDE_VELOZ_*` (`vende-veloz.ts`) y `JEV_SALES_QUESTIONS_V2`
+ * (`questions.ts`) **NO se borran**. Siguen en el código como
+ * `DEFAULTS_ONLY`:
+ *
+ *   - El RUNTIME los consume SOLO cuando la organización no tiene
+ *     versión publicada, y lo hace de forma explícita y visible
+ *     (`console.warn` una vez por proceso; decisiones con
+ *     `playbook_version_id = null`). Cuando hay publicada, el runtime
+ *     SIEMPRE prefiere la publicada.
+ *   - Los TESTS los importan directamente: son el baseline congelado
+ *     contra el que se mide si una versión editada cambió algo.
+ *   - Son el contrato de arranque: si el bootstrap falla o una
+ *     organización nueva aún no fue sembrada, el negocio degrada a la
+ *     estrategia conocida en vez de quedarse sin agente.
+ *
+ * Borrarlos sería tirar esa red de seguridad y romper la red de
+ * regresión de los tests a cambio de nada: el hardcode ya dejó de ser
+ * la fuente de verdad en cuanto existe una publicada.
  */
 
 import { eq } from "drizzle-orm";
@@ -123,6 +145,20 @@ export async function bootstrapAllEnabledOrgs(): Promise<BootstrapResult> {
     return { created: [], skipped: [], failed: [] };
   }
 
+  // T703 — Una organización con el orchestrator apagado NO se siembra,
+  // y eso también es visible. Sin este log, un dueño que por error
+  // apagó el opt-in vería un CRM sin playbook y ninguna pista de por
+  // qué. Se enumera `agent_profile` completo (no solo las que Enabling)
+  // para poder distinguir "no siembra porque está apagada" de "no
+  // siembra porque ya existe".
+  let disabledOrgIds: string[] = [];
+  try {
+    disabledOrgIds = await listDisabledOrganizations();
+  } catch {
+    // La enumeración de las deshabilitadas es diagnóstica: si falla, el
+    // bootstrap de las habilitadas continúa igual.
+  }
+
   const result: BootstrapResult = { created: [], skipped: [], failed: [] };
 
   for (const orgId of orgIds) {
@@ -130,9 +166,12 @@ export async function bootstrapAllEnabledOrgs(): Promise<BootstrapResult> {
       const r = await bootstrapOrgIfNeeded(orgId);
       if (r.status === "created") {
         result.created.push(orgId);
-        console.log(`[playbook-bootstrap] V1 sembrada para org ${orgId}`);
+        console.log(`[playbook-bootstrap] Playbook V1 sembrada para org ${orgId}`);
       } else {
         result.skipped.push(orgId);
+        console.log(
+          `[playbook-bootstrap] Playbook V1 ya existente para org ${orgId}`
+        );
       }
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -144,7 +183,28 @@ export async function bootstrapAllEnabledOrgs(): Promise<BootstrapResult> {
     }
   }
 
+  for (const orgId of disabledOrgIds) {
+    console.log(
+      `[playbook-bootstrap] Org ${orgId} no tiene Sales Orchestrator; sin playbook`
+    );
+  }
+
   return result;
+}
+
+/**
+ * Organizaciones con Sales Orchestrator APAGADO. Solo se usa para el
+ * log explícito de T703: nunca siembra, nunca toca datos.
+ */
+async function listDisabledOrganizations(): Promise<string[]> {
+  const db = getDb();
+  const rows = await db
+    .select({ organizationId: schema.agentProfile.organizationId })
+    .from(schema.agentProfile)
+    .where(eq(schema.agentProfile.salesOrchestratorEnabled, false));
+  const ids = Array.from(new Set(rows.map((r) => r.organizationId)));
+  ids.sort();
+  return ids;
 }
 
 /**

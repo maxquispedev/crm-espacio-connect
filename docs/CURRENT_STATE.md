@@ -1,5 +1,7 @@
 # CURRENT STATE — Espacio Connect
 
+**Actualizado:** 2026-10-01 (Corte 7 del spec 008 — **CIERRE de la feature 008, Sales Playbook durable**. La estrategia comercial que estaba congelada en TypeScript (`VENDE_VELOZ_*` / `JEV_SALES_QUESTIONS_V2`) pasó a ser configuración durable, versionada, tenant-safe y editable sin redeploy: el motor sigue igual y solo consulta la versión publicada. Los siete cortes quedaron cerrados. Este corte agrega "Guardar conversación como caso" (`POST /api/lab/cases/from-conversation`) con **PII minimizada**: la nueva tabla `lab_case` **no tiene columna de identidad** (garantía estructural, no disciplina de código) y encima el texto se sanea server-side (`[telefono]`, `[email]`, `[enlace]`, `[id]`), porque un cliente suele dictar su propio número dentro de un mensaje. El `conversation_id` se usa solo como input autenticado y nunca se persiste. El bootstrap en boot ahora loguea explícitamente por org ("Playbook V1 sembrada" / "ya existente" / "Org X no tiene Sales Orchestrator; sin playbook"). Decisión documentada: los defaults congelados **no se borran**, quedan como `DEFAULTS_ONLY` — red de arranque del runtime y baseline de regresión de los tests. Gates: typecheck/lint/build verdes, **810/810 tests en 88 archivos** (23 nuevos), `bash -n` del runner AI verde. **E2E en vivo PENDIENTE**: este entorno no tiene Docker, `psql` ni PostgreSQL y la app no está levantada; la sección 013 extendida parsea (`node --check`) pero no se ejecutó. Guía del dueño en `docs/playbook.md`.)
+
 **Actualizado:** 2026-10-01 (Corte 6 del spec 008 — **Laboratorio comercial**: el Laboratorio dejó de evaluar solo el agente genérico y ahora corre el **pipeline comercial real** (Sales Orchestrator + Jev + resolver + writer) sobre conversaciones sandbox, con override de Playbook por caso y comparación **Published vs Draft**. Gaps cerrados: `agent_test_case` persiste `playbook_version_id`/`playbook_schema_version` (migración aditiva `0008b`), outcomes esperados declarados a mano por el dueño con ✅/❌ en el reporte, y 6 personas V1 comerciales de academias deportivas. Las 6 ferreteras **no se eliminan**: quedan como `legacy_*` con alias para el histórico. Cero efectos residuales verificado por test: sin WhatsApp real (spy sobre `graphRequest`), sin filas en `sales_follow_up_job` y sin CAPI en corridas `is_test=true`. Cambió el índice de concurrencia de corridas: el lock pasó de UNIQUE(organización) a UNIQUE(organización, `playbook_mode`) para que `both` corra published y draft en paralelo. Gates: typecheck/lint/build verdes, 787/787 tests en 87 archivos (29 nuevos). **E2E en vivo y self-test con `pnpm dev` + mocks PENDIENTES**: este entorno no tiene Docker, `psql` ni PostgreSQL, y la app no está levantada; la sección 015 del arnés E2E está escrita y parsea, pero no se ejecutó. NO se tocó el runtime productivo: el override solo aplica con `is_test=true` y sigue validado por el guard T306 del orquestador.)
 
 **Actualizado:** 2026-09-30 (Hotfix Sales Orchestrator — contexto de Meta Ads en estado Jev. El builder `buildJevSalesState` ahora consulta `ad_attribution` tenant-safe y, cuando la fila existe con al menos un campo comercial (`source_type`/`headline`/`body`), emite `source: "Meta Ads"` + `ad_context: { source_type, headline, body }` en el state que Jev evalúa. Contrato jevveloz 89/89 restaurado para conversaciones atribuidas; conversaciones orgánicas sin cambios observables. Commit único `fix(sales): conservar contexto de Meta Ads en estado Jev`. Gates re-verificados: typecheck/lint/build verdes, 660/660 tests, 74 archivos (650 anteriores + 10 nuevos del hotfix). NO se tocó: questions-v2, commercial-policy, resolver, writer, Jev, follow-ups ni CAPI. Defensa Constitución I verificada: el state no contiene `ctwa_clid`, `sourceId`, `sourceUrl`, `imageAssetId`, access tokens ni PII del contacto.)
@@ -259,6 +261,144 @@ Specs formales actuales:
 - `specs/005-quick-lead-name/` (edición inline de `contact.name` desde el panel del inbox — **CERRADO** en commit único)
 - `specs/006-anuncio-de-origen/` (de qué anuncio de Meta llegó cada conversación — **CERRADO**, pieza visible sin CAPI todavía)
 - `specs/007-meta-capi/` (reportar `QualifiedLead` y `Purchase` a Meta Conversions API — **CERRADO** en Cortes A+B+C tras commit único de cierre)
+- `specs/008-sales-playbook/` (playbook comercial durable, versionado y editable sin redeploy — **CERRADO** en Cortes 1–7 tras commit único de cierre)
+
+### Estado del spec 008 — Sales Playbook versionado
+
+**Cerrado el 2026-10-01** en siete cortes secuenciales, cada uno con su
+commit atómico. El objetivo era uno solo: que la estrategia comercial
+(producto, oferta, política, preguntas de Jev, instrucciones del writer)
+dejara de estar congelada en TypeScript y pasara a ser **configuración
+durable, versionada, tenant-safe y editable sin redeploy**.
+
+El motor (Sales Orchestrator, Jev, resolver, lanes, writer, follow-ups)
+**no se reescribió**: solo se le agregaron adaptadores que consultan la
+versión publicada. El runtime pasó de "conocer la estrategia" a
+"consultar la estrategia publicada en su versión X".
+
+#### Historia técnica — fecha de cierre de cada corte
+
+| Corte | Contenido | Cerrado |
+|---|---|---|
+| 1 | Modelo y persistencia: `sales_playbook` + `sales_playbook_version`, schema Zod versionado, contenido V1, store con `scoped()`, bootstrap multi-org determinista | 2026-09-30 |
+| 2 | API de versionado: `GET /api/playbook`, draft (POST/PUT/DELETE), validate, publish, rollback, versions (list/detalle) | 2026-09-30 |
+| 3 | Runtime dinámico: loader sin cache, `buildJevSalesState` con config publicada, contrato dinámico de preguntas Jev, `SalesDecision` nullable con fallbacks, override solo `is_test`, supresión de follow-ups en sandbox, snapshot de versión en el lead | 2026-09-30 |
+| 4 | UI Playbook: tabs en `agent-client.tsx`, editor por bloques, lista de versiones, publish/rollback con `notes` | 2026-09-30 |
+| 5 | Editor Jev avanzado: tres clases con guardarraíles duros, candados por clase, editor inline por pregunta | 2026-09-30 |
+| 6 | Laboratorio comercial: pipeline real en sandbox, override por corrida, expected outcomes humanos, comparación Published vs Draft | 2026-10-01 |
+| 7 | Casos reales + auditoría + cierre: "Guardar conversación como caso" con PII minimizada, logs de bootstrap por org, E2E final, docs | 2026-10-01 |
+
+#### Decisiones (todas revisables)
+
+- **`VENDE_VELOZ_*` y `JEV_SALES_QUESTIONS_V2` son `DEFAULTS_ONLY`.**
+  No se borraron. El runtime los consume **solo** cuando la organización
+  no tiene versión publicada, de forma explícita y visible. Los tests los
+  importan directamente como baseline congelado de regresión. Borrarlos
+  tiraría la red de seguridad del arranque y rompería la red de tests a
+  cambio de nada.
+- **El runtime prefiere siempre la publicada.** El fallback es una red de
+  seguridad, no un modo de operación: si aparece en los logs, hay que
+  publicar una versión. Cada decisión persistida queda con
+  `playbook_version_id` (columna denormalizada en `lead` + clave dentro del
+  JSONB `last_jev_decision`), así que la degradación es visible y
+  auditable, nunca ambigua.
+- **Sin cache de playbook en V1.** El loader lee BD en cada turno; un
+  publish/rollback toma efecto en el turno siguiente. Con el volumen
+  actual, un SELECT es más barato que la complejidad de mantener un cache
+  coherente, y Jev + writer cuestan muchísimo más que esa lectura.
+  Optimización futura solo si las métricas lo exigen.
+- **Bootstrap multi-org determinista.** Enumera
+  `agent_profile WHERE sales_orchestrator_enabled = true` de forma
+  explícita; nunca usa `SELECT organization.id LIMIT 1` ni heurísticas.
+  Idempotente: una org ya sembrada genera cero inserciones, y una org con
+  el orchestrator apagado **nunca** se siembra (y ahora eso se loguea
+  explícitamente, para que un opt-in apagado por error sea diagnosticable).
+- **Override de Playbook solo en `is_test=true`.** `runSalesOrchestratorTurn`
+  lanza `playbook_override_forbidden_in_production` si recibe un override
+  sobre una conversación no sandbox. En producción el override es siempre
+  `undefined`; el Laboratorio es el único que lo inyecta, y el Laboratorio
+  solo corre sobre `is_test=true`.
+- **Tres clases de preguntas Jev**, con contratos distintos:
+  `engine-required` 🔒 (`next_action`, `needs_human_call` — key, type,
+  option keys y `enabled` inmutables), `known signals` 📊 (6 preguntas —
+  key/type/option keys bloqueados, `enabled` editable con fallback
+  documentado) y `analytical/custom` ➕ (libres; se preservan en
+  `decision.signals` y **nunca** influyen en una decisión).
+- **Sandbox suprime scheduling de follow-ups.** El orquestador detecta
+  `is_test=true` y no llama a `scheduleNextFollowUp`, de modo que una
+  corrida del Laboratorio termina con cero filas en
+  `sales_follow_up_job`. Junto con el guard del sender (no toca WhatsApp
+  real) y el de CAPI (no emite eventos), el Laboratorio no deja efectos
+  residuales.
+- **El caso de conversación real vive en `lab_case`, no en
+  `agent_test_case`.** Es una decisión de Constitución I: la garantía de
+  PII minimizada es **estructural** (la tabla no tiene columna de
+  identidad) y no una disciplina de código. Reutilizar `agent_test_case`
+  habría obligado a fabricar una corrida y habría dejado una columna
+  `conversation_id` lista para colar un id.
+
+#### PII minimizada — "Guardar conversación como caso"
+
+El caso persistido contiene **únicamente**: `transcript`
+(`{ role: 'cliente' | 'agente', text }[]`, solo texto), `playbook_version_id`,
+`playbook_schema_version`, los expected outcomes editables y metadata no
+identificante (`turns_approx`, `chars_total`, `detected_language`).
+
+**Nunca** contiene `lead_id`, `contact_id`, `conversation_id`, `phone`,
+`email`, `wa_identity`, `ctwa_clid`, `source_id`, `source_url`, IDs de
+Meta, tokens de credenciales, ni ninguna combinación que permita
+reconstruir la identidad original. El `conversation_id` se usa **solo**
+como input autenticado para leer la conversación del tenant.
+
+Encima de la garantía estructural, el **texto** se sanea server-side
+(`src/server/lab/case-pii.ts`): teléfonos → `[telefono]`, emails →
+`[email]`, enlaces → `[enlace]`, tokens de plataforma → `[id]`. Esto
+importa porque un cliente suele dictar su propio número dentro de un
+mensaje: sin el saneador, el caso devolvería un camino a la identidad
+real. Precios, fechas y números cortos se conservan porque no son
+identidad y son justo lo que el juez necesita evaluar.
+
+#### Verificación del cierre (Corte 7)
+
+| Gate | Estado |
+|---|---|
+| `bash -n scripts/ai/run-sales-playbook.sh` | verde |
+| `pnpm typecheck` | verde |
+| `pnpm lint` | verde (warnings preexistentes de `<img>`, ajenos a este corte) |
+| `pnpm build` | verde |
+| `pnpm test` | verde — **810 tests, 88 archivos** (23 nuevos en `lab-case-from-conversation.test.ts`) |
+| E2E en vivo (`pnpm test:e2e`) | **PENDIENTE en este entorno** — sin Docker, `psql` ni PostgreSQL, y la app no está levantada. La sección 013 extendida **parsea** (`node --check`), pero no se ejecutó |
+
+Los snapshots históricos de `last_jev_decision` siguen siendo compatibles:
+las claves nuevas (`playbook_version_id`, `playbook_schema_version`,
+`playbook_version_number`) son aditivas y su ausencia en snapshots viejos
+se interpreta como ausencia de playbook, no como error.
+
+#### Riesgos conocidos
+
+- **Publicar cambia producción en el turno siguiente.** No hay cache ni
+  periodo de gracia: lo que se publica es lo que el agente dice en la
+  siguiente conversación. Publicar solo lo que ya pasó por el Laboratorio.
+- **Un `schema_version` desconocido se rechaza en rollback (422)** porque
+  no hay migrador de config. Es deliberado: es preferible fallar visible
+  a aplicar una config que el motor no entiende.
+- **El fallback a defaults es visible pero silencioso para el dueño.** El
+  warning va al log del servidor, no a la UI. Un despliegue con la
+  organización sin playbook sembrada opera con la estrategia congelada.
+- **1 playbook por organización en V1.** La forma soporta multi-playbook
+  (slug + label), pero no hay UI ni runtime para elegir. Multi-campaña
+  sigue reservado.
+- **`expected_*` usan catálogos cerrados** (7 `next_action`, 5 lanes) para
+  que un typo no se persista y luego compare ❌ para siempre.
+- **El E2E en vivo de los cortes 3, 6 y 7 sigue pendiente** de un entorno
+  con el stack levantado. Los gates técnicos y la suite unitaria están
+  verdes; por Constitución IX eso no equivale a "READY punta a punta"
+  hasta correr el self-test real.
+
+Guía del dueño: [`docs/playbook.md`](./playbook.md). Detalle del
+Laboratorio comercial: `docs/SALES_ORCHESTRATOR.md` y
+`docs/SALES_FOLLOW_UPS.md`.
+
 
 ### Estado del spec 006
 
