@@ -1,10 +1,9 @@
 # Tasks — 008 Sales Playbook
 
-> Estado durable de la feature. **FEATURE 008 = PLANIFICADA / NO IMPLEMENTADA.**
-> La única sección marcada `[x]` corresponde al **bootstrap documental
-> y del runner** (este commit). Todas las tareas de implementación
-> (T101..T708) están explícitamente **sin marcar** y serán los cortes
-> quienes las cierren, una por una, con evidencia.
+> Estado durable de la feature. **FEATURE 008 = IMPLEMENTADA / CERRADA.**
+> Los siete cortes T101..T708 están completados con evidencia.
+> El E2E en vivo global de los cortes 3, 6 y 7 permanece documentado como pendiente
+> hasta disponer del stack local levantado.
 
 ## Convenciones
 
