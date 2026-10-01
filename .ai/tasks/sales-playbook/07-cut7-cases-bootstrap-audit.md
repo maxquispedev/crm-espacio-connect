@@ -47,22 +47,28 @@ Tareas concretas:
      1. Leer la conversación con `scoped()`. Si no existe →
         404.
      2. Leer mensajes en orden cronológico.
-     3. **PII minimizada**: el caso persistido contiene:
+     3. **PII minimizada estricta**: el caso persistido
+        contiene **únicamente**:
         - `transcript: [{ role: 'cliente' | 'agente', text:
-          string }]` (solo texto; nunca adjuntos binarios, nunca
-          URLs, nunca `mediaAssetId`).
-        - `playbook_version_id` (la que esté publicada al
-          guardar).
+          string }]` (solo texto; nunca adjuntos binarios,
+          URLs ni IDs de media).
+        - `playbook_version_id` (la publicada al guardar).
         - `playbook_schema_version`.
-        - `lead_id` (opcional).
-        - `expected_next_action` (editable después; default
-          null).
-        - `expected_lane` (editable; default null).
-        - `expected_handoff` (editable; default null).
-        - **NO** contiene: `phone`, `email`, `wa_identity`,
-          `ctwa_clid`, `source_id`, `source_url`,
-          `meta_credentials.token*`, ni IDs internos que
-          permitan reconstruir el contacto.
+        - `expected_next_action`, `expected_lane`,
+          `expected_handoff` (editables).
+        - Metadata no identificante estrictamente necesaria
+          (longitud, número aproximado de turnos, idioma
+          detectado).
+        - **NO** contiene bajo ninguna circunstancia:
+          `lead_id`, `contact_id`, `conversation_id` (de
+          origen), `phone`, `email`, `wa_identity`, `ctwa_clid`,
+          `source_id`, `source_url`, IDs Meta, tokens de
+          credenciales, ni ningún otro ID/token/combinación que
+          permita resolver nuevamente la identidad del lead,
+          contacto o conversación original.
+        - El endpoint recibe `conversation_id` únicamente como
+          **input autenticado** para leer la conversación; el
+          valor NO se guarda dentro del caso anonimizado.
      4. Persistir en una nueva tabla `lab_case` (o reusar
         `agent_test_case` con `is_from_conversation = true`).
      5. Devolver 201 con `{ case_id }`.

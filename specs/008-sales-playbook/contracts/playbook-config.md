@@ -142,7 +142,7 @@ se usa; si no, fallback documentado.
 | `motivation_to_change` | `score` | — | sin efecto en plan |
 | `purchase_intent` | `score` | — | sin efecto en plan |
 | `buying_timing` | `choice` | `['now', 'soon', 'future_season', 'unknown', 'no_current_plan']` | resolver trata como `"unknown"`; writer omite línea |
-| `main_value_proposition` | `choice` | las 5 del V1 (`control_operativo`, `alumnos_apoderados`, `planes_ciclos`, `pagos_saldos`, `siguiente_ciclo`) | writer continúa sin ángulo |
+| `main_value_proposition` | `choice` | las 5 contractuales (`operational_control`, `reduce_whatsapp_dependency`, `online_enrollment`, `reduce_manual_work`, `no_relevant_value_now`) | writer continúa sin ángulo |
 
 Reglas:
 

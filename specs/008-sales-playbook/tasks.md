@@ -351,9 +351,12 @@ NO empieces Corte 4.
     'unknown', 'no_current_plan']`.
   - `main_value_proposition`: type fijo `choice`, no se puede eliminar;
     option keys deben ser exactamente las 5 del V1 default
-    (`control_operativo`, `alumnos_apoderados`, `planes_ciclos`,
-    `pagos_saldos`, `siguiente_ciclo` — verificar contra
-    `src/server/sales/questions.ts`).
+    (`operational_control`, `reduce_whatsapp_dependency`,
+    `online_enrollment`, `reduce_manual_work`,
+    `no_relevant_value_now` — verificar contra
+    `src/server/sales/questions.ts`). Las DESCRIPCIONES pueden
+    editarse desde el editor para reflejar la V1; las KEYS son
+    contrato del resolver y se conservan.
   - `real_operational_need`, `product_fit`, `motivation_to_change`,
     `purchase_intent`: type fijo (noul / score / score / score), no
     se pueden renombrar. Se pueden desactivar.
@@ -413,11 +416,20 @@ NO empieces Corte 4.
 - [ ] **T701** — UI "Guardar conversación como caso" en el panel
   lateral con confirmación explícita de minimización de PII.
 - [ ] **T702** — Endpoint `POST /api/lab/cases/from-conversation` con
-  minimización: no persiste `phone`, `email`, `wa_identity`,
-  `ctwa_clid`, `source_id`, `source_url`, ni IDs que permitan
-  reconstruir el contacto. Solo `transcript` (texto), `lead_id`
-  (opcional), `playbook_version_id`, `playbook_schema_version`,
-  expected outcomes editables.
+  minimización estricta de PII:
+  - El caso persistido contiene únicamente `transcript` (texto),
+    `playbook_version_id`, `playbook_schema_version`, expected
+    outcomes editables y metadata no identificante estrictamente
+    necesaria.
+  - **NO** persiste: `lead_id`, `contact_id`, `conversation_id`,
+    `phone`, `email`, `wa_identity`, `ctwa_clid`, `source_id`,
+    `source_url`, IDs Meta, ni cualquier token/ID que permita
+    reconstruir el contacto o la conversación original.
+  - El endpoint recibe `conversation_id` únicamente como **input
+    autenticado** para leer la conversación del tenant; no se
+    guarda dentro del caso anonimizado.
+  - Tests de minimización verifican explícitamente la
+    **ausencia** de estos campos en el caso persistido.
 - [ ] **T703** — Confirmar al boot que el bootstrap multi-org es
   idempotente; logs explícitos por org; **decisión** sobre el
   fallback: se mantiene `VENDE_VELOZ_*` y `JEV_SALES_QUESTIONS_V2`

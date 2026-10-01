@@ -36,9 +36,20 @@
   (branch `future_season` → `schedule_follow_up`) y por
   `follow-up-writer.ts` (línea de timing).
 - `main_value_proposition`: 5 fijas del V1
-  (`control_operativo`, `alumnos_apoderados`, `planes_ciclos`,
-  `pagos_saldos`, `siguiente_ciclo`). Verificar contra
-  `questions.ts` (criterios exactos).
+  (`operational_control`, `reduce_whatsapp_dependency`,
+  `online_enrollment`, `reduce_manual_work`,
+  `no_relevant_value_now`). Verificado contra
+  `src/server/sales/questions.ts` (criterios exactos).
+
+Las DESCRIPCIONES de estas 5 keys pueden editarse desde el
+editor para reflejar la V1 ("Academia Bajo Control"), pero las
+keys mismas son **contrato** y NO se renombran en Feature 008:
+forman parte de los tipos TypeScript actuales
+(`MainValuePropositionChoice`) y del dataset histórico
+(`last_jev_decision`). En particular, `operational_control`
+puede re-describirse para representar el nuevo núcleo
+(alumnos/apoderados, planes/ciclos, pagos parciales/saldos,
+ingresos, control operativo), pero la key permanece.
 
 ### Instrucciones del writer
 
@@ -58,6 +69,8 @@ el system prompt quemadas.
 | `src/server/sales/normalize.ts` | `JEV_SALES_QUESTIONS_V2` | exige 8 answers; valida types y option keys |
 | `src/server/sales/decision.ts` | tipos de los 8 fields | `SalesDecision` exige los 8 fields |
 | `src/server/sales/resolve-plan.ts` | tipos | branch `future_season`; usa `buyingTiming.choice` |
+| `src/server/sales/questions.ts` | `JevSalesQuestionsV2 = typeof JEV_SALES_QUESTIONS_V2` | literal type de las 8 congeladas; NO admite `analytical/custom` arbitrarias |
+| `src/server/sales/client.ts` | `JevEvaluateInput.questions?: JevSalesQuestionsV2` | pasa el literal type a `evaluateJev`; bloquea la configuración runtime |
 | `src/server/sales/follow-ups/follow-up-writer.ts` | tipos | usa `mainValueProposition.choice`, `buyingTiming.choice` |
 | `src/server/sales/serialize-ui.ts` | tipos | snapshot DTO con 5 fields |
 

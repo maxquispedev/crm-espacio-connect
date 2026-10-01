@@ -174,7 +174,7 @@ fallback documentado.
 | `motivation_to_change` | `score` | score ∈ ℝ | persistencia + UI | sin efecto en plan |
 | `purchase_intent` | `score` | score ∈ ℝ | persistencia + UI | sin efecto en plan |
 | `buying_timing` | `choice` | option keys fijas = `['now', 'soon', 'future_season', 'unknown', 'no_current_plan']` | resolver (`future_season` → schedule_follow_up); follow-up writer; writer línea de timing | resolver trata como `"unknown"`; writer omite línea de timing |
-| `main_value_proposition` | `choice` | option keys = las 5 del V1 (`control_operativo`, `alumnos_apoderados`, `planes_ciclos`, `pagos_saldos`, `siguiente_ciclo`) | writer (ángulo) | writer continúa sin ángulo específico |
+| `main_value_proposition` | `choice` | option keys = las 5 contractuales (`operational_control`, `reduce_whatsapp_dependency`, `online_enrollment`, `reduce_manual_work`, `no_relevant_value_now`) | writer (ángulo) | writer continúa sin ángulo específico |
 
 Reglas:
 
@@ -208,6 +208,69 @@ anterior.
 
 `SalesDecision.signals: Record<string, NormalizedAnswer>` preserva
 analíticas y futuras preguntas.
+
+### Contrato genérico de tipos para preguntas dinámicas
+
+El código actual usa `type JevSalesQuestionsV2 = typeof
+JEV_SALES_QUESTIONS_V2`, que es **un literal type de las 8
+preguntas congeladas** y NO admite `analytical/custom` arbitrarias
+ni preguntas con campos renombrados sin modificar el tipo TS.
+
+El Corte 3 introduce un **contrato genérico runtime** que reemplaza
+el acoplamiento literal. La forma concreta (en
+`src/server/sales/questions.ts` y `src/server/sales/client.ts`)
+debe parecerse conceptualmente a:
+
+```ts
+// Tipo runtime para una pregunta Jev (genérica, no literal).
+export type JevQuestionDefinition =
+  | {
+      type: 'choice';
+      instructions: string;
+      enabled: boolean;
+      criteria: Record<string, string>;
+    }
+  | {
+      type: 'noul';
+      instructions: string;
+      enabled: boolean;
+      criteria: { true: string; false: string };
+    }
+  | {
+      type: 'score';
+      instructions: string;
+      enabled: boolean;
+      criteria: string[];
+    };
+
+// Mapa dinámico de preguntas (engine-required + known signals +
+// analytical/custom) sin literal types que limiten el conjunto.
+export type JevQuestions = Readonly<
+  Record<string, JevQuestionDefinition>
+>;
+```
+
+Reglas:
+
+- `JEV_SALES_QUESTIONS_V2` sigue existiendo como `DEFAULTS_ONLY`
+  reusables en tests y debe satisfacer este contrato genérico
+  (sus tipos concretos `NextActionAnswer`, `BuyingTimingAnswer`,
+  `MainValuePropositionAnswer`, etc., se mantienen donde los
+  necesite el normalizer para narrowar).
+- `evaluateJev({ state, questions })` ahora acepta
+  `JevQuestions | undefined` (no el literal type).
+- `normalizeJevResponse(raw, activeQuestions, knownSignalKeys)`
+  recibe las definitions realmente enviadas (no las 8 fijas).
+- **Sin `as any` ni casts inseguros**: los `NextActionAnswer`,
+  `BuyingTimingAnswer`, `MainValuePropositionAnswer`,
+  `RealOperationalNeedAnswer`, etc., se mantienen como narrow
+  types del normalizer; el resto usa `Record<string,
+  NormalizedAnswer>` y nunca se salta TypeScript.
+- `analytical/custom` puede añadirse sin modificar tipos
+  TypeScript cada vez: el mapa es abierto y el normalizer los
+  preserva en `signals`.
+- `engine-required` sigue validado por Zod + guardarraíles
+  (Corte 1, Corte 5).
 
 ## Contrato funcional (negocio)
 
@@ -375,18 +438,28 @@ Garantías:
 El flujo "Guardar conversación como caso" se materializa en el Corte
 7. Política de PII:
 
-- El caso persistido contiene solo:
+- El caso persistido contiene **únicamente**:
   - `transcript: [{ role: 'cliente' | 'agente', text: string }]`
-    (texto; nunca adjuntos binarios ni URLs ni IDs de media).
-  - `lead_id` (opcional).
+    (solo texto; nunca adjuntos binarios, URLs ni IDs de media).
   - `playbook_version_id`, `playbook_schema_version`.
   - `expected_next_action`, `expected_lane`, `expected_handoff`
     (editables).
-- **NO** contiene: `phone`, `email`, `wa_identity`, `ctwa_clid`,
-  `source_id`, `source_url`, ni IDs que permitan reconstruir el
-  contacto.
+  - Metadata no identificante estrictamente necesaria (por
+    ejemplo, longitud de la conversación, idioma detectado,
+    número aproximado de turnos).
+- **NO** contiene, bajo ninguna circunstancia:
+  - `lead_id`, `contact_id`, `conversation_id` (de origen).
+  - `phone`, `email`, `wa_identity`.
+  - `ctwa_clid`, `source_id`, `source_url`, IDs Meta.
+  - Ningún otro token, ID interno ni combinación de campos que
+    permita resolver nuevamente la identidad del lead, contacto o
+    conversación original.
+- El endpoint recibe `conversation_id` únicamente como **input
+  autenticado** para leer la conversación del tenant. El valor
+  NO se guarda dentro del caso anonimizado.
 - Confirmación explícita al usuario antes de guardar: "no se
-  incluirá número de teléfono, email ni identificador de contacto".
+  incluirá número de teléfono, email ni identificador de
+  contacto".
 
 ## Fuera de alcance (no entra en este spec)
 

@@ -252,12 +252,74 @@ export type SalesDecision = {
 ```ts
 function normalizeJevResponse(
   raw: unknown,
-  activeQuestions: Record<string, QuestionDef>,
+  activeQuestions: Readonly<Record<string, JevQuestionDefinition>>,
   knownSignalKeys: readonly string[]
 ): Result<SalesDecision, NormalizeError>;
 ```
 
-Donde `QuestionDef = { type: 'choice' | 'noul' | 'score', enabled: boolean }`.
+Donde `JevQuestionDefinition` es el **contrato genérico runtime**
+introducido en este corte (ver § "Contrato genérico de tipos para
+preguntas dinámicas" abajo). El normalizer recibe las
+definitions realmente enviadas (no las 8 fijas).
+
+### Contrato genérico de tipos para preguntas dinámicas
+
+El código actual usa `type JevSalesQuestionsV2 = typeof
+JEV_SALES_QUESTIONS_V2` — un literal type de las 8 congeladas que
+NO admite `analytical/custom` arbitrarias.
+
+El Corte 3 introduce un contrato genérico runtime:
+
+```ts
+// src/server/sales/questions.ts
+export type JevQuestionDefinition =
+  | {
+      type: 'choice';
+      instructions: string;
+      enabled: boolean;
+      criteria: Record<string, string>;
+    }
+  | {
+      type: 'noul';
+      instructions: string;
+      enabled: boolean;
+      criteria: { true: string; false: string };
+    }
+  | {
+      type: 'score';
+      instructions: string;
+      enabled: boolean;
+      criteria: string[];
+    };
+
+export type JevQuestions = Readonly<Record<string, JevQuestionDefinition>>;
+```
+
+Reglas:
+
+- `JEV_SALES_QUESTIONS_V2` (DEFAULTS_ONLY) sigue existiendo y debe
+  satisfacer `JevQuestionDefinition`. Sus tipos concretos
+  (`NextActionAnswer`, `BuyingTimingAnswer`,
+  `MainValuePropositionAnswer`, etc.) se mantienen donde los
+  necesite el normalizer para narrow.
+- `evaluateJev({ state, questions })` ahora acepta
+  `JevQuestions | undefined` (no el literal type).
+- `JevSalesState` no cambia de forma.
+- **Sin `as any` ni casts inseguros**: las `*Answer` específicas
+  se mantienen como narrow types del normalizer; el resto usa
+  `Record<string, NormalizedAnswer>` y nunca se salta TypeScript.
+- `analytical/custom` puede añadirse sin tocar tipos TS cada vez:
+  el mapa es abierto y el normalizer los preserva en
+  `decision.signals`.
+- `engine-required` (`next_action`, `needs_human_call`) sigue
+  validado por Zod + guardarraíles.
+
+Test plan:
+
+- `playbook-jev-questions.test.ts`: una pregunta
+  `analytical/custom` (`foo_bar: { type: 'noul', ... }`) compila
+  sin casts inseguros, llega al payload de `evaluateJev`, y su
+  answer se preserva en `decision.signals['foo_bar']`.
 
 Reglas:
 
@@ -272,10 +334,19 @@ Reglas:
 - `analytical/custom`: cualquier key extra que venga en la respuesta
   y no esté en `knownSignalKeys` se parsea según su shape y se
   preserva en `signals[key]`.
-- `choice`: option keys validadas contra el set del V1 (las 7 de
-  `next_action`, las 5 de `buying_timing`, las 5 de
-  `main_value_proposition`). Si una opción está fuera del set →
-  `fail('invalid_choice_key', key)`.
+- `choice`: option keys validadas contra el set V1 contractual:
+  - `next_action` (7): `['ask_more_questions',
+    'show_operations_demo', 'show_online_enrollment_demo',
+    'present_price', 'schedule_call', 'schedule_follow_up',
+    'disqualify']`.
+  - `buying_timing` (5): `['now', 'soon', 'future_season',
+    'unknown', 'no_current_plan']`.
+  - `main_value_proposition` (5): `['operational_control',
+    'reduce_whatsapp_dependency', 'online_enrollment',
+    'reduce_manual_work', 'no_relevant_value_now']`.
+
+  Si una opción está fuera del set → `fail('invalid_choice_key',
+  key)`. Las descripciones son editables; las KEYS son contrato.
 
 ## Override de Playbook (Corte 3, T306)
 

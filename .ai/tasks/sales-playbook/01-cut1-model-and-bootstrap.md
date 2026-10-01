@@ -76,8 +76,14 @@ Tareas concretas:
        `['now', 'soon', 'future_season', 'unknown',
        'no_current_plan']`.
      - `main_value_proposition.criteria` debe contener
-       **exactamente** las 5 option keys del V1 (verificar contra
-       `src/server/sales/questions.ts`).
+       **exactamente** las 5 option keys contractuales
+       (verificadas contra `src/server/sales/questions.ts`):
+       `['operational_control', 'reduce_whatsapp_dependency',
+       'online_enrollment', 'reduce_manual_work',
+       'no_relevant_value_now']`. Las **descripciones** son
+       editables (pueden re-describirse para reflejar la V1
+       "Academia Bajo Control"); las KEYS son contrato y NO se
+       renombran en Feature 008.
      - `analytical/custom` (cualquier otra key) son libres
        siempre que cumplan el regex `^[a-z_]+$` (≤ 60 chars).
 

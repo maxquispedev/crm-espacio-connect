@@ -86,11 +86,62 @@ Tareas concretas:
 
 ### Normalizer configurable (T304)
 
-4. **Refactor de `src/server/sales/normalize.ts`**.
-   - Nueva firma:
-     `normalizeJevResponse(raw: unknown, activeQuestions:
-     Record<string, QuestionDef>, knownSignalKeys: readonly
-     string[]): Result<SalesDecision, NormalizeError>`.
+4. **Refactor de `src/server/sales/normalize.ts`** **+ contrato
+   genérico runtime en `src/server/sales/questions.ts` y
+   `src/server/sales/client.ts`**.
+
+   El código actual usa `type JevSalesQuestionsV2 = typeof
+   JEV_SALES_QUESTIONS_V2` — un literal type de las 8 congeladas
+   que NO admite `analytical/custom` arbitrarias. **Está
+   prohibido** usar `as any` o casts inseguros para saltarse
+   TypeScript. Hay que introducir un contrato genérico:
+
+   ```ts
+   // src/server/sales/questions.ts
+   export type JevQuestionDefinition =
+     | {
+         type: 'choice';
+         instructions: string;
+         enabled: boolean;
+         criteria: Record<string, string>;
+       }
+     | {
+         type: 'noul';
+         instructions: string;
+         enabled: boolean;
+         criteria: { true: string; false: string };
+       }
+     | {
+         type: 'score';
+         instructions: string;
+         enabled: boolean;
+         criteria: string[];
+       };
+
+   export type JevQuestions = Readonly<
+     Record<string, JevQuestionDefinition>
+   >;
+   ```
+
+   - `JEV_SALES_QUESTIONS_V2` (DEFAULTS_ONLY) sigue existiendo y
+     debe satisfacer `JevQuestionDefinition`. Sus tipos
+     concretos (`NextActionAnswer`, `BuyingTimingAnswer`,
+     `MainValuePropositionAnswer`, etc.) se mantienen donde el
+     normalizer los necesite para narrow.
+   - `evaluateJev({ state, questions })` ahora acepta
+     `JevQuestions | undefined` (no el literal type). Cambiar la
+     firma en `src/server/sales/client.ts`.
+   - `JevSalesState` no cambia de forma.
+
+   Nueva firma del normalizer:
+
+   ```ts
+   function normalizeJevResponse(
+     raw: unknown,
+     activeQuestions: Readonly<Record<string, JevQuestionDefinition>>,
+     knownSignalKeys: readonly string[]
+   ): Result<SalesDecision, NormalizeError>;
+   ```
    - `engine-required` (`next_action`, `needs_human_call`):
      - Si faltan en `activeQuestions` o `enabled=false` → el motor
        **ya no las envía** a Jev (T303). Pero si la respuesta de
@@ -215,6 +266,10 @@ Tareas concretas:
       - `next_action.choice` con key fuera del set V1 → `fail`
         con `code: 'invalid_choice_key'`.
       - `buying_timing.choice` con key fuera del set V1 → `fail`.
+      - **Una pregunta `analytical/custom` arbitraria (por ejemplo
+        `foo_bar: { type: 'noul', ... }`) compila sin `as any`
+        ni casts inseguros**, llega al payload de `evaluateJev`,
+        y su answer se preserva en `decision.signals['foo_bar']`.
     - `tests/unit/playbook-fallback.test.ts`: sin published,
       fallback a constantes con warning una vez por proceso.
     - `tests/unit/playbook-snapshot.test.ts`: snapshot persiste

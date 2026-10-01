@@ -234,7 +234,7 @@ Reglas:
 | `motivation_to_change` | `score` | — | sin efecto en plan |
 | `purchase_intent` | `score` | — | sin efecto en plan |
 | `buying_timing` | `choice` | **exactamente** `['now', 'soon', 'future_season', 'unknown', 'no_current_plan']` | resolver trata como `"unknown"`; writer omite línea |
-| `main_value_proposition` | `choice` | **exactamente** las 5 del V1 | writer continúa sin ángulo |
+| `main_value_proposition` | `choice` | **exactamente** `['operational_control', 'reduce_whatsapp_dependency', 'online_enrollment', 'reduce_manual_work', 'no_relevant_value_now']` (5 contractuales, verificadas contra `questions.ts`) | writer continúa sin ángulo |
 
 Reglas:
 
@@ -418,6 +418,59 @@ Las claves nuevas (`playbook_*`) son aditivas. Las keys de
 `decision` que pasan a nullable mantienen el nombre existente
 (`buyingTiming`, `mainValueProposition`, etc.); los consumidores
 toleran `null`.
+
+## Contrato genérico de tipos para preguntas dinámicas
+
+El código actual usa `type JevSalesQuestionsV2 = typeof
+JEV_SALES_QUESTIONS_V2`, que es un **literal type** de las 8
+preguntas congeladas. NO admite `analytical/custom` arbitrarias
+ni modificar preguntas sin tocar el tipo TS. El Corte 3 introduce
+un contrato genérico runtime en
+`src/server/sales/questions.ts`:
+
+```ts
+export type JevQuestionDefinition =
+  | {
+      type: 'choice';
+      instructions: string;
+      enabled: boolean;
+      criteria: Record<string, string>;
+    }
+  | {
+      type: 'noul';
+      instructions: string;
+      enabled: boolean;
+      criteria: { true: string; false: string };
+    }
+  | {
+      type: 'score';
+      instructions: string;
+      enabled: boolean;
+      criteria: string[];
+    };
+
+export type JevQuestions = Readonly<Record<string, JevQuestionDefinition>>;
+```
+
+Reglas:
+
+- `JEV_SALES_QUESTIONS_V2` (DEFAULTS_ONLY reusables en tests)
+  debe satisfacer `JevQuestionDefinition`.
+- `evaluateJev({ state, questions })` acepta
+  `JevQuestions | undefined` (no el literal type).
+- Las `*Answer` específicas (`NextActionAnswer`,
+  `BuyingTimingAnswer`, `MainValuePropositionAnswer`,
+  `RealOperationalNeedAnswer`, `ProductFitAnswer`,
+  `MotivationToChangeAnswer`, `PurchaseIntentAnswer`,
+  `NeedsHumanCallAnswer`) se preservan donde el normalizer las
+  necesite para narrow.
+- **Sin `as any` ni casts inseguros**: cualquier respuesta
+  adicional se guarda en `decision.signals` con tipo
+  `NormalizedAnswer`.
+- `analytical/custom` puede añadirse sin modificar tipos TS cada
+  vez.
+- `engine-required` (`next_action`, `needs_human_call`) sigue
+  validado por Zod + guardarraíles.
 
 ## Refactor compatible de `SalesDecision`
 
