@@ -1,7 +1,12 @@
 # 008 — Sales Playbook versionado
 
 **Branch**: `008-sales-playbook` · **Carril**: ciclo completo (Principio VI) ·
-**Fecha de apertura**: 2026-09-30 · **Estado**: **PLANIFICADA / NO IMPLEMENTADA**
+**Fecha de apertura**: 2026-09-30 · **Estado**: **EN IMPLEMENTACIÓN** —
+Cortes 1–5 cerrados (modelo, API, runtime dinámico, UI, editor Jev).
+**Corte 6 (Laboratorio comercial) implementado**: pipeline real con
+override de Playbook solo en `is_test=true`, comparación Published vs
+Draft y expected outcomes humanos. **E2E en vivo PENDIENTE** (falta
+stack local). Corte 7 sin empezar.
 
 > Convierte la estrategia comercial de Vende Veloz —hoy congelada en
 > TypeScript en `src/server/sales/vende-veloz.ts` y

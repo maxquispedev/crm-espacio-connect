@@ -512,15 +512,23 @@ export const agentTestRun = pgTable(
     status: text("status", { enum: ["running", "done", "failed"] })
       .notNull()
       .default("running"),
+    /**
+     * Corte 6 — Playbook contra el que corre la corrida. Permite que
+     * `published` y `draft` corran en paralelo (el lock de concurrencia
+     * es por (organización, modo), no por organización).
+     */
+    playbookMode: text("playbook_mode").notNull().default("published"),
     score: integer("score"),
     error: text("error"),
     startedAt: timestamp("started_at").notNull().defaultNow(),
     finishedAt: timestamp("finished_at"),
   },
   (t) => [
-    // Lock de concurrencia en BD: máximo 1 corrida activa por organización.
-    uniqueIndex("test_run_org_running_uq")
-      .on(t.organizationId)
+    // Lock de concurrencia en BD: máximo 1 corrida activa por organización
+    // Y MODO. Antes era solo por organización; el Corte 6 (comparación
+    // Published vs Draft) necesita dos corridas simultáneas legítimas.
+    uniqueIndex("test_run_org_mode_running_uq")
+      .on(t.organizationId, t.playbookMode)
       .where(sql`${t.status} = 'running'`),
     index("test_run_org_idx").on(t.organizationId, t.startedAt),
   ]
@@ -540,6 +548,21 @@ export const agentTestCase = pgTable(
     conversationId: text("conversation_id").references(() => conversation.id, {
       onDelete: "set null",
     }),
+    /**
+     * Corte 6 — T603. Versión del playbook que atendió este caso.
+     * `null` en corridas legacy (sin Sales Orchestrator) o cuando la
+     * organización no tiene versión publicada (fallback a constantes).
+     */
+    playbookVersionId: text("playbook_version_id"),
+    playbookSchemaVersion: text("playbook_schema_version"),
+    /** Outcomes esperados declarados a mano por el dueño (T604). */
+    expectedNextAction: text("expected_next_action"),
+    expectedLane: text("expected_lane"),
+    expectedHandoff: boolean("expected_handoff"),
+    /** Outcomes observados por el motor en el último turno del caso. */
+    actualNextAction: text("actual_next_action"),
+    actualLane: text("actual_lane"),
+    actualHandoff: boolean("actual_handoff"),
     transcript: jsonb("transcript"),
     veredicto: text("veredicto", { enum: ["verde", "amarillo", "rojo"] }),
     hallazgos: jsonb("hallazgos"),

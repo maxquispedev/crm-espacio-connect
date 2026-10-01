@@ -1897,6 +1897,10 @@ async function main() {
   // sobre la misma org que la 013 y vuelve a dejarla limpia.
   await runSection014();
 
+  // 008 — Sección 015: Laboratorio comercial (corte 6). Publicada vs Draft
+  // con el pipeline REAL, expected outcomes y cero efectos residuales.
+  await runSection015();
+
   console.log(`\n===== ${checks - failures}/${checks} checks OK, ${failures} fallos =====`);
   process.exit(failures > 0 ? 1 : 0);
 }
@@ -3495,5 +3499,325 @@ async function runSection014() {
   );
 
   // Restauramos la sesión de la org A.
+  cookie = cookieA;
+}
+
+/**
+ * 008 — Sección 015: Laboratorio comercial (Corte 6, T601..T608).
+ *
+ * Conduce el Laboratorio comercial contra la app real con mocks y verifica
+ * el ciclo completo de la comparación Published vs Draft:
+ *
+ *   - corrida `published` → casos V1 con `playbook_version_id` de la
+ *     versión PUBLICADA;
+ *   - corrida `draft` → casos V1 con el id de la versión DRAFT (distinto);
+ *   - expected outcomes: se declaran a mano y el reporte los expone junto
+ *     al outcome observado (base del ✅/❌ de la UI);
+ *   - `both` → dos corridas con versiones distintas;
+ *   - cero efectos residuales: CERO jobs de follow-up de la conversación
+ *     sandbox y CERO mensajes en el outbox del wa-mock;
+ *   - caminos infelices: `playbook_mode` inválido → 422, y
+ *     `archived:<id_inexistente>` → 422 (no se cuelga ni corre sin override).
+ *
+ * El judge de este guion depende de los mocks: `jev-mock` devuelve
+ * `next_action = ask_more_questions` y `needs_human_call` bajo, así que el
+ * outcome esperado determinista es `ask_more_questions` / `auto` / no-handoff.
+ */
+async function runSection015() {
+  console.log("\n== 008-sales-playbook: laboratorio comercial (corte 6) ==");
+  const email = "e2e-008-lab@vocero.test";
+  const password = "password-e2e-123";
+  let reg = await api("/api/auth/sign-up/email", {
+    method: "POST",
+    body: JSON.stringify({ email, password, name: "Operador Lab 008" }),
+  });
+  if (!reg.res.ok) {
+    reg = await api("/api/auth/sign-in/email", {
+      method: "POST",
+      body: JSON.stringify({ email, password }),
+    });
+  }
+  ok("015 · signup/login operador lab 008", reg.res.ok, JSON.stringify(reg.json));
+  const cookieA = cookie;
+
+  const orgsA = orgListFrom((await api("/api/auth/organization/list")).json);
+  let orgA = orgsA[0];
+  if (!orgA) {
+    const createdOrg = await api("/api/auth/organization/create", {
+      method: "POST",
+      body: JSON.stringify({
+        name: "Playbook Lab E2E 015",
+        slug: `playbook-lab-e2e-015-${Date.now()}`,
+      }),
+    });
+    orgA = createdOrg.json?.id
+      ? { id: createdOrg.json.id }
+      : orgListFrom((await api("/api/auth/organization/list")).json)[0];
+  }
+  if (orgA?.id) {
+    await api("/api/auth/organization/set-active", {
+      method: "POST",
+      body: JSON.stringify({ organizationId: orgA.id }),
+    });
+  }
+
+  // El bootstrap siembra el playbook solo para orgs con el orquestador
+  // encendido; por eso lo activamos ANTES de sembrar.
+  await api("/api/agent/profile", {
+    method: "PUT",
+    body: JSON.stringify({ salesOrchestratorEnabled: true }),
+  });
+  const boot = await api("/api/dev/playbook-bootstrap", { method: "POST" });
+  ok("015 · bootstrap del playbook → 200", boot.res.ok, JSON.stringify(boot.json).slice(0, 200));
+
+  const base = await api("/api/playbook");
+  const publishedV1 = base.json?.published;
+  ok(
+    "015 · baseline: hay versión publicada",
+    base.res.ok && !!publishedV1,
+    JSON.stringify({ published: publishedV1?.version_number })
+  );
+  if (!publishedV1) {
+    cookie = cookieA;
+    return;
+  }
+
+  // Draft abierto y EDITADO, para que published y draft difieran de verdad.
+  if (base.json?.draft) {
+    await api("/api/playbook/draft", { method: "DELETE" });
+  }
+  const draftRes = await api("/api/playbook/draft", {
+    method: "POST",
+    body: JSON.stringify({ notes: "corte 6 · draft de comparación" }),
+  });
+  ok("015 · POST draft → 201", draftRes.res.status === 201, JSON.stringify(draftRes.json).slice(0, 160));
+  const draftV = draftRes.json?.draft;
+  const putDraft = await api("/api/playbook/draft", {
+    method: "PUT",
+    body: JSON.stringify({
+      urgency_rules: "Temporada alta de admisiones: prioriza agendar llamada esta semana.",
+    }),
+  });
+  ok("015 · PUT draft (cambio real) → 200", putDraft.res.ok, JSON.stringify(putDraft.json).slice(0, 160));
+  ok(
+    "015 · draft y publicada son versiones distintas",
+    !!draftV?.id && draftV.id !== publishedV1.id,
+    JSON.stringify({ published: publishedV1.id, draft: draftV?.id })
+  );
+
+  /** Lanza una corrida y espera a que termine. */
+  const runLab = async (playbook_mode) => {
+    const started = await api("/api/lab/runs", {
+      method: "POST",
+      body: JSON.stringify({ playbook_mode }),
+    });
+    const runId = started.json?.runId;
+    if (!started.res.ok || !runId) return { started, detail: null };
+    for (let i = 0; i < 300; i++) {
+      const d = await api(`/api/lab/runs/${runId}`);
+      const status = d.json?.run?.status;
+      if (status === "done" || status === "failed") return { started, detail: d.json, runId };
+      await new Promise((r) => setTimeout(r, 400));
+    }
+    return { started, detail: null, runId };
+  };
+
+  // --- 1) Corrida contra la PUBLICADA ---------------------------
+  const pub = await runLab("published");
+  ok(
+    "015 · POST /api/lab/runs {published} → 202",
+    pub.started.res.status === 202,
+    `${pub.started.res.status} ${JSON.stringify(pub.started.json).slice(0, 160)}`
+  );
+  ok(
+    "015 · corrida published termina en 'done'",
+    pub.detail?.run?.status === "done",
+    JSON.stringify(pub.detail?.run?.error ?? pub.detail?.run?.status ?? null)
+  );
+  ok(
+    "015 · corrida published registraba el modo",
+    pub.detail?.run?.playbookMode === "published",
+    JSON.stringify(pub.detail?.run?.playbookMode)
+  );
+
+  const pubCases = pub.detail?.cases ?? [];
+  ok("015 · published genera 6 casos", pubCases.length === 6, `n=${pubCases.length}`);
+  ok(
+    "015 · los casos son las personas V1 comerciales",
+    pubCases.length > 0 && pubCases.every((c) => String(c.persona).startsWith("v1_academia_")),
+    JSON.stringify(pubCases.map((c) => c.persona))
+  );
+  ok(
+    "015 · cada caso persiste playbook_version_id = publicada",
+    pubCases.length > 0 && pubCases.every((c) => c.playbookVersionId === publishedV1.id),
+    JSON.stringify(pubCases.map((c) => c.playbookVersionId).slice(0, 3))
+  );
+  ok(
+    "015 · cada caso persiste playbook_schema_version",
+    pubCases.length > 0 && pubCases.every((c) => !!c.playbookSchemaVersion),
+    JSON.stringify(pubCases.map((c) => c.playbookSchemaVersion).slice(0, 3))
+  );
+  ok(
+    "015 · el transcript del caso trae cliente Y agente (writer real)",
+    pubCases.some((c) => (c.transcript ?? []).some((t) => t.role === "cliente")) &&
+      pubCases.some((c) => (c.transcript ?? []).some((t) => t.role === "agente")),
+    JSON.stringify(pubCases.map((c) => (c.transcript ?? []).length))
+  );
+
+  // --- 2) Expected outcomes (T604) -------------------------------
+  const firstCase = pubCases[0];
+  if (firstCase) {
+    const exp = await api(`/api/lab/cases/${firstCase.id}/expected`, {
+      method: "PATCH",
+      body: JSON.stringify({
+        expected_next_action: "ask_more_questions",
+        expected_lane: "auto",
+        expected_handoff: false,
+      }),
+    });
+    ok(
+      "015 · PATCH expected outcomes → 200",
+      exp.res.ok,
+      `${exp.res.status} ${JSON.stringify(exp.json).slice(0, 160)}`
+    );
+    const after = await api(`/api/lab/runs/${pub.runId}`);
+    const c = (after.json?.cases ?? []).find((x) => x.id === firstCase.id);
+    ok(
+      "015 · el esperado persiste y coincide con lo observado (✅)",
+      c?.expectedNextAction === "ask_more_questions" &&
+        c?.expectedLane === "auto" &&
+        c?.expectedHandoff === false &&
+        c?.actualNextAction === c?.expectedNextAction,
+      JSON.stringify({
+        expected: [c?.expectedNextAction, c?.expectedLane, c?.expectedHandoff],
+        actual: [c?.actualNextAction, c?.actualLane, c?.actualHandoff],
+      })
+    );
+    const bad = await api(`/api/lab/cases/${firstCase.id}/expected`, {
+      method: "PATCH",
+      body: JSON.stringify({ expected_lane: "no_existe" }),
+    });
+    ok("015 · expected_lane inválido → 422", bad.res.status === 422, `${bad.res.status} ${JSON.stringify(bad.json).slice(0, 140)}`);
+    const cross = await api("/api/lab/cases/case_inexistente/expected", {
+      method: "PATCH",
+      body: JSON.stringify({ expected_lane: "auto" }),
+    });
+    ok("015 · caso inexistente → 404", cross.res.status === 404, `${cross.res.status}`);
+  } else {
+    ok("015 · hay un caso para probar expected outcomes", false, "sin casos");
+  }
+
+  // --- 3) Corrida contra el DRAFT --------------------------------
+  const dr = await runLab("draft");
+  ok(
+    "015 · POST /api/lab/runs {draft} → 202",
+    dr.started.res.status === 202,
+    `${dr.started.res.status} ${JSON.stringify(dr.started.json).slice(0, 160)}`
+  );
+  ok(
+    "015 · corrida draft termina en 'done'",
+    dr.detail?.run?.status === "done",
+    JSON.stringify(dr.detail?.run?.error ?? dr.detail?.run?.status ?? null)
+  );
+  const drCases = dr.detail?.cases ?? [];
+  ok(
+    "015 · cada caso del draft persiste playbook_version_id = draft",
+    drCases.length === 6 && drCases.every((c) => c.playbookVersionId === draftV?.id),
+    JSON.stringify(drCases.map((c) => c.playbookVersionId).slice(0, 3))
+  );
+  ok(
+    "015 · published y draft persisten VERSIONES DISTINTAS",
+    drCases.length > 0 &&
+      pubCases.length > 0 &&
+      drCases[0].playbookVersionId !== pubCases[0].playbookVersionId,
+    JSON.stringify({
+      published: pubCases[0]?.playbookVersionId,
+      draft: drCases[0]?.playbookVersionId,
+    })
+  );
+
+  // --- 4) Camino infeliz: modos inválidos ------------------------
+  const badMode = await api("/api/lab/runs", {
+    method: "POST",
+    body: JSON.stringify({ playbook_mode: "archivada" }),
+  });
+  ok("015 · playbook_mode inválido → 422", badMode.res.status === 422, `${badMode.res.status}`);
+  const badArchived = await api("/api/lab/runs", {
+    method: "POST",
+    body: JSON.stringify({ playbook_mode: "archived:spv_no_existe" }),
+  });
+  ok(
+    "015 · archived:<id inexistente> → 422 (no cuelga, no corre sin override)",
+    badArchived.res.status === 422,
+    `${badArchived.res.status} ${JSON.stringify(badArchived.json).slice(0, 140)}`
+  );
+
+  // --- 5) CERO EFECTOS RESIDUALES --------------------------------
+  const jobs = await api("/api/dev/follow-ups");
+  ok(
+    "015 · cero jobs de follow-up en conversaciones sandbox",
+    jobs.res.ok && jobs.json?.sandboxJobs === 0,
+    JSON.stringify(jobs.json ?? { status: jobs.res.status })
+  );
+  const outbox = await api("/api/dev/wa-mock/outbox");
+  ok(
+    "015 · el outbox del wa-mock sigue vacío (nada salió a WhatsApp)",
+    outbox.res.ok && Array.isArray(outbox.json?.outbox) && outbox.json.outbox.length === 0,
+    JSON.stringify({ status: outbox.res.status, outbox: outbox.json?.outbox?.length })
+  );
+
+  // --- 6) `both` → dos corridas con versiones distintas -----------
+  const both = await api("/api/lab/runs", {
+    method: "POST",
+    body: JSON.stringify({ playbook_mode: "both" }),
+  });
+  ok(
+    "015 · POST /api/lab/runs {both} → 202 con 2 runIds",
+    both.res.status === 202 && Array.isArray(both.json?.runIds) && both.json.runIds.length === 2,
+    `${both.res.status} ${JSON.stringify(both.json).slice(0, 160)}`
+  );
+  if (Array.isArray(both.json?.runIds)) {
+    const bothIds = both.json.runIds;
+    const settled = [];
+    for (const rid of bothIds) {
+      for (let i = 0; i < 300; i++) {
+        const d = await api(`/api/lab/runs/${rid}`);
+        const st = d.json?.run?.status;
+        if (st === "done" || st === "failed") {
+          settled.push(d.json);
+          break;
+        }
+        await new Promise((r) => setTimeout(r, 400));
+      }
+    }
+    const modes = settled.map((d) => d?.run?.playbookMode).sort();
+    const versions = settled.map((d) => d?.cases?.[0]?.playbookVersionId);
+    ok(
+      "015 · 'both' deja una corrida published y una draft, con versiones distintas",
+      modes.length === 2 &&
+        modes[0] === "draft" &&
+        modes[1] === "published" &&
+        versions.length === 2 &&
+        versions[0] !== versions[1],
+      JSON.stringify({ modes, versions })
+    );
+  }
+
+  // --- 7) Coherencia del histórico --------------------------------
+  const history = await api("/api/lab/runs");
+  ok(
+    "015 · el historial expone el modo de cada corrida",
+    history.res.ok && (history.json?.runs ?? []).every((r) => !!r.playbookMode),
+    JSON.stringify((history.json?.runs ?? []).map((r) => r.playbookMode).slice(0, 6))
+  );
+
+  // --- Limpieza: org re-ejecutable -------------------------------
+  const delDraft = await api("/api/playbook/draft", { method: "DELETE" });
+  ok("015 · DELETE draft (limpieza) → 200", delDraft.res.ok, JSON.stringify(delDraft.json).slice(0, 140));
+  await api("/api/agent/profile", {
+    method: "PUT",
+    body: JSON.stringify({ salesOrchestratorEnabled: false }),
+  });
+
   cookie = cookieA;
 }

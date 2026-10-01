@@ -283,7 +283,7 @@ export async function seedDemo(
     transcript: { role: string; text: string }[];
   }[] = [
     {
-      persona: "comprador_decidido",
+      persona: "legacy_comprador_decidido",
       veredicto: "verde",
       hallazgos: [],
       transcript: [
@@ -294,7 +294,7 @@ export async function seedDemo(
       ],
     },
     {
-      persona: "pregunton_precios",
+      persona: "legacy_pregunton_precios",
       veredicto: "verde",
       hallazgos: [],
       transcript: [
@@ -303,7 +303,7 @@ export async function seedDemo(
       ],
     },
     {
-      persona: "cliente_enojado",
+      persona: "legacy_cliente_enojado",
       veredicto: "amarillo",
       hallazgos: [
         {
@@ -318,7 +318,7 @@ export async function seedDemo(
       ],
     },
     {
-      persona: "fuera_de_kb",
+      persona: "legacy_fuera_de_kb",
       veredicto: "rojo",
       hallazgos: [
         {
@@ -338,7 +338,7 @@ export async function seedDemo(
       ],
     },
     {
-      persona: "pide_humano",
+      persona: "legacy_pide_humano",
       veredicto: "verde",
       hallazgos: [],
       transcript: [
@@ -347,7 +347,7 @@ export async function seedDemo(
       ],
     },
     {
-      persona: "errores_modismos",
+      persona: "legacy_errores_modismos",
       veredicto: "verde",
       hallazgos: [],
       transcript: [

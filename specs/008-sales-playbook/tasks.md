@@ -520,42 +520,154 @@ NO empieces Corte 4.
 
 ## Corte 6 — Laboratorio comercial (T601..T608)
 
-- [ ] **T601** — `src/server/lab/personas.ts`: añadir 6 personas V1
+- [x] **T601** — `src/server/lab/personas.ts`: añadir 6 personas V1
   comerciales; mantener las 6 ferreteras como legacy.
-- [ ] **T602** — `src/server/lab/runner.ts`: ejecutar el pipeline REAL
+  → ✅ Las 6 ferreteras **no se eliminan**: se renombran con prefijo
+  `legacy_*` y se exportan como `LEGACY_PERSONAS`. Se agregan las 6
+  personas V1 de academias deportivas (`SALES_PERSONAS`, prefijos
+  `v1_academia_*`), cada una con `script` de 5 turnos.
+  El módulo exporta además `PERSONAS_BY_COHORT`, `findPersona()` y
+  `personaLabel()` con `LEGACY_KEY_ALIASES`: las corridas históricas
+  guardaron los keys SIN prefijo y el histórico sigue mostrando su
+  etiqueta y no la key cruda. `tests/unit/judge.test.ts` y
+  `lab-sandbox.test.ts` intactos (el juez recibe el key como string).
+- [x] **T602** — `src/server/lab/runner.ts`: ejecutar el pipeline REAL
   (`runSalesOrchestratorTurn` con `is_test=true`). El sender ya lanza
   excepción en `is_test=true`. Confirmar con spy que no se invoca
   WhatsApp real.
-- [ ] **T603** — Migración 0008b: añadir columnas a `agent_test_case`:
+  → ✅ Cada turno comercial llama a `runSalesOrchestratorTurn` con
+  `playbookOverride` (validado por el guard T306 del orquestador porque
+  las conversaciones son `is_test=true`). El override se pasa solo si
+  hay versión concreta; sin override se pasa `{}` para que el orquestador
+  resuelva la publicada por su cuenta. Los outcomes observados se leen
+  del snapshot durable `lead.last_jev_decision.plan` y se persisten en
+  `actual_*`. Cohorte `legacy` intacta vía `runAgentTurn` cuando el org
+  no tiene Sales Orchestrator (o con `playbook_mode: "legacy"`).
+  Spy sobre `graphRequest` + aserción de cero filas en
+  `sales_follow_up_job` en `lab-pipeline-real.test.ts`.
+- [x] **T603** — Migración 0008b: añadir columnas a `agent_test_case`:
   - `playbook_version_id text NULL`
   - `playbook_schema_version text NULL`
   - `expected_next_action text NULL`
   - `expected_lane text NULL`
   - `expected_handoff boolean NULL`
   Patrón `ADD COLUMN IF NOT EXISTS`.
-- [ ] **T604** — Expected outcomes: `agent_test_case` editable.
+  → ✅ `drizzle/0008b_lab_playbook.sql`, registrada en el journal (idx 9).
+  Re-ejecutable: todo es `ADD COLUMN IF NOT EXISTS` /
+  `CREATE [UNIQUE] INDEX IF NOT EXISTS`. Se agregan además
+  `actual_next_action` / `actual_lane` / `actual_handoff` (necesarios
+  para pintar ✅/❌ sin recalcular en cada request) y
+  `agent_test_run.playbook_mode`.
+  **Cambio de índice (documentado):** el lock de concurrencia pasa de
+  `UNIQUE(organization_id) WHERE running` a
+  `UNIQUE(organization_id, playbook_mode) WHERE running`, porque
+  `playbook_mode: "both"` debe poder correr published y draft EN
+  PARALELO. Sigue habiendo máximo 1 corrida por modo y organización.
+- [x] **T604** — Expected outcomes: `agent_test_case` editable.
   Reporte ✅/❌ por campo esperado.
-- [ ] **T605** — Override de Playbook para `is_test=true`.
+  → ✅ `PATCH /api/lab/cases/[id]/expected` con Zod y **catálogos
+  cerrados** (`7` next_actions, `5` lanes) para que la UI no persista un
+  valor con typo que después siempre compararía ❌. `null` limpia el
+  campo. Tenant-safe (404 cross-org). La UI muestra ✅ coincidencia,
+  ❌ diferencia, `—` sin esperado, y el editor es **manual** (nunca
+  autocompleta el esperado desde el actual: sería tautológico).
+- [x] **T605** — Override de Playbook para `is_test=true`.
   - `POST /api/lab/runs` con `{ "playbook_mode": "draft" }` ejecuta
     con override.
   - `playbook_mode: "published"` (default) usa la publicada.
   - `playbook_mode: "both"` ejecuta dos corridas (published + draft).
-  - El override llega al orquestador por `runSalesOrchestratorTurn`
-    (T306) y se valida con `is_test === true`.
-- [ ] **T606** — UI del Laboratorio con diff side-by-side y
+  - `playbook_mode: "archived:<version_id>"` usa esa versión.
+  - `playbook_mode: "legacy"` fuerza la cohorte legacy.
+  El override llega al orquestador por `runSalesOrchestratorTurn`
+  (T306) y se valida con `is_test === true`.
+  → ✅ 8 modos/rutas cubiertos en `lab-run-api.test.ts` (incl. 422 por
+  modo inválido y 422 por `archived:<id>` inexistente, sin colgar).
+  Respuesta 202 con `runId` + `runIds` (2 ids en `both`).
+- [x] **T606** — UI del Laboratorio con diff side-by-side y
   expected outcomes.
-- [ ] **T607** — Tests:
-  - sandbox no toca WhatsApp real;
-  - persiste `playbook_version_id`;
-  - override rechazado si `is_test=false`;
-  - cero filas en `sales_follow_up_job` tras corrida `is_test`;
-  - contacto y lead de prueba NO visibles en operación normal.
-- [ ] **T608** — E2E: lanzar Published + Draft, ver diff.
+  → ✅ `lab-client.tsx`: selector de modo (Publicada / Borrador /
+  Publicada+Borrador / Versión archivada… / Agente clásico), campo
+  Version ID para `archived:`, badge de versión por caso, ✅/❌ por
+  campo esperado y editor manual, y vista **diff side-by-side** para
+  `both` (una columna por versión + badge "difiere" donde el outcome
+  observado cambia). El historial muestra el modo de cada corrida.
+- [x] **T607** — Tests:
+  - sandbox no toca WhatsApp real; ✅
+  - persiste `playbook_version_id`; ✅ (+ `playbook_schema_version`)
+  - override rechazado si `is_test=false`; ✅ garantía de Corte 3 intacta
+    (`playbook-override-guard.test.ts` y `playbook-lab-suppress-followups.test.ts`
+    siguen verdes); el runner además **solo** crea conversaciones
+    `isTest: true` y solo con override cuando hay versión, que es la
+    precondición del guard
+  - cero filas en `sales_follow_up_job` tras corrida `is_test`; ✅
+    (asercción explícita sobre `tables.salesFollowUpJob` + `scheduleNextFollowUp`)
+  - fallback si no hay publicada (`playbook_version_id = null`); ✅
+  - personas legacy siguen funcionando; ✅
+  - `playbook_mode: "both"` → dos corridas con versiones distintas; ✅
+  → `tests/unit/lab-pipeline-real.test.ts` (**13 tests**) con BD en
+  memoria de predicados evaluables (aislamiento real por `run_id` /
+  `organization_id`), y `tests/unit/lab-run-api.test.ts` (**16 tests**)
+  para la superficie HTTP.
+- [x] **T608** — E2E: lanzar Published + Draft, ver diff.
+  → ✅ escrita como **sección 015** en `scripts/e2e-selftest.mjs`
+  (`runSection015`, registrada en `main()`; `node --check` en verde).
+  Cubre: corrida published y draft ambas `202` + `done`, 6 casos V1 por
+  corrida, `playbook_version_id` distinto entre ambas, expected
+  persistido y coincidiendo con lo observado, `422` por modo inválido y
+  por `archived:<id>` inexistente, `both` con dos versiones distintas,
+  **cero** jobs sandbox (`GET /api/dev/follow-ups` → `sandboxJobs: 0`) y
+  **outbox del wa-mock vacío**.
+  Para poder observar "cero jobs" en vivo se agrega
+  `GET /api/dev/follow-ups` (sonda de solo lectura tras `mockGuard()`).
+
+### Hallazgos del corte 6
+
+1. **El lock de concurrencia era por organización, no por modo.** Con
+   `UNIQUE(organization_id) WHERE status='running'`, `playbook_mode:
+   "both"` era imposible: la segunda corrida reventaba el índice. Se
+   reemplaza el índice y se mueve a `(organization_id, playbook_mode)`
+   (`DROP INDEX IF EXISTS` + `CREATE UNIQUE INDEX IF NOT EXISTS`,
+   re-ejecutable). Sigue garantizándose 1 corrida por modo y org.
+2. **Falta el `actual_*` que el enunciado no listaba.** La comparación
+   ✅/❌ necesita el outcome observado; sin persistirlo habría que
+   recalcularlo en cada request del reporte. Se agregan tres columnas
+   aditivas (`actual_next_action`, `actual_lane`, `actual_handoff`)
+   llenadas desde el snapshot durable del lead.
+3. **`playbook_mode: "draft"` sin draft abierto degrada a la publicada**
+   (no a constantes): el draft es opcional y su ausencia no debe
+   producir una corrida peor que la de fábrica. Con override explícito
+   inexistente (`archived:<id>`) sí se falla con 422, porque ahí el
+   dueño pidió algo concreto que no existe.
+4. **Alias de personas legacy.** Renombrar las ferreteras a `legacy_*`
+   dejaba el histórico con keys huérfanos. `LEGACY_KEY_ALIASES` +
+   `personaLabel()` lo resuelven sin migrar datos.
+5. **`src/server/seed/demo.ts`** siembra casos históricos con los keys
+   viejos: se actualizaron a los nuevos prefijos para que el seed siga
+   siendo consistente.
 
 **Cierre del corte 6**:
 
-- Gate técnico + tests verdes + E2E.
-- Working tree limpio, un commit: `feat(lab): laboratorio comercial con Published vs Draft`.
+- Gate técnico en verde: `pnpm typecheck` (clean), `pnpm lint`
+  (0 errores; los 3 warnings son preexistentes y ajenos a este corte),
+  `pnpm build` (compiled), `pnpm test` (**87 archivos, 787 tests**,
+  incluidos 29 nuevos: 13 del runner + 16 de la API).
+- Working tree limpio.
+- Un commit:
+  `feat(lab): laboratorio comercial con Published vs Draft`.
+- ⚠️ **`pnpm test:e2e` NO ejecutado en este entorno**: no hay Docker,
+  `psql` ni PostgreSQL disponible, y la app no está levantada
+  (`/api/health` sin respuesta). La sección 015 está escrita y parsea,
+  pero por Constitución IX/V el E2E en vivo y el self-test manual con
+  `pnpm dev` + mocks quedan **PENDIENTES** de ejecutarse en el siguiente
+  checkpoint con el stack levantado:
+  - [ ] `POST /api/lab/runs {playbook_mode:"published"}` → 202 + casos V1
+  - [ ] `POST /api/lab/runs {playbook_mode:"draft"}` → 202 + versión distinta
+  - [ ] tilde ✅/❌ visible en la UI (Playwright)
+  - [ ] `GET /api/dev/follow-ups` → `sandboxJobs: 0`
+  - [ ] `GET /api/dev/wa-mock/outbox` → vacío
+  - [ ] diff side-by-side de `both` renderizado en pantalla
+
+NO empieces Corte 7.
 
 ---
 
