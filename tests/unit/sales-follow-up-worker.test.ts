@@ -5,6 +5,7 @@ const selectQueue: unknown[][] = [];
 const inserts: unknown[] = [];
 const updates: Record<string, unknown>[] = [];
 let capturedClaimSql = "";
+let capturedClaimValues: unknown[] = [];
 let claimLocked = false;
 let claimRows: Record<string, unknown>[] = [];
 
@@ -24,7 +25,8 @@ function thenableChain(rows: unknown[]) {
 
 vi.mock("@/lib/db", () => ({
   getSql: () => {
-    const tagged = (strings: TemplateStringsArray) => {
+    const tagged = (strings: TemplateStringsArray, ...values: unknown[]) => {
+      capturedClaimValues = values;
       capturedClaimSql = strings.join(" ");
       if (claimLocked) return Promise.resolve([]);
       claimLocked = true;
@@ -216,6 +218,7 @@ describe("worker de follow-ups", () => {
     inserts.length = 0;
     updates.length = 0;
     capturedClaimSql = "";
+    capturedClaimValues = [];
     claimLocked = false;
     claimRows = [rawJob()];
     writeFollowUpText.mockReset();
@@ -247,6 +250,24 @@ describe("worker de follow-ups", () => {
     expect(capturedClaimSql).toMatch(/status = 'pending'/);
     expect(capturedClaimSql).toMatch(/status = 'processing'/);
     expect(CLAIM_LEASE_MS).toBe(10 * 60 * 1000);
+  });
+
+  it("claim usa reloj PostgreSQL y solo parámetros primitivos, nunca Date", async () => {
+    claimRows = [];
+    const { runDueFollowUps, CLAIM_LEASE_MS } = await import(
+      "@/server/sales/follow-ups/worker"
+    );
+    await runDueFollowUps();
+    expect(capturedClaimValues).toEqual([CLAIM_LEASE_MS, 10]);
+    expect(capturedClaimValues.some((value) => value instanceof Date)).toBe(false);
+    expect(capturedClaimSql).toMatch(/claimed_at = date_trunc\('milliseconds', CURRENT_TIMESTAMP AT TIME ZONE 'UTC'\)/);
+    expect(capturedClaimSql).toMatch(/updated_at = date_trunc\('milliseconds', CURRENT_TIMESTAMP AT TIME ZONE 'UTC'\)/);
+    expect(capturedClaimSql).toMatch(/due_at <= \(CURRENT_TIMESTAMP AT TIME ZONE 'UTC'\)/);
+    expect(capturedClaimSql).toMatch(/claimed_at < \(CURRENT_TIMESTAMP AT TIME ZONE 'UTC'\) -/);
+    for (const column of ["due_at", "anchor_at", "claimed_at", "created_at", "updated_at"]) {
+      expect(capturedClaimSql).toContain(`job.${column} AT TIME ZONE 'UTC' AS ${column}`);
+    }
+    expect(capturedClaimSql).toContain("INTERVAL '1 millisecond'");
   });
 
   it("dos ticks concurrentes: solo un envío", async () => {

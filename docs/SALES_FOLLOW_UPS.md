@@ -496,3 +496,41 @@ Pendientes fuera de alcance (aceptables):
 - múltiples templates/contextos
 - tuning de cadencias con datos reales
 
+
+## Hotfix de lanzamiento — 2026-10-01
+
+Reproducción real antes de editar: POST `/api/dev/follow-ups/run` devolvió
+500/ERR_INVALID_ARG_TYPE en claimDueJobs:105 al serializar Date en raw SQL
+(postgres-js + PostgreSQL 18.4). El claim ahora obtiene el reloj de PostgreSQL
+con CURRENT_TIMESTAMP AT TIME ZONE UTC (schema timestamp sin zona), trunca
+claimed_at/updated_at a milisegundos para el round-trip Date/Drizzle, y usa
+CLAIM_LEASE_MS numérico como intervalo parametrizado. RETURNING job.* conserva
+el mapeo y agrega proyecciones UTC para las cinco fechas. No depende de la
+zona del servidor o del proceso Node. Atomicidad, SKIP LOCKED, batch 10 y
+lease 10 min conservados. La sonda expire actualiza job y nextFollowUpAt
+correspondiente juntos, bajo transacción y scope; no altera un schedule ajeno.
+
+Gates: typecheck/lint/build/test verdes (818 tests, 89 archivos; 3 warnings
+preexistentes de lint). E2E completo: **40/40**, API real local :3021 y
+PostgreSQL efímero 18.4 :55439 en Lima; proveedores exclusivamente locales.
+A–E, cancelación durable por inbound, tres jobs sent 1/2/3 sin lost, bloqueo
+template_required sin texto, dos ticks/un envío, retry técnico sin consumir
+intento, lease abandonado/vigente, HUMAN/STOP/handoff/OFF, aislamiento entre
+dos tenants y sandbox sin Graph, y cero duplicados. No queda E2E pendiente
+para este hotfix. No se ejecutó despliegue productivo.
+
+Arnés reproducible: `scripts/e2e-follow-ups.mjs`, extracción del bloque A–E
+existente más guardrails. Usar exclusivamente una BD efímera migrada y app
+local con WA_MOCK_ENABLED=true y AGENT_COALESCE_MS=6000. Configurar:
+Graph → http://localhost:3021/api/dev/wa-mock/graph, Jev endpoint →
+http://localhost:3022/jev y writer base URL → http://localhost:3022, tokens
+ficticios y modelos locales. El arnés inicia esos proveedores HTTP en :3022.
+Ejecutar con el mismo env de la app:
+
+```bash
+FOLLOW_UP_E2E=1 node --env-file=/tmp/app/.env scripts/e2e-follow-ups.mjs
+```
+
+El arnés usa una cuenta/org exclusiva, elimina sus contactos de pruebas
+al iniciar y prueba fechas también con Node en America/Lima. No usar con
+datos reales. Para el E2E general sigue disponible pnpm test:e2e.

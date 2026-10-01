@@ -921,7 +921,7 @@ NO empieces Corte 7.
   → error durable sin outbound extra. Logs temporales:
   `/tmp/sales-launch-runtime-e2e.log`, `/tmp/sales-launch-tests.log`,
   `/tmp/sales-launch-mutation.log`.
-- [ ] E2E follow-ups completo pendiente: subset del arnés existente 16/26,
+- [x] E2E follow-ups completo (cerrado por FU1–FU4 abajo); antecedente: subset del arnés existente 16/26,
   respuesta inicial y job durable verdes, tick 500 por serialización Date en
   `claimDueJobs` (worker.ts:105, ERR_INVALID_ARG_TYPE). Worker intacto; no se
   corrigió fuera del objetivo. Entrega/agotamiento/ventana cerrada no verificados.
@@ -933,3 +933,42 @@ NO empieces Corte 7.
 - Commit único: `fix(sales): congelar playbook configurable para lanzamiento`.
   Siguiente paso: investigar Date del worker en cambio separado, repetir E2E
   follow-ups y desplegar por flujo habitual. No deploy ejecutado en esta sesión.
+
+## Hotfix bloqueante de follow-ups — 2026-10-01
+
+Corrección del contrato existente; sin feature nueva ni cambios comerciales.
+Constitution Check: PostgreSQL propio, sender existente, scope por tenant en
+contexto/efectos, sandbox intacto, claim global atómico con SKIP LOCKED.
+
+- [x] FU1 — Reproducir antes de editar: PostgreSQL 18.4 + postgres-js,
+  POST real devuelve 500/ERR_INVALID_ARG_TYPE en claimDueJobs:105.
+- [x] FU2 — Reloj PostgreSQL + lease primitivo parametrizado; regresión sin Date.
+- [x] FU3 — Gates completos; E2E A–E completo + concurrencia, retry, lease,
+  HUMAN/STOP/handoff/OFF, tenant isolation y deduplicación.
+- [x] FU4 — Evidencia durable, CURRENT_STATE y commit único; árbol limpio.
+
+### Evidencia FU y handoff
+
+- Causa real: serializer postgres-js de raw timestamp recibe Date; endpoint
+  500/ERR_INVALID_ARG_TYPE confirmado antes del cambio, PostgreSQL 18.4.
+- SQL del claim: CURRENT_TIMESTAMP AT TIME ZONE UTC, claimed/updated truncados
+  a milisegundos, intervalo con CLAIM_LEASE_MS numérico parametrizado; batch 10
+  y SKIP LOCKED intactos. RETURNING convierte timestamps sin zona a instantes
+  UTC para que mapClaimedJob/Drizzle conserven identidad del lease.
+- Problema adicional del arnés: expire cambiaba solo dueAt. La sonda dev ahora
+  cambia nextFollowUpAt correspondiente en la misma transacción y tenant,
+  sin reemplazar schedules diferentes. No cambia ruta productiva ni contrato.
+- Regresión unitaria captura parámetros: solo [600000, 10], ningún Date;
+  valida reloj, precisión y proyecciones UTC.
+- Gates verdes: pnpm typecheck, lint (0 errores/3 warnings preexistentes),
+  build, test (818/818; 89 archivos).
+- E2E final: 40/40, API real de Next local :3021, PostgreSQL efímero 18.4
+  :55439 en America/Lima y mocks locales :3022. A–E completo y guardrails
+  (concurrencia, dedup, retry, lease, HUMAN/STOP/handoff/OFF, dos tenants).
+- Evidencia adicional: CANCELLED/inbound_message, SENT intentos 1/2/3 y
+  BLOCKED/template_required observados durablemente en PostgreSQL.
+- Archivos: worker.ts, sonda dev follow-ups/run, regresión worker,
+  scripts/e2e-follow-ups.mjs, docs/SALES_FOLLOW_UPS.md y CURRENT_STATE.
+- Commit único: fix(follow-ups): estabilizar worker para lanzamiento.
+  Sin pendientes del objetivo; próximo paso operativo: deploy habitual,
+  no ejecutado ni requerido para este hotfix. Sin decisión comercial nueva.

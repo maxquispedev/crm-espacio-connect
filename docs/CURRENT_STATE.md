@@ -1,5 +1,25 @@
 # CURRENT STATE — Espacio Connect
 
+**2026-10-01 — Hotfix bloqueante de follow-ups cerrado.**
+Reproducido POST `/api/dev/follow-ups/run` → 500 `ERR_INVALID_ARG_TYPE`
+con postgres-js/PostgreSQL 18.4 antes de editar: raw SQL recibía `Date` JS.
+`claimDueJobs` usa reloj PostgreSQL UTC y precisión de milisegundos, lease
+numérico parametrizado de 10 min y fechas RETURNING explícitamente UTC.
+Conserva claim atómico, batch 10, SKIP LOCKED y recovery. La sonda dev
+adelanta job y schedule del lead juntos (transacción + scope + comparación
+con due anterior), evitando un `due_mismatch` artificial del arnés.
+
+Gates: typecheck, lint (0 errores, 3 warnings preexistentes), build y
+**818/818 tests en 89 archivos** verdes. E2E completo **40/40 checks verdes**
+en localhost:3021 + PostgreSQL efímero 18.4 :55439, zona Lima, mocks HTTP
+Jev/writer/Graph: A–E, concurrencia sin duplicados, retry sin consumir intento,
+lease abandonado/vigente, HUMAN/STOP/handoff/OFF, dos tenants y sandbox sin
+Graph. Arnés durable: `scripts/e2e-follow-ups.mjs`; detalle de reproducción
+local en `docs/SALES_FOLLOW_UPS.md`. Sin cambios a estrategia, pricing,
+Playbook, Jev questions, Lab, Meta Ads, resolver ni writer principal.
+Commit único: `fix(follow-ups): estabilizar worker para lanzamiento`.
+Sin pendientes de este E2E; despliegue productivo fuera de esta sesión.
+
 **2026-10-01 — Hotfix de lanzamiento Vende Veloz.**
 Feature 008 preservada pero runtime configurable pospuesto a V2.
 Campaña inicial de Vende Veloz opera con estrategia hardcodeada conocida
@@ -23,14 +43,14 @@ antes/después de publicar producto/policy/offer/questions/writer modificados;
 se observó outbound, auto_close, precio durable y auditoría null. Jev inválido
 registró error sin nuevo outbound (camino infeliz).
 
-**Pendiente E2E de entrega de follow-ups:** subset del arnés existente ejecutado,
+**Antecedente (resuelto por el hotfix de follow-ups arriba):** subset del arnés existente ejecutado,
 **16/26 checks**, con respuesta inicial y scheduling verdes. El tick devuelve
 500 por `ERR_INVALID_ARG_TYPE` al serializar `Date` en `claimDueJobs`
 (`src/server/sales/follow-ups/worker.ts:105`) en PostgreSQL local 18.4.
 Ese worker no cambia en este hotfix; envío, agotamiento por silencio y bloqueo
 por ventana cerrada NO quedan verificados. No se declara READY punta a punta.
-Siguiente paso exacto: investigar/reproducir este error del worker en un cambio
-separado y repetir el self-test de follow-ups; deploy del hotfix por flujo habitual
+El error del worker y el self-test se cerraron en el hotfix separado arriba;
+deploy del hotfix por flujo habitual
 no ejecutado aquí. Decisión comercial de congelar 008 debe sincronizarse en Obsidian.
 Commit único: `fix(sales): congelar playbook configurable para lanzamiento`.
 

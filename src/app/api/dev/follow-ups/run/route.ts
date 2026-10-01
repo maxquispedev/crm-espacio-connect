@@ -109,19 +109,47 @@ export const POST = withAuth(async (session, req: Request) => {
   }
 
   if (body.data.expire !== false) {
-    await db
-      .update(schema.salesFollowUpJob)
-      .set({ dueAt: now, updatedAt: now })
-      .where(
-        scoped(
-          schema.salesFollowUpJob.organizationId,
-          orgId,
-          eq(schema.salesFollowUpJob.status, "pending"),
-          body.data.leadId
-            ? eq(schema.salesFollowUpJob.leadId, body.data.leadId)
-            : undefined
+    await db.transaction(async (tx) => {
+      const jobs = await tx
+        .select()
+        .from(schema.salesFollowUpJob)
+        .where(
+          scoped(
+            schema.salesFollowUpJob.organizationId,
+            orgId,
+            eq(schema.salesFollowUpJob.status, "pending"),
+            body.data.leadId
+              ? eq(schema.salesFollowUpJob.leadId, body.data.leadId)
+              : undefined
+          )
         )
-      );
+        .for("update");
+      for (const job of jobs) {
+        await tx
+          .update(schema.salesFollowUpJob)
+          .set({ dueAt: now, updatedAt: now })
+          .where(
+            scoped(
+              schema.salesFollowUpJob.organizationId,
+              orgId,
+              eq(schema.salesFollowUpJob.id, job.id)
+            )
+          );
+        // Adelantar el reloj del arnés conserva el contrato job ↔ lead.
+        // Un job obsoleto no debe reemplazar un schedule distinto del lead.
+        await tx
+          .update(schema.lead)
+          .set({ nextFollowUpAt: now, updatedAt: now })
+          .where(
+            scoped(
+              schema.lead.organizationId,
+              orgId,
+              eq(schema.lead.id, job.leadId),
+              eq(schema.lead.nextFollowUpAt, job.dueAt)
+            )
+          );
+      }
+    });
   }
 
   const processed = await runDueFollowUps();

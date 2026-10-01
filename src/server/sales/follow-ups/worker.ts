@@ -99,32 +99,37 @@ export async function runDueFollowUps(): Promise<number> {
 }
 
 async function claimDueJobs(limit: number): Promise<FollowUpJob[]> {
-  const now = new Date();
-  const leaseCutoff = new Date(now.getTime() - CLAIM_LEASE_MS);
   const sql = getSql();
+  // El schema guarda timestamp sin zona en UTC. La lease debe poder volver
+  // por Date/Drizzle (precisión de milisegundos) sin perder su identidad.
   const rows = await sql<RawClaimedJob[]>`
     UPDATE sales_follow_up_job AS job
     SET
       status = 'processing',
-      claimed_at = ${now},
-      updated_at = ${now}
+      claimed_at = date_trunc('milliseconds', CURRENT_TIMESTAMP AT TIME ZONE 'UTC'),
+      updated_at = date_trunc('milliseconds', CURRENT_TIMESTAMP AT TIME ZONE 'UTC')
     WHERE job.id IN (
       SELECT id
       FROM sales_follow_up_job
-      WHERE due_at <= ${now}
+      WHERE due_at <= (CURRENT_TIMESTAMP AT TIME ZONE 'UTC')
         AND (
           status = 'pending'
           OR (
             status = 'processing'
             AND claimed_at IS NOT NULL
-            AND claimed_at < ${leaseCutoff}
+            AND claimed_at < (CURRENT_TIMESTAMP AT TIME ZONE 'UTC') - (${CLAIM_LEASE_MS}::double precision * INTERVAL '1 millisecond')
           )
         )
       ORDER BY due_at ASC
       LIMIT ${limit}
       FOR UPDATE SKIP LOCKED
     )
-    RETURNING job.*
+    RETURNING job.*,
+      job.due_at AT TIME ZONE 'UTC' AS due_at,
+      job.anchor_at AT TIME ZONE 'UTC' AS anchor_at,
+      job.claimed_at AT TIME ZONE 'UTC' AS claimed_at,
+      job.created_at AT TIME ZONE 'UTC' AS created_at,
+      job.updated_at AT TIME ZONE 'UTC' AS updated_at
   `;
   return rows.map(mapClaimedJob);
 }
