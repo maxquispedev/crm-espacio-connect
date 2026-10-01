@@ -23,6 +23,10 @@ const prefixes = {
   adAttribution: "adr",
   conversionEvent: "cev",
   capiSettings: "ccs",
+  /** 008 — Sales Playbook (config contenedor por organización). */
+  salesPlaybook: "sp",
+  /** 008 — Versión inmutable de un playbook (draft/published/archived). */
+  salesPlaybookVersion: "spv",
 } as const;
 
 export type IdKind = keyof typeof prefixes;

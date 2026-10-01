@@ -5,10 +5,21 @@
  */
 export async function register(): Promise<void> {
   if (process.env.NEXT_RUNTIME === "nodejs") {
-    const { cleanupOrphanRuns, startSalesFollowUpWorker } = await import(
-      "./instrumentation-node"
-    );
+    const {
+      cleanupOrphanRuns,
+      startSalesFollowUpWorker,
+      bootstrapAllEnabledOrgs,
+    } = await import("./instrumentation-node");
     await cleanupOrphanRuns();
+    // 008 — Sembrar el playbook V1 para todas las orgs con Sales
+    // Orchestrator activo. Best-effort: la BD puede no estar lista aún
+    // (migraciones corren antes del server, pero si fallan aquí se
+    // reintentará en el próximo arranque).
+    try {
+      await bootstrapAllEnabledOrgs();
+    } catch (err) {
+      console.error("[boot] playbook bootstrap falló:", err);
+    }
     startSalesFollowUpWorker();
   }
 }

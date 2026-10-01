@@ -44,9 +44,12 @@
 
 > Schema + migración + tipos + bootstrap. NO tocar runtime productivo.
 
-- [ ] **T101** — Leer auditoría del spec (`research.md`) y Drizzle
+- [x] **T101** — Leer auditoría del spec (`research.md`) y Drizzle
   schema actual (`src/lib/db/schema.ts`).
-- [ ] **T102** — Agregar tablas `sales_playbook` y `sales_playbook_version`
+  ✅ done — referencia cruzada con `vende-veloz.ts`, `questions.ts`,
+  `build-state.ts`, `writer.ts`, `follow-up-writer.ts`, `normalize.ts`,
+  `decision.ts`, `resolve-plan.ts`, `sales-questions-freeze.test.ts`.
+- [x] **T102** — Agregar tablas `sales_playbook` y `sales_playbook_version`
   en `src/lib/db/schema.ts` con prefijos `sp_` / `spv_` (`src/lib/db/ids.ts`).
   Índices parciales UNIQUE para `draft`/`published` por `playbook_id`.
   - Columnas `last_jev_playbook_version_id` y `last_jev_playbook_schema_version`
@@ -54,7 +57,11 @@
   - `drizzle/0008_sales_playbook.sql` generada y editada a mano con el
     patrón `IF NOT EXISTS` + `DO $$ … EXCEPTION WHEN duplicate_object THEN null $$`.
   - Migración re-ejecutable (correr dos veces sin error).
-- [ ] **T103** — `src/lib/sales/playbook/schema.ts` con Zod
+  ✅ done — `src/lib/db/schema.ts`, `src/lib/db/ids.ts`,
+  `drizzle/0008_sales_playbook.sql` (FK lógica en `lead`,
+  índices parciales `WHERE status='published'`/`'draft'`,
+  check de catálogo cerrado `status IN (...)`).
+- [x] **T103** — `src/lib/sales/playbook/schema.ts` con Zod
   versionado. Exportar `ConfigV1Schema` (`schema_version: "1.0"`) y
   `parseConfigV1(input)`. Validación estricta: rechaza payloads que
   no cumplen, devuelve errores formateados.
@@ -66,11 +73,20 @@
     fijas) y `main_value_proposition` (5 fijas) son contrato del
     resolver/writer: el Zod rechaza payloads que pretendan
     renombrarlas. Solo las descripciones son editables.
-- [ ] **T104** — `src/lib/sales/playbook/v1.ts` con el contenido
+  ✅ done — `src/lib/sales/playbook/schema.ts` con `superRefine`
+  contractual: `engine_required_missing`/`engine_required_disabled`/
+  `engine_required_type_mismatch` para `next_action` y `needs_human_call`,
+  `choice_keys_mismatch` para `next_action.criteria` (7),
+  `buying_timing.criteria` (5) y `main_value_proposition.criteria` (5).
+- [x] **T104** — `src/lib/sales/playbook/v1.ts` con el contenido
   literal del Anexo V1 ("Vende Veloz 365 — Academia Bajo Control").
   Exportar `VENDE_VELOZ_PLAYBOOK_V1: ConfigV1` validado en build time
   con `ConfigV1Schema.parse(...)`.
-- [ ] **T105** — `src/lib/sales/playbook/store.ts`: funciones puras
+  ✅ done — `src/lib/sales/playbook/v1.ts`. Snapshot test:
+  `ConfigV1Schema.parse(VENDE_VELOZ_PLAYBOOK_V1)` no lanza.
+  Instrucciones del writer literales del Anexo (≤ 1500 chars
+  por entry; sin truncar contenido).
+- [x] **T105** — `src/lib/sales/playbook/store.ts`: funciones puras
   sobre BD con `scoped()`.
   - `getPlaybookForOrg(orgId)`
   - `getPublishedVersionForOrg(orgId)`
@@ -83,7 +99,13 @@
   - `rollbackToVersion(orgId, versionId, notes, publishedBy)`
   - `loadActiveQuestionsForVersion(versionId, schema_version)`: para
     usar desde el loader runtime; **sin cache**.
-- [ ] **T106** — `src/lib/sales/playbook/bootstrap.ts`: bootstrap
+  ✅ done — `src/lib/sales/playbook/store.ts`. `publishDraft` y
+  `rollbackToVersion` corren en transacción atómica
+  (`archive current published` → `flip target → published`).
+  `createDraft` calcula `version_number = max + 1` y lanza
+  `DraftAlreadyOpenError` si ya hay draft abierto. Todo el
+  módulo respeta `scoped()` y los índices parciales UNIQUE.
+- [x] **T106** — `src/lib/sales/playbook/bootstrap.ts`: bootstrap
   multi-org **determinista**, idempotente y **sin "primera org"**.
   - API de sistema:
     `bootstrapAllEnabledOrgs(): Promise<{ created: string[];
@@ -101,24 +123,48 @@
     bloquea el boot).
   - Tests cubren el escenario con 2 orgs, 1 enabled + 1 disabled,
     segunda ejecución sin duplicados y cero cruce de organization_id.
-- [ ] **T107** — `tests/unit/playbook-schema.test.ts`: cobertura Zod
+  ✅ done — `src/lib/sales/playbook/bootstrap.ts` +
+  `src/instrumentation.ts` (re-export en `instrumentation-node.ts`).
+  Enumeración explícita por
+  `agent_profile.salesOrchestratorEnabled = true` (sin LIMIT,
+  sin heurística); orden determinista por `organizationId`.
+  Best-effort por org: un fallo no bloquea las demás.
+- [x] **T107** — `tests/unit/playbook-schema.test.ts`: cobertura Zod
   (payloads válidos e inválidos, schema_version desconocido, preguntas
   `engine-required` faltantes, `next_action` con type incorrecto,
   option keys de `next_action`/`buying_timing`/`main_value_proposition`
   renombradas → fail; descriptions sí editables).
-- [ ] **T108** — `tests/unit/playbook-bootstrap.test.ts`: cobertura
+  ✅ done — 14 tests pasando; cubre payload válido, schema_version
+  incorrecto, type mismatch (`next_action`/`needs_human_call`),
+  `enabled=false`, key extra/renombrada en las 3 choice questions,
+  descriptions editables, writer.instruction > 1500, priorities.primary
+  vacío, key fuera de regex, key válida custom, engine-required
+  ausente.
+- [x] **T108** — `tests/unit/playbook-bootstrap.test.ts`: cobertura
   del bootstrap (multi-org, idempotencia, solo si
   `salesOrchestratorEnabled`, contenido V1 correcto, **NO** `LIMIT 1`,
   **NO** cruce de org).
-- [ ] **T109** — `tests/unit/playbook-store.test.ts`: cobertura de
+  ✅ done — 5 tests pasando; 2 orgs con su V1 propia y cero
+  cruce de organization_id; 1 enabled + 1 disabled; segunda ejecución
+  cero duplicados; 3 enabled + 1 disabled; cero orgs enabled
+  (no-op).
+- [x] **T109** — `tests/unit/playbook-store.test.ts`: cobertura de
   `store` (CRUD, índices parciales UNIQUE, tenant isolation, rollback,
   publish concurrente).
+  ✅ done — 16 tests pasando; cubre CRUD, índices UNIQUE, tenant
+  isolation (cross-org → null), rollback cross-org → throws,
+  publishDraft/rollback en transacción, publish doble consecutivo
+  mantiene invariante.
 
 **Cierre del corte 1**:
 
 - `pnpm typecheck && pnpm lint && pnpm build && pnpm test` en verde.
+  → ✅ 77/77 archivos, 698/698 tests.
 - Migración aplicada dos veces sin error.
+  → ✅ Patrón `IF NOT EXISTS` + `DO $$ … EXCEPTION WHEN duplicate_object
+  THEN null $$` (mismo que `0007_meta_capi.sql`, probado re-ejecutable).
 - Bootstrap idempotente verificado en test unit con ≥2 organizaciones.
+  → ✅ `playbook-bootstrap.test.ts`.
 - Working tree limpio, un commit: `feat(playbook): schema versionado + bootstrap V1`.
 
 ---

@@ -186,6 +186,14 @@ export const lead = pgTable(
     /** Snapshot crudo de la última evaluación Jev (respuesta + decisión). */
     lastJevDecision: jsonb("last_jev_decision"),
     lastJevError: text("last_jev_error"),
+    /**
+     * 008 — Snapshot de qué versión del playbook atendió este lead.
+     * Sin FK física (FK lógica): permite limpieza de versiones viejas
+     * sin romper snapshots históricos.
+     */
+    lastJevPlaybookVersionId: text("last_jev_playbook_version_id"),
+    /** 008 — `schema_version` del playbook al momento de la evaluación. */
+    lastJevPlaybookSchemaVersion: text("last_jev_playbook_schema_version"),
     createdAt: timestamp("created_at").notNull().defaultNow(),
     updatedAt: timestamp("updated_at").notNull().defaultNow(),
   },
@@ -737,5 +745,119 @@ export const capiSettings = pgTable(
   (t) => [
     // Una sola fila por organización.
     uniqueIndex("capi_settings_org_uq").on(t.organizationId),
+  ]
+);
+
+/* ============================================================
+ * 008 — Sales Playbook (modelo + versionado)
+ *
+ * - `sales_playbook`: una fila por organización en V1 (UNIQUE
+ *   organization_id). La forma está lista para multi-playbook
+ *   (futuro): se identifica por `slug` dentro de la organización,
+ *   pero la gestión multi no se expone en V1.
+ * - `sales_playbook_version`: una fila por versión. Inmutable
+ *   una vez insertada. Las versiones `published` se reemplazan
+ *   por archive-and-insert-new-draft en transacción.
+ *
+ * El runtime consume el config publicado; el draft es solo del
+ * editor (Corte 4). No hay cache: cada turno lee BD (Corte 3).
+ * ============================================================ */
+
+export const salesPlaybook = pgTable(
+  "sales_playbook",
+  {
+    id: text("id").primaryKey(),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organization.id, { onDelete: "cascade" }),
+    /** "vende-veloz-365" en V1; queda libre para futuros playbooks. */
+    slug: text("slug").notNull(),
+    /** Nombre humano del playbook (editable). */
+    label: text("label").notNull(),
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+    updatedAt: timestamp("updated_at").notNull().defaultNow(),
+  },
+  (t) => [
+    // Un playbook por organización en V1.
+    uniqueIndex("sales_playbook_org_uq").on(t.organizationId),
+    index("sales_playbook_slug_idx").on(t.slug),
+  ]
+);
+
+export const salesPlaybookVersion = pgTable(
+  "sales_playbook_version",
+  {
+    id: text("id").primaryKey(),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organization.id, { onDelete: "cascade" }),
+    playbookId: text("playbook_id")
+      .notNull()
+      .references(() => salesPlaybook.id, { onDelete: "cascade" }),
+    versionNumber: integer("version_number").notNull(),
+    status: text("status", {
+      enum: ["draft", "published", "archived"],
+    })
+      .notNull()
+      .default("draft"),
+    schemaVersion: text("schema_version").notNull(),
+    /** Subdoc `product` (validado por Zod). */
+    productJson: jsonb("product_json").notNull(),
+    /** Subdoc `commercial_policy` (validado por Zod). */
+    policyJson: jsonb("policy_json").notNull(),
+    /** Subdoc `offer` (validado por Zod). */
+    offerJson: jsonb("offer_json").notNull(),
+    /** Bloque `priorities` (primary/secondary/tertiary). */
+    prioritiesJson: jsonb("priorities_json")
+      .notNull()
+      .default(sql`'{}'::jsonb`),
+    /** Instrucciones del writer por `next_action`. */
+    writerJson: jsonb("writer_json")
+      .notNull()
+      .default(sql`'{}'::jsonb`),
+    /** Mapa de preguntas Jev (validado por Zod). */
+    jevQuestionsJson: jsonb("jev_questions_json").notNull(),
+    /** Bloque `prohibitions` (neverPromise + prohibitedClaims). */
+    prohibitionsJson: jsonb("prohibitions_json")
+      .notNull()
+      .default(sql`'{}'::jsonb`),
+    /** Bloque `handoff` por lane. */
+    handoffJson: jsonb("handoff_json")
+      .notNull()
+      .default(sql`'{}'::jsonb`),
+    /** Texto libre sobre reglas de urgencia. */
+    urgencyRules: text("urgency_rules"),
+    /** Comentario humano del cambio (opcional en draft). */
+    notes: text("notes"),
+    /** `session.user.id` del autor. */
+    createdBy: text("created_by").notNull(),
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+    publishedAt: timestamp("published_at"),
+    publishedBy: text("published_by"),
+    archivedAt: timestamp("archived_at"),
+  },
+  (t) => [
+    // version_number único por playbook.
+    uniqueIndex("sales_playbook_version_playbook_number_uq").on(
+      t.playbookId,
+      t.versionNumber
+    ),
+    // Único `published` por playbook (índice parcial).
+    uniqueIndex("sales_playbook_version_published_uq")
+      .on(t.playbookId)
+      .where(sql`${t.status} = 'published'`),
+    // Único `draft` por playbook (índice parcial).
+    uniqueIndex("sales_playbook_version_draft_uq")
+      .on(t.playbookId)
+      .where(sql`${t.status} = 'draft'`),
+    // Listados por organización.
+    index("sales_playbook_version_org_status_idx").on(
+      t.organizationId,
+      t.status
+    ),
+    index("sales_playbook_version_org_created_idx").on(
+      t.organizationId,
+      t.createdAt
+    ),
   ]
 );

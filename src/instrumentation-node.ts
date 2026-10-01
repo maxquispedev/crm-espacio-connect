@@ -1,6 +1,12 @@
 import { eq } from "drizzle-orm";
 import { getDb, schema } from "@/lib/db";
 import { startSalesFollowUpWorker as startFollowUpWorker } from "@/server/sales/follow-ups/worker";
+import { bootstrapAllEnabledOrgs } from "@/lib/sales/playbook/bootstrap";
+
+// Re-export para que `instrumentation.ts` lo consuma en un solo
+// import dinámico (evita que el bundler edge intente resolver
+// dependencias de Node como `postgres`).
+export { bootstrapAllEnabledOrgs };
 
 /**
  * Limpieza al arranque (FR-034): corridas del Laboratorio que quedaron

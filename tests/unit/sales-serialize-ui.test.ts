@@ -23,6 +23,8 @@ function lead(over: Partial<Lead> = {}): Lead {
     lastJevEvaluatedAt: null,
     lastJevDecision: null,
     lastJevError: null,
+    lastJevPlaybookVersionId: null,
+    lastJevPlaybookSchemaVersion: null,
     createdAt: new Date("2026-01-01T00:00:00Z"),
     updatedAt: new Date("2026-01-01T00:00:00Z"),
     ...over,
