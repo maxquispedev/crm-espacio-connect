@@ -13,7 +13,7 @@ import { VENDE_VELOZ_OFFER } from "@/server/sales/vende-veloz";
 import { writeSalesReply } from "@/server/sales/writer";
 import { StageGatewayError, moveLeadStage } from "@/server/leads/stage-gateway";
 import { reportStageChangeOnMove } from "@/server/attribution/report-on-stage-change";
-import type { JevQuestions } from "@/server/sales/questions";
+import { JEV_SALES_QUESTIONS_V2, type JevQuestions } from "@/server/sales/questions";
 import type { OfferBlock, WriterInstructions } from "@/server/sales/writer";
 
 type Conversation = typeof schema.conversation.$inferSelect;
@@ -50,7 +50,8 @@ export type RunSalesOrchestratorTurnOptions = {
  * Jev no envía mensajes. El writer no decide. Efectos solo en servidor.
  *
  * Corte 3 — Runtime dinámico:
- *   - `built.playbook` carga el playbook publicado (sin cache).
+ *   - Lanzamiento V1: `built.playbook=null` en conversaciones reales.
+ *   - Sandbox/V2: carga el playbook publicado (sin cache).
  *   - Si llega `playbookOverride` y `is_test=true`, se sustituye por
  *     la versión solicitada (T306).
  *   - El set activo de preguntas se pasa al cliente Jev (T303).
@@ -104,8 +105,8 @@ export async function runSalesOrchestratorTurn(
   // T303 — Set activo: el motor solo envía a Jev las preguntas con
   // `enabled=true`. Mantiene el comportamiento por defecto (V2 con
   // todas habilitadas) cuando no hay playbook.
-  const jevQuestions: JevQuestions | undefined =
-    playbook?.config.jev_questions as JevQuestions | undefined;
+  const jevQuestions: JevQuestions =
+    (playbook?.config.jev_questions as JevQuestions | undefined) ?? JEV_SALES_QUESTIONS_V2;
 
   const jev = await evaluateJev({
     state: built.state,

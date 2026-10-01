@@ -1,5 +1,39 @@
 # CURRENT STATE — Espacio Connect
 
+**2026-10-01 — Hotfix de lanzamiento Vende Veloz.**
+Feature 008 preservada pero runtime configurable pospuesto a V2.
+Campaña inicial de Vende Veloz opera con estrategia hardcodeada conocida
+para reducir riesgo y salir a producción.
+
+`SALES_PLAYBOOK_RUNTIME_ENABLED=false`: conversaciones reales no cargan
+publicada; producto/policy/questions/offer y writer usan defaults conocidos.
+Auditoría `playbook_version_id`/schema/number y FK quedan null. Agent Profile,
+resolver, lanes, handoff, Meta attribution y CRM effects se conservan.
+Tablas, migraciones, datos, versiones, API/UI y Laboratorio preservados.
+V2 puede reactivar la constante en `src/server/sales/build-state.ts`.
+
+Verificación: typecheck, lint (0 errores, 3 warnings preexistentes), build y
+**817/817 tests en 89 archivos** verdes. Regresión con builder/orquestador/
+resolver reales cubre publicada V1 y cambio posterior, defaults completos,
+Meta Ads, perfil, lane, entrega, facts, scheduling y scope en dos tenants.
+Mutation check: reactivar la constante hace fallar la regresión.
+E2E comercial **22/22 checks verdes** contra copia local en localhost:3019,
+PostgreSQL efímero :55439 y mocks HTTP Jev/writer/Graph. Se capturaron payloads
+antes/después de publicar producto/policy/offer/questions/writer modificados;
+se observó outbound, auto_close, precio durable y auditoría null. Jev inválido
+registró error sin nuevo outbound (camino infeliz).
+
+**Pendiente E2E de entrega de follow-ups:** subset del arnés existente ejecutado,
+**16/26 checks**, con respuesta inicial y scheduling verdes. El tick devuelve
+500 por `ERR_INVALID_ARG_TYPE` al serializar `Date` en `claimDueJobs`
+(`src/server/sales/follow-ups/worker.ts:105`) en PostgreSQL local 18.4.
+Ese worker no cambia en este hotfix; envío, agotamiento por silencio y bloqueo
+por ventana cerrada NO quedan verificados. No se declara READY punta a punta.
+Siguiente paso exacto: investigar/reproducir este error del worker en un cambio
+separado y repetir el self-test de follow-ups; deploy del hotfix por flujo habitual
+no ejecutado aquí. Decisión comercial de congelar 008 debe sincronizarse en Obsidian.
+Commit único: `fix(sales): congelar playbook configurable para lanzamiento`.
+
 **Actualizado: 2026-10-01 — Hotfix productivo del Laboratorio comercial (Feature 008).**
 Una corrida REAL en modo Borrador terminó con score/judge pero con los tres
 `actual_*` vacíos. Causas confirmadas: runner sin lead (el orquestador retornaba

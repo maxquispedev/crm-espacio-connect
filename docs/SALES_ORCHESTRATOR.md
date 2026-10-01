@@ -1,5 +1,15 @@
 # Sales Orchestrator — contrato operativo
 
+**Contrato vigente de lanzamiento (2026-10-01):** Feature 008 congelada para V2.
+Con `SALES_PLAYBOOK_RUNTIME_ENABLED=false`, las conversaciones reales no leen ni
+aplican `sales_playbook_version`: el builder usa VENDE_VELOZ_PRODUCT y
+VENDE_VELOZ_COMMERCIAL_POLICY; Jev recibe JEV_SALES_QUESTIONS_V2; el writer usa
+VENDE_VELOZ_OFFER e instrucciones internas. FK/snapshot de versión quedan null.
+Agent Profile, resolver, lanes, handoff, follow-ups, Meta Ads y efectos CRM mantienen
+su implementación. Sandbox/configuración/API/UI/datos se preservan. Reactivar la
+constante restaura la lectura publicada en V2. Este contrato prevalece sobre las
+notas históricas de runtime dinámico abajo.
+
 Fuente durable de contexto para los siguientes commits.
 No es spec de implementación: congela decisiones. El código funcional aún no cambia.
 

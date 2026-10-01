@@ -30,6 +30,12 @@ import {
  */
 const warnedNoPlaybookOrgs = new Set<string>();
 
+/** Lanzamiento V1: estrategia conocida en conversaciones reales.
+ * Feature 008 se preserva para V2: reactivar esta constante restaura
+ * la lectura publicada. Laboratorio conserva su runtime configurable.
+ */
+export const SALES_PLAYBOOK_RUNTIME_ENABLED = false;
+
 /**
  * Solo para tests: limpia el set de orgs ya avisadas para que el
  * guard `warn-once-per-process` se pueda validar entre tests del
@@ -75,8 +81,8 @@ export type BuildJevSalesStateSuccess = {
   state: JevSalesState;
   persist: JevPersistTarget;
   /**
-   * Playbook cargado para este turno. `null` si no hay publicada
-   * (runtime cae a VENDE_VELOZ_* y emite warning una vez por proceso).
+   * Playbook cargado para este turno. `null` en lanzamiento real o sin publicada
+   * (VENDE_VELOZ_*; warning solo ante fallback configurable).
    * El orquestador usa esto para derivar:
    *   - `activeQuestions` (T303): preguntas con `enabled=true`.
    *   - `offer`, `writer.instructions` y `urgency_rules` para el
@@ -206,32 +212,36 @@ export async function buildJevSalesState(
     .limit(1);
   const adContext = toAdContext(adRows[0]);
 
-  // T302 — Playbook publicado (sin cache). Si el playbook existe, sus
+  // Lanzamiento: no consultar publicada para conversaciones reales.
+  // T302 queda preservado para sandbox/V2. Si el playbook existe, sus
   // bloques `product` y `commercial_policy` pisan los defaults
   // VENDE_VELOZ_*. Si no existe, fallback a los defaults y emitimos
   // warning una sola vez por proceso por organización.
   let playbook: LoadedPlaybookVersion | null = null;
-  try {
-    playbook = await getPublishedConfigForOrg(organizationId);
-  } catch (err) {
-    // Una fila publicada que no cumple ConfigV1 no debe tumbar el
-    // turno. Degradamos al default y registramos para diagnóstico.
-    if (!warnedNoPlaybookOrgs.has(organizationId)) {
+  const usePlaybook = SALES_PLAYBOOK_RUNTIME_ENABLED || convRow.conversation.isTest === true;
+  if (usePlaybook) {
+    try {
+      playbook = await getPublishedConfigForOrg(organizationId);
+    } catch (err) {
+      // Una fila publicada que no cumple ConfigV1 no debe tumbar el
+      // turno. Degradamos al default y registramos para diagnóstico.
+      if (!warnedNoPlaybookOrgs.has(organizationId)) {
+        warnedNoPlaybookOrgs.add(organizationId);
+        // eslint-disable-next-line no-console
+        console.warn(
+          `[sales] playbook publicado inválido en org=${organizationId}: ${(err as Error).message}. Fallback a VENDE_VELOZ_*.`
+        );
+      }
+      playbook = null;
+    }
+
+    if (!playbook && !warnedNoPlaybookOrgs.has(organizationId)) {
       warnedNoPlaybookOrgs.add(organizationId);
       // eslint-disable-next-line no-console
       console.warn(
-        `[sales] playbook publicado inválido en org=${organizationId}: ${(err as Error).message}. Fallback a VENDE_VELOZ_*.`
+        `[sales] sin playbook publicado en org=${organizationId}; fallback a VENDE_VELOZ_*.`
       );
     }
-    playbook = null;
-  }
-
-  if (!playbook && !warnedNoPlaybookOrgs.has(organizationId)) {
-    warnedNoPlaybookOrgs.add(organizationId);
-    // eslint-disable-next-line no-console
-    console.warn(
-      `[sales] sin playbook publicado en org=${organizationId}; fallback a VENDE_VELOZ_*.`
-    );
   }
 
   const productFromPlaybook: VendeVelozProduct = playbook

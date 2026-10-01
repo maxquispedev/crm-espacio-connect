@@ -896,3 +896,40 @@ NO empieces Corte 7.
   decisión de negocio; no requiere sincronización comercial en Obsidian.
 - Commit único: `fix(lab): ejecutar pipeline comercial real en sandbox`.
   Próximo paso: deploy habitual y repetir Draft productivo sin publicar V2.
+
+## Hotfix de lanzamiento — congelar runtime configurable (2026-10-01)
+
+- [x] HL1 — Desactivar carga publicada en conversaciones reales; preservar sandbox.
+- [x] HL2 — Regresiones defaults, publicación, Meta context, CRM y aislamiento.
+- [x] HL3 — Gates y self-test E2E happy/unhappy; registrar evidencia y pendientes.
+- [x] HL4 — CURRENT_STATE/doc de dominio y commit único solicitado; árbol limpio.
+
+### Evidencia y handoff del lanzamiento
+
+- Gates verdes: typecheck, lint (0 errores/3 warnings previos), build,
+  817 tests / 89 archivos. Se usó pnpm `--pm-on-fail=ignore` como en el
+  checkpoint previo, sin cambiar dependencias/lockfile.
+- Regresión nueva: `tests/unit/sales-launch-hardcoded.test.ts` ejecuta builder,
+  orquestador y resolver reales; valida defaults completos, publicada y nueva
+  versión disponible, Meta Ads, perfil, lane/facts/entrega, scheduling y scope
+  en dos tenants. Los tests configurables de builder quedan en is_test=true.
+- Mutation: activar la constante hace fallar esta regresión; restaurada false.
+- E2E comercial: 22/22 checks; PostgreSQL efímero 18.4 (:55439), copia local
+  (:3019), Graph/LLM/Jev mocks sin canal real. Published V1 → conversación real
+  → editar/publicar config distinta → nueva conversación: payloads Jev/writer
+  hardcodeados, outbound, auto_close, facts de precio, versión null. Jev inválido
+  → error durable sin outbound extra. Logs temporales:
+  `/tmp/sales-launch-runtime-e2e.log`, `/tmp/sales-launch-tests.log`,
+  `/tmp/sales-launch-mutation.log`.
+- [ ] E2E follow-ups completo pendiente: subset del arnés existente 16/26,
+  respuesta inicial y job durable verdes, tick 500 por serialización Date en
+  `claimDueJobs` (worker.ts:105, ERR_INVALID_ARG_TYPE). Worker intacto; no se
+  corrigió fuera del objetivo. Entrega/agotamiento/ventana cerrada no verificados.
+  Evidencia: `/tmp/sales-launch-e2e.log`. No READY punta a punta.
+- Decisión técnica: gate único en builder basado en isTest persistido, sin flag
+  de entorno ni cambios a schema, resolver, lanes, sender o follow-ups.
+- CURRENT_STATE y SALES_ORCHESTRATOR actualizados. Sincronizar en Obsidian la
+  decisión de negocio de congelar Feature 008 para V2.
+- Commit único: `fix(sales): congelar playbook configurable para lanzamiento`.
+  Siguiente paso: investigar Date del worker en cambio separado, repetir E2E
+  follow-ups y desplegar por flujo habitual. No deploy ejecutado en esta sesión.

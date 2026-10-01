@@ -601,3 +601,13 @@ follow-ups ni CAPI externos. Transcript y actuals se copian a agent_test_case
 antes del judge; limpieza en finally por cascada de contacto conserva el
 resultado durable. Pipeline excluye todos los contactos archivados. Expected
 manualmente nullable nunca oculta actual. Sin cambios al Playbook V1/V2.
+
+## Hotfix de lanzamiento — 2026-10-01 (decisión vigente)
+
+Feature 008 queda preservada y congelada para V2. En conversaciones reales,
+el runtime ignora toda versión publicada y usa VENDE_VELOZ_PRODUCT,
+VENDE_VELOZ_COMMERCIAL_POLICY, VENDE_VELOZ_OFFER, JEV_SALES_QUESTIONS_V2
+y writer defaults. La auditoría de versión queda null. Agent Profile,
+resolver, lanes, handoff, follow-ups, atribución y efectos CRM continúan.
+Sandbox conserva su implementación. No se eliminan datos, API, UI ni migraciones.
+Esta decisión reemplaza temporalmente el contrato de runtime dinámico anterior.

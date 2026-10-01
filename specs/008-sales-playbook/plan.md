@@ -540,3 +540,13 @@ estén verdes.
 
 Constitution Check: tenant scope obligatorio; sin nuevas dependencias/schema,
 sender único con barrera sandbox existente; cero cambios comerciales.
+
+## Hotfix de lanzamiento — 2026-10-01
+
+Cambio mínimo: constante SALES_PLAYBOOK_RUNTIME_ENABLED=false en el builder;
+solo cargar publicada cuando la constante esté activa o conversation.isTest=true.
+El orquestador usa explícitamente JEV_SALES_QUESTIONS_V2 sin playbook; writer
+ya cae a oferta e instrucciones hardcodeadas. Reactivar la constante en V2
+restaura el runtime configurable. No modificar Laboratorio.
+Constitution Check: tenant scoped intacto, sin nuevas dependencias/secretos,
+sin cambios al sender/idempotencia/schema; verificar gates y E2E happy/unhappy.
