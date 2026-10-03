@@ -1135,3 +1135,69 @@ abrir spec SDD nuevo y extraer config alrededor del núcleo reusable.
 - no crear SaaS/billing/provisioning prematuro;
 - no campañas masivas/analytics avanzado sin spec y necesidad real;
 - no afirmar E2E verde si no se ejecutó.
+
+---
+
+## 13. Bootstrap feature 009 — Playbook Runtime Admin (este commit)
+
+Abre `specs/009-playbook-runtime-admin/` para convertir la infraestructura de
+la Feature 008 en **configuración comercial real de producción**: editar y
+publicar pricing, oferta, política, writer y preguntas Jev **sin redeploy**.
+
+**Este commit es solo bootstrap documental. Cero código productivo modificado y
+el runtime intacto.**
+
+### Qué ya resuelve la 008 (y esta feature NO reconstruye)
+
+`sales_playbook` + `sales_playbook_version`, `ConfigV1` + Zod con guardarraíles
+Jev, draft/validate/publish/rollback/historial, loader **sin cache**, bootstrap
+multi-org, Laboratorio Published vs Draft, override restringido a `is_test`,
+tenant isolation, auditoría de versión y fallback hardcodeado.
+
+### Los tres cerr gaps
+
+1. **Corte 1 — Editor técnico JSON.** La UI por formularios
+   (`playbook-draft-editor.tsx`, `jev-questions-editor.tsx`) se sustituye por dos
+   textareas JSON técnicos. La regla histórica *"NO JSON crudo"* queda
+   **SUPERSEDED** para esa pestaña: su único usuario real es un administrador
+   técnico. Sin dependencias nuevas (nada de Monaco/CodeMirror) y **sin tocar
+   producción**.
+2. **Corte 2 — Baseline comercial vigente.** La oferta en código es la anterior
+   (`setup 497`, `monthlyBase 197`); la decisión vigente es **`0` + `S/247/mes`**,
+   50 alumnos incluidos y `+S/1` desde el 51. **El runtime sigue apagado en todo
+   este corte** y un test lo verifica. La estrategia de Jev V1 se expresa en el
+   **bootstrap del playbook** (`v1.ts`), **no** en `questions.ts`, que está
+   hash-frozen contra un blob upstream validado.
+3. **Corte 3 — Runtime publicado.** Enciende
+   `SALES_PLAYBOOK_RUNTIME_ENABLED` (`src/server/sales/build-state.ts:37`) para
+   que las conversaciones reales consuman la **Published** de su organización.
+   Aislado y reversible en una línea. **Este es el interruptor de producción.**
+
+### Estado real en el código base
+
+| Hecho | Ubicación |
+|---|---|
+| Interruptor en `false` | `src/server/sales/build-state.ts:37` |
+| Loader sin cache | `src/lib/sales/playbook/loader.ts` |
+| Override solo en `is_test` | `src/server/sales/orchestrator.ts:78` |
+| Oferta vigente en código `497`/`197` | `src/server/sales/vende-veloz.ts` |
+| Hueco ejecutable: `writer.ts` emitiría "S/0" con `setup = 0` | `src/server/sales/writer.ts:211` |
+| `sales-launch-hardcoded.test.ts` **afirma hoy el congelamiento** | hay que invertirlo en el corte 3 |
+
+### Cómo ejecutar
+
+```bash
+./scripts/ai/run-playbook-runtime-admin.sh            # desde el corte 1
+START_CUT=2 ./scripts/ai/run-playbook-runtime-admin.sh  # reanudar
+```
+
+Logs en `.ai/logs/playbook-runtime-admin/`. Si un corte falla a mitad, **no
+resetear ni descartar**: relanzar ese mismo corte en una sesión nueva y reanudar
+con `START_CUT=N+1`.
+
+### Done criteria
+
+Los tres cortes verdes, un commit cada uno, árbol limpio, y **evidencia E2E de los
+escenarios A–H** de `specs/009-playbook-runtime-admin/spec.md` §4 — incluido el
+hot-switch y el rollback **sin redeploy**. **Sin esa evidencia no se dice READY.**
+
