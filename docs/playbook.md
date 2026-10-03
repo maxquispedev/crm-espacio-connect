@@ -337,11 +337,68 @@ libertad total: crearlas, desactivarlas, renombrarlas, duplicarlas y eliminarlas
 
 ---
 
+## Prueba rápida (dentro de Comercial / Jev)
+
+La columna de la derecha de **Comercial / Jev** es la **Prueba rápida**: pegas
+una conversación, pulsas **Ejecutar** y ves qué haría el agente, sin salir de la
+pantalla. Es el atajo para "cambié una instrucción → ¿qué haría ahora?".
+
+**No es un motor aparte.** Corre por el **mismo** pipeline comercial sandbox que
+el Laboratorio, así que lo que ves aquí es lo que hace el agente de verdad, no
+una simulación. Por eso el resultado no es inventado: si el proveedor falla, te
+lo dice.
+
+### Cómo se usa
+
+1. Pega la conversación del lead en el área de texto, como array JSON:
+   `[{"from":"lead","text":"Hola, quiero información"}]`
+   (también acepta `["hola", "y el precio?"]`). Máximo 20 líneas.
+2. Elige **`Probar: [ Draft ▼ ]`**: `Draft` (lo guardado sin publicar) o
+   `Published` (lo que está en producción hoy).
+3. Pulsa **Ejecutar**. Verás `next_action`, `lane`, `needs_human_call`,
+   `handoff`, la versión que corrió, la **Respuesta** que escribió el agente, y
+   un `[Ver JSON completo]` con el detalle de Jev.
+
+### Reglas que conviene conocer
+
+| Regla | Por qué |
+|---|---|
+| **Guarda antes de probar.** Si tienes cambios sin guardar, sale el aviso *"Estás probando el último draft guardado. Guarda los cambios para probarlos."* | La prueba usa la versión **guardada en la base de datos**, no lo que estás escribiendo. El endpoint no acepta el documento del playbook: es imposible probar algo que no publicaste ni guardaste. |
+| **Sin draft, Draft no aparece** y se prueba `Published`. | No hay nada que probar en Draft si no existe. Y `mode: both` no aplica aquí: esa comparación vive en el Laboratorio. |
+| **Una ejecución por clic.** | Cada ejecución crea un caso sandbox propio y lo borra al terminar. |
+| **Cero efectos reales.** | Las conversaciones son `is_test`: no se envía nada a WhatsApp, no se programan seguimientos y no queda ninguna fila al terminar. |
+| **Necesita una etapa de pipeline abierta** en tu organización. | Es el mismo requisito del Laboratorio. Sin ella, te lo dice en vez de devolver un resultado vacío. |
+
+### Si da error
+
+Los errores se muestran como errores, nunca como respuesta:
+
+| Código | Qué significa | Qué hacer |
+|---|---|---|
+| `draft_not_found` | Pediste Draft pero no hay ninguno guardado. | Guarda el draft, o prueba `Published`. |
+| `published_not_found` | No hay ninguna versión publicada. | Publica un draft primero. |
+| `no_open_stage` | Tu organización no tiene ninguna etapa de pipeline abierta. | Abre una etapa en el pipeline. |
+| `ai_not_configured` | Falta configurar el proveedor de IA. | Configúralo en el entorno. |
+| `jev_failed` | El proveedor de decisión falló (o no respondió a tiempo). | Reintenta; si persiste, es un problema del proveedor, no del playbook. |
+| `no_writer_output` | Hubo decisión pero el escritor no produjo texto. | Suele ser una instrucción del `writer` demasiado restrictiva. |
+| `no_decision` | El turno no produjo ninguna decisión. | Reintenta con una conversación un poco más explícita. |
+| `invalid_body` | La conversación pegada no es válida. | Revisa el JSON: 1–20 líneas, cada una `{"from":"lead","text":"…"}`. |
+
+> Cuando algo falla, la Prueba rápida **no** te muestra una respuesta inventada.
+> Esa es justo la diferencia con una simulación.
+
+Para la evaluación completa (cohortes de personas, score, comparación
+Published vs Draft, outcomes esperados) sigue estando el **Laboratorio**: el
+enlace "Abrir Laboratorio completo" vive al pie de la Prueba rápida.
+
+---
+
 ## Cómo correr el laboratorio comercial
 
 El Laboratorio es tu banco de pruebas: antes de publicar un cambio relevante,
-lo pruebas. La pestaña **Comercial / Jev** tiene un botón **Abrir el Laboratorio**
-justo encima de los editores, para que no tengas que buscarlo en el menú.
+lo pruebas. La **Prueba rápida** de la pestaña **Comercial / Jev** resuelve el
+caso puntual, y su enlace "Abrir Laboratorio completo" te lleva aquí para la
+evaluación completa.
 
 En el Laboratorio eliges en qué versión quieres correr la evaluación (selector
 **Playbook**) y pulsas **Correr evaluación**.

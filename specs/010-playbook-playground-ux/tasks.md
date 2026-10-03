@@ -35,8 +35,8 @@
 - [x] Artefactos: `spec.md`, `plan.md`, `research.md`, `tasks.md`,
       `contracts/playground-ui.md`, `contracts/playground-preview-api.md`.
 - [x] Runner + 3 prompts de corte.
-- [x] **Corte 1 cerrado** (evidencia real al final de su sección).
-- [ ] **Corte 2 sin empezar** (sigue pendiente).
+- [x] Corte 1 cerrado (evidencia real al final de su sección).
+- [x] **Corte 2 cerrado** (evidencia real al final de su sección).
 
 ## Corte 1 — Simplificar Comercial / Jev + fix de Publicar
 
@@ -223,85 +223,99 @@ invoca la **misma** función que el Laboratorio. Diseño en
 
 ### 2.1 Extraer el andamiaje compartido
 
-- [ ] Crear el helper de sandbox (p. ej. `src/server/lab/sandbox-case.ts`) a
-      partir de `runner.ts:410-444`: contacto archivado + lead en el primer
-      stage abierto + conversación `isTest: true`.
-- [ ] **Mover, no reescribir.** `runConversation` debe seguir haciendo lo
-      mismo, ahora vía el helper.
-- [ ] `tests/unit/lab-pipeline-real.test.ts` **verde sin cambios**. Si hay que
-      tocarlo, es que el movimiento cambió comportamiento: parar y revisar.
-- [ ] El helper devuelve el snapshot crudo; cada consumidor proyecta lo suyo
-      (el Lab sigue con sus 3 escalares).
+- [x] Creado `src/server/lab/sandbox-case.ts` a partir de `runner.ts:410-444`:
+      contacto archivado + lead en el primer stage abierto + conversación
+      `isTest: true, aiEnabled: true`, más `cleanupSandboxCase`.
+- [x] **Movido, no reescrito.** `runConversation` conserva su bucle, su orden y
+      sus resultados; ahora crea el caso vía el helper y proyecta sus 3
+      escalares desde `readSandboxSnapshot` (el helper devuelve el snapshot
+      crudo; el Laboratorio y el preview proyectan distinto).
+- [x] `tests/unit/lab-pipeline-real.test.ts` **verde sin cambios** (18/18). El
+      archivo no se tocó; ver la evidencia abajo.
+- [x] Los errores `lab_sales_open_stage_not_found` / `lab_sales_lead_not_created`
+      se conservan como mensajes literales (ahora en clases tipadas), porque
+      el test del Laboratorio los afirma.
 
 ### 2.2 Endpoint de preview
 
-- [ ] `POST /api/lab/preview` con `withAuth`; `organizationId` de la sesión,
-      nunca del body.
-- [ ] Zod en el borde: `mode` (`draft`|`published`, default `published`) y
-      `conversation` (1..20 × `{ from: "lead", text }`), con tope de longitud.
-- [ ] Resolver la versión con la función de loader del Lab, scopeada por org.
-- [ ] Crear caso sandbox → un turno por línea con
-      `runSalesOrchestratorTurn` (con `playbookOverride` **solo** en Draft) →
-      leer `lead.lastJevDecision` + mensajes `out` → **leer antes** del cleanup
-      → `finally` de limpieza.
-- [ ] Respuesta: `jev` (decisión completa) + `plan` (lane, next_action,
-      should_handoff, stage) + `writer.text` + `playbook` (versión, schema,
-      Draft|Published) + `turns`.
-- [ ] Mover el `break` por handoff: copia el comportamiento del Lab, no lo
-      inventes.
+- [x] `POST /api/lab/preview` con `withAuth`; `organizationId` de la sesión
+      (`const organizationId = session.organizationId`), nunca del body.
+- [x] Zod en el borde: `mode` (`draft`|`published`, default `published`) y
+      `conversation` (1..20 × `{ from: literal "lead", text 1..2000 }`).
+- [x] Versión resuelta con `getDraftConfigForOrg` / `getPublishedConfigForOrg` —
+      **las mismas funciones de loader que usa el Lab**, scopeadas por la org de
+      la sesión.
+- [x] Caso sandbox → un turno por línea con `runSalesOrchestratorTurn`
+      (`playbookOverride` **solo** en Draft) → lee `lead.lastJevDecision` y los
+      mensajes `out` → **`finally` de limpieza**.
+- [x] Respuesta: `jev` (8 señales completas) + `plan` (lane, next_action,
+      should_handoff, stage_id, stage_name) + `writer.text` + `playbook` +
+      `turns`.
+- [x] Corte por handoff copiado del Lab (`if (handoffAt) break`), no inventado.
 
 ### 2.3 Errores honestos
 
-- [ ] `draft_not_found` (409) sin fallback silencioso a published.
-- [ ] `published_not_found`, `no_open_stage`, `no_decision`,
-      `no_writer_output`, `ai_not_configured`, `jev_failed` (timeout/5xx/formato).
-- [ ] **Un fallo del proveedor nunca se convierte en respuesta ficticia.**
-- [ ] `detail` saneado, sin secretos.
+- [x] `draft_not_found` (409) sin fallback a published. `published_not_found`
+      (409), `no_open_stage` (409), `no_decision` (502), `no_writer_output`
+      (502), `ai_not_configured` (503), `jev_failed` (502), `invalid_body` (400).
+- [x] **Un fallo del proveedor nunca se convierte en respuesta ficticia:** si el
+      orquestador persiste `lastJevError` sin snapshot, se responde 502
+      `jev_failed` y NO se inventan `jev`/`writer`.
+- [x] `detail` saneado: seStrip tokens largos y URLs, se corta a 300 chars.
 
 ### 2.4 UI de la prueba rápida
 
-- [ ] Columna derecha en desktop; debajo del editor en pantalla estrecha.
-- [ ] Entrada: `textarea` monoespaciado con la conversación pegada. Default
-      con una conversación de ejemplo, para no arrancar en blanco.
-- [ ] Selector `Probar: [ Draft ▼ ]` con Draft/Published. Sin draft → Draft
-      deshabilitado y Published por defecto.
-- [ ] Botón `Ejecutar`: una sola ejecución por clic.
-- [ ] Salida compacta: resumen humano (`next_action`, `lane`, `human`) +
-      `Respuesta` + `[Ver JSON completo]` plegable. Sin cards enormes.
-- [ ] Con `dirty`: aviso **"Estás probando el último draft guardado. Guarda los
-      cambios para probarlos."**
-- [ ] Enlace pequeño "Abrir Laboratorio completo" → `/lab`.
+- [x] Columna derecha en desktop (`lg:grid-cols-[minmax(0,1fr)_360px]`), debajo
+      del editor en pantalla estrecha.
+- [x] `textarea` monoespaciado con la conversación de ejemplo por defecto.
+- [x] Selector `Probar: [ Draft ▼ ]`; sin draft → Draft `disabled` y Published
+      por defecto. `both` no existe en el endpoint.
+- [x] `Ejecutar`: una sola ejecución por clic (`if (running) return` + `disabled`).
+- [x] Salida compacta: `dl` con `next_action`, `lane`, `needs_human_call`,
+      `handoff`, versión y turnos + `Respuesta` + `[Ver JSON completo]` plegable.
+- [x] Con `dirty`, el aviso **"Estás probando el último draft guardado. Guarda
+      los cambios para probarlos."** (`dirty` sube del editor por callback).
+- [x] Enlace "Abrir Laboratorio completo" → `/lab` (C2-9). `/lab` intacto.
 
 ### 2.5 El endpoint no acepta JSON local
 
-- [ ] El body **no** admite el documento del playbook. La versión probada se
-      resuelve en BD. Esto es lo que hace imposible "probé algo que no
-      publiqué".
+- [x] El body no admite el documento del playbook; la versión se resuelve en
+      BD. Hay un test que manda `config`/`version_id` extras y afirma que la
+      versión ejecutada sigue siendo la persistida.
 
 ### 2.6 Las 10 demostraciones (tests)
 
-- [ ] 1. `published` usa la publicada de la org.
-- [ ] 2. `draft` usa el draft de la org.
-- [ ] 3. Org A nunca lee draft/published de org B.
-- [ ] 4. `is_test`/sandbox: cero llamadas al remitente real.
-- [ ] 5. Cero follow-ups productivos.
-- [ ] 6. Devuelve `jev`, `plan` y `writer.text` con contenido real.
-- [ ] 7. Fallo del proveedor → error, no respuesta.
-- [ ] 8. Draft inexistente → `draft_not_found` explícito.
-- [ ] 9. Cambio local sin guardar **no** se usa.
-- [ ] 10. **Estructural**: preview y `runConversation` importan el mismo
-        helper, y el preview invoca `runSalesOrchestratorTurn`.
+- [x] 1. `published` usa la publicada de la org. → `lab-preview-api.test.ts`
+- [x] 2. `draft` usa el draft de la org. → ídem
+- [x] 3. Org A nunca lee draft/published de org B (+ 3b: el body no puede pedir
+      una versión de otra org). → ídem
+- [x] 4. `is_test`/sandbox: cero llamadas al remitente real. → ídem
+- [x] 5. Cero follow-ups productivos. → ídem
+- [x] 6. Devuelve `jev`, `plan` y `writer.text` con contenido real (+ 6b: corte
+      por handoff). → ídem
+- [x] 7. Fallo del proveedor → error, no respuesta (+ 7b `no_decision`, 7c
+      `no_writer_output`). → ídem
+- [x] 8. Draft inexistente → `draft_not_found` explícito (+ 8b
+      `published_not_found`, 8c `no_open_stage`). → ídem
+- [x] 9. Cambio local sin guardar **no** se usa (+ 9b Zod, 9c IA). → ídem
+- [x] 10. **Estructural**: preview y `runConversation` importan el **mismo**
+      helper, y el preview invoca `runSalesOrchestratorTurn`. →
+      `lab-preview-structural.test.ts`
 
 ### 2.7 Verificación del corte
 
-- [ ] `pnpm typecheck && pnpm lint && pnpm build && pnpm test`.
-- [ ] E2E: **Sección 019** (preview Published y Draft, aislamiento de org,
-      cero efectos, y los caminos infelices).
-- [ ] Si se ejecuta: `pnpm test:e2e` con `WA_MOCK_ENABLED=true`. Si no:
-      dejarlo escrito aquí, sin declararlo.
-- [ ] `/lab` sigue funcionando como Laboratorio completo.
-- [ ] `docs/playbook.md` (sección de la Prueba rápida) y `docs/CURRENT_STATE.md`.
-- [ ] Commit único + árbol limpio.
+- [x] `pnpm typecheck && pnpm lint && pnpm build && pnpm test` → **verde**
+      (ver evidencia).
+- [x] E2E: arnés extendido con la **Sección 019** (A published/draft + B
+      aislamiento + C cero efectos + D caminos infelices) + su dispatch en
+      `main()`. Parsea con `node --check`.
+- [ ] **`pnpm test:e2e` NO se ejecutó.** Este entorno no tiene app levantada
+      (`localhost:3000` sin conexión), ni Docker, ni `psql`. La Sección 019
+      parsea pero **no se ha corrido**: no se declara verde.
+- [x] `/lab` sigue funcionando como Laboratorio completo: `/api/lab/runs`
+      intacto y `lab-pipeline-real.test.ts` verde sin cambios.
+- [x] `docs/playbook.md` y `docs/CURRENT_STATE.md` actualizados.
+- [x] Commit único + árbol limpio.
 
 ## Dependencias
 
@@ -311,15 +325,110 @@ invoca la **misma** función que el Laboratorio. Diseño en
 - El corte 2 depende de que el andamiaje del Lab siga siendo extraíble: por
   eso 2.1 va **antes** que 2.2.
 
+### Evidencia real (Corte 2)
+
+Fecha: 2026-10-03 · Base: `55b043a` · Commit: `feat(playbook): añadir prueba rápida sandbox`
+
+**1. La extracción no movió al Laboratorio (la señal que exige el plan).**
+`tests/unit/lab-pipeline-real.test.ts` se ejecutó justo después de mover el
+andamiaje, **sin tocar el archivo**:
+
+```
+$ pnpm vitest run tests/unit/lab-pipeline-real.test.ts
+  ✓ tests/unit/lab-pipeline-real.test.ts (18 tests) 522ms
+  Test Files  1 passed (1)
+  Tests  18 passed (18)
+```
+
+Los 18 tests de `lab-pipeline-real.test.ts` son los originales: el archivo
+figura **sin modificar** en el `git diff` de este commit.
+
+**2. Gate completo** (orden del repo, sin saltos):
+
+```
+$ pnpm typecheck   → tsc --noEmit, sin salida
+$ pnpm lint        → 0 errors, 3 warnings (los 3 preexistentes: no-img-element
+                     y dos unused eslint-disable)
+$ pnpm build       → ✓ Compiled successfully in 6.2s
+$ pnpm test        → Test Files 96 passed (96)
+                     Tests     937 passed (937)
+```
+
+**3. Los 40 tests nuevos, en 3 archivos:**
+
+| Archivo | Tests | Qué ata |
+|---|---|---|
+| `tests/unit/lab-preview-api.test.ts` | 19 | demostraciones 1–9 del endpoint (BD en memoria con predicados `eq`/`and` evaluables, scope real por `organization_id`) |
+| `tests/unit/lab-preview-structural.test.ts` | 7 | demostración 10: el preview y el Lab importan el **mismo** helper, el preview invoca `runSalesOrchestratorTurn`, y **ninguno** reimplementa build-state / Jev / writer / resolve-plan / sendText / Graph |
+| `tests/unit/playbook-quick-preview.test.ts` | 14 | la UI real renderizada a markup (`renderToStaticMarkup`, sin jsdom): selector Draft/Published, aviso de `dirty`, parseo del guion y sus límites |
+
+937 − 897 (corte 1) = **40**. Coincide.
+
+**4. Las 10 demostraciones, una por una**, con dónde se prueba:
+
+| # | Demostración | Test | Qué se afirma |
+|---|---|---|---|
+| 1 | `published` usa la publicada de la org | `1.` | `getPublishedConfigForOrg(ORG_A)`; la respuesta trae `version_id` de BD; y el turno va **sin** override (`{}`), para no disparar T306 |
+| 2 | `draft` usa el draft de la org | `2.` | `getDraftConfigForOrg(ORG_A)`; `playbookOverride.versionId` = draft persistido |
+| 3 | Org A nunca lee draft/published de org B | `3.`, `3b.` | B ejecuta `pbv_draft_b`; desde A el draft de B da **409**, no un fallback. `3b`: un `version_id` en el body se ignora y `getConfigByVersionId` **no** se llama |
+| 4 | `is_test`/sandbox: cero llamadas al remitente real | `4.` | la conversación que recibe el orquestador es `isTest: true` (el interruptor de `delivery.ts:24-27`); `sendText` sin llamadas |
+| 5 | Cero follow-ups productivos | `5.` | `scheduleNextFollowUp` sin llamadas; `sales_follow_up_job` vacío |
+| 6 | Devuelve `jev`, `plan` y `writer.text` reales | `6.`, `6b.` | las 8 señales con `type`+valor, el plan completo, y el texto **leído** del mensaje `out`. `6b`: el guion corta en el primer handoff (`turns: 1` de 3 líneas) |
+| 7 | Fallo del proveedor → error, no respuesta | `7.`, `7b.`, `7c.` | 502 `jev_failed` y **cero** `jev`/`writer` en el body; `no_decision`; `no_writer_output` |
+| 8 | Draft inexistente → `draft_not_found` explícito | `8.`, `8b.`, `8c.` | 409 `draft_not_found` **y el pipeline ni corrió**; `published_not_found`; `no_open_stage` |
+| 9 | Cambio local sin guardar **no** se usa | `9.`, `9b.`, `9c.` | un `config` inyectado no altera la versión ejecutada; Zod rechaza array vacío, `mode: both`, `from: "agent"` y texto >2000; `ai_not_configured` 503 sin pipeline |
+| 10 | **Estructural**: no es un motor paralelo | `structural 1–7` | mismo helper en ambos ficheros; el preview llama a `runSalesOrchestratorTurn`; el runner ya **no** inserta contacto/conversación ni llama al stage-gateway (el andamiaje vive solo en el helper) |
+
+**5. Extra: el caso no deja filas ni cuando el proveedor revienta.** `10b` y
+`10c` del archivo de API: tras un `throw` del orquestador, `contact`,
+`conversation`, `lead` y `message` quedan **en cero** (limpieza en `finally`) y
+toda fila lleva la `organization_id` de la sesión.
+
+**6. E2E: no ejecutado, y no se declara.** Comprobado en este entorno:
+
+```
+APP:    000 no-conn  (curl http://localhost:3000/api/health)
+DOCKER: docker-unavailable
+PSQL:   no-psql
+```
+
+La Sección 019 es código muerto aquí: sirve de arnés para cuando haya app + BD,
+y por eso **no cuenta como verificación de este corte**. Parsea
+(`node --check scripts/e2e-selftest.mjs`).
+
+**7. Desviación consciente del contrato, y por qué.** El contrato anticipaba
+`plan.stage_slug`. El schema de `pipeline_stage` **no tiene columna `slug`**
+(solo `name`), así que la proyección honesta es `plan.stage_name`. Código y
+schema mandan sobre el documento; no se inventó un campo.
+
+**8. Lo que NO se tocó.** `git diff --stat` de este commit: `src/server/lab/`
+(el helper nuevo + el `runner` que lo consume), `src/app/api/lab/preview/`
+(nuevo), `src/components/agent/playbook/*`, `tests/unit/*`,
+`scripts/e2e-selftest.mjs`, `docs/*` y este archivo. **Intactos**:
+`orchestrator.ts`, `build-state.ts`, `writer.ts`, `resolve-plan.ts`, `client.ts`,
+el loader, `ConfigV1Schema`, option keys, `/api/lab/runs`, la UI del
+Laboratorio, follow-ups, WhatsApp, webhook, CAPI y el schema de BD. Cero
+dependencias nuevas.
+
+## Dependencias
+
+- **Corte 1 → Corte 2**: la prueba rápida vive en la pantalla que simplifica
+  el corte 1. El orden es fijo.
+
 ## Criterio de "feature lista"
 
-- [ ] Los dos cortes con su gate en verde y su commit.
-- [ ] La regla Publicar/`dirty` fijada por tests que fallaban antes.
-- [ ] La Prueba rápida devuelve decisión + plan + writer, en sandbox, con las 10
+- [x] Los dos cortes con su gate en verde y su commit.
+- [x] La regla Publicar/`dirty` fijada por tests que fallaban antes.
+- [x] La Prueba rápida devuelve decisión + plan + writer, en sandbox, con las 10
       demostraciones verdes.
-- [ ] `/lab` y el runtime publicado sin cambios de comportamiento.
-- [ ] `tasks.md` con evidencia real (comandos y resultados), sin afirmaciones
+- [x] `/lab` y el runtime publicado sin cambios de comportamiento.
+- [x] `tasks.md` con evidencia real (comandos y resultados), sin afirmaciones
       sin ejecutar.
+
+> **Pendiente que no se declara cerrado:** la Sección 019 del arnés E2E está
+> escrita pero **no ejecutada** (este entorno no tiene app, Docker ni `psql`).
+> El corte 2 queda con gate técnico verde + 937/937 tests, y el E2E como
+> verificación pendiente de corrida, tal como está escrito arriba.
 
 ## NO HACER
 

@@ -1,4 +1,4 @@
-import { asc, eq, isNotNull } from "drizzle-orm";
+import { asc, eq } from "drizzle-orm";
 import { getDb, schema } from "@/lib/db";
 import { newId } from "@/lib/db/ids";
 import { scoped } from "@/lib/db/tenant";
@@ -17,8 +17,12 @@ import {
   type Persona,
   type PersonaCohort,
 } from "@/server/lab/personas";
-import { createLeadInStage, findFirstOpenStage } from "@/server/leads/stage-gateway";
 import { runSalesOrchestratorTurn } from "@/server/sales/orchestrator";
+import {
+  cleanupSandboxCase,
+  createSandboxCase,
+  readSandboxSnapshot,
+} from "@/server/lab/sandbox-case";
 
 /**
  * Runner del Laboratorio (FR-030/FR-034): corrida en segundo plano DENTRO del
@@ -353,10 +357,7 @@ async function runAllCases(
     } finally {
       // FK cascade limpia lead/conversation/messages; la FK del resultado
       // durable es SET NULL y nunca borra agent_test_case.
-      await db.delete(schema.contact).where(scoped(
-        schema.contact.organizationId, organizationId,
-        eq(schema.contact.id, contactId), isNotNull(schema.contact.archivedAt)
-      ));
+      await cleanupSandboxCase({ organizationId, contactId });
     }
 
     done += 1;
@@ -407,40 +408,19 @@ async function runConversation(
 }> {
   const db = getDb();
 
-  // Contacto nuevo incluso para la misma persona/version en otra corrida.
-  await db.insert(schema.contact).values({
-    id: contactId,
-    organizationId,
-    phone: persona.phone,
-    waIdentity: `lab:${runId}:${testCaseId}`,
-    name: persona.contactName,
-    archivedAt: new Date(),
-  });
-
-  if (ctx.cohort === "sales") {
-    const stage = await findFirstOpenStage(organizationId);
-    if (!stage) throw new Error("lab_sales_open_stage_not_found");
-    // INSERT nuevo: todos los facts comerciales usan los defaults limpios
-    // del schema (auto, timestamps/snapshot null, followUpCount=0).
-    const created = await createLeadInStage({
-      organizationId,
-      contactId,
-      toStageId: stage.id,
-      position: 0,
-      actor: "system",
-      reason: "lab_sandbox",
-    });
-    if (!created.created) throw new Error("lab_sales_lead_not_created");
-  }
-
-  const convId = newId("conversation");
-  await db.insert(schema.conversation).values({
-    id: convId,
+  // Andamiaje del caso sandbox (Corte 2): contacto archivado + lead en el
+  // primer stage abierto (solo cohorte `sales`) + conversación `is_test`.
+  // Vive en `sandbox-case.ts` porque `POST /api/lab/preview` usa el MISMO
+  // helper: es lo que hace imposible que la prueba rápida sea un segundo motor.
+  const sandbox = await createSandboxCase({
     organizationId,
     contactId,
-    isTest: true,
-    aiEnabled: true,
+    waIdentity: `lab:${runId}:${testCaseId}`,
+    contactName: persona.contactName,
+    phone: persona.phone,
+    withLead: ctx.cohort === "sales",
   });
+  const convId = sandbox.conversationId;
 
   for (const line of persona.script) {
     const now = new Date();
@@ -523,25 +503,13 @@ async function readActualOutcome(
   organizationId: string,
   contactId: string
 ): Promise<ActualOutcome> {
-  const db = getDb();
-  const rows = await db
-    .select({
-      lane: schema.lead.automationLane,
-      decision: schema.lead.lastJevDecision,
-    })
-    .from(schema.lead)
-    .where(
-      scoped(
-        schema.lead.organizationId,
-        organizationId,
-        eq(schema.lead.contactId, contactId)
-      )
-    )
-    .limit(1);
-  const row = rows[0];
-  if (!row) return { nextAction: null, lane: null, handoff: null };
+  // El snapshot crudo lo trae el helper compartido (Corte 2); aquí se proyecta
+  // a los 3 escalares que el Laboratorio ya publicaba. Sin lead o sin snapshot
+  // → `null` en los tres (la UI lo muestra como "—", no como un fallo).
+  const snapshot = await readSandboxSnapshot({ organizationId, contactId });
+  if (!snapshot) return { nextAction: null, lane: null, handoff: null };
 
-  const plan = (row.decision as { plan?: unknown } | null)?.plan as
+  const plan = (snapshot.decision as { plan?: unknown } | null)?.plan as
     | {
         nextAction?: unknown;
         lane?: unknown;
@@ -552,7 +520,7 @@ async function readActualOutcome(
   return {
     nextAction:
       typeof plan?.nextAction === "string" ? plan.nextAction : null,
-    lane: typeof plan?.lane === "string" ? plan.lane : (row.lane ?? null),
+    lane: typeof plan?.lane === "string" ? plan.lane : snapshot.lane,
     handoff:
       typeof plan?.shouldHandoff === "boolean" ? plan.shouldHandoff : null,
   };

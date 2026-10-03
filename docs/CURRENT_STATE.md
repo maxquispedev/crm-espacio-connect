@@ -1,5 +1,63 @@
 # CURRENT STATE — Espacio Connect
 
+**Actualizado: 2026-10-03 — CORTE 2 del spec 010 CERRADO (Prueba rápida embebida).**
+Commit `feat(playbook): añadir prueba rápida sandbox`.
+
+**Qué cambió (observable)**: la pestaña **Comercial / Jev** tiene ahora una
+**Prueba rápida** en la columna derecha (debajo del editor en pantalla
+estrecha). Pegas una conversación, eliges `Probar: [ Draft | Published ]` y
+pulsas **Ejecutar**; devuelve `jev` (las 8 señales), `plan` (lane,
+next_action, should_handoff, stage) y la **Respuesta** que escribió el agente,
+con `[Ver JSON completo]` plegable. Contrato nuevo: **`POST /api/lab/preview`**.
+
+**La regla que gobierna el corte**: la prueba rápida **no es un segundo motor**.
+Reutiliza el andamiaje del Laboratorio y la **misma** función
+`runSalesOrchestratorTurn`. Para que eso no se degrade en promesa, el andamiaje
+se **extrajo** a `src/server/lab/sandbox-case.ts` (`createSandboxCase`,
+`cleanupSandboxCase`, `readSandboxSnapshot`, `readSandboxMessages`) y **los dos
+consumidores lo importan**: el `runConversation` del runner y el endpoint nuevo.
+El helper devuelve el snapshot crudo y cada consumidor proyecta lo suyo (el
+Laboratorio conserva sus 3 escalares; el preview, decisión + plan + writer).
+`tests/unit/lab-pipeline-real.test.ts` sigue **verde sin tocar el archivo**
+(18/18): esa es la prueba de que el Laboratorio no se movió.
+
+**Sandbox sin reimplementar guards.** `is_test=true` en la conversación es lo
+que ya activa `deliverReply` (persiste y vuelve **antes** de `sendText`), la
+supresión de follow-ups (`orchestrator.ts:212-220`), el override solo en
+sandbox (T306) y la auditoría de versión (T308). El preview no reimplementa
+ninguno: entra por la misma puerta. `organizationId` sale **siempre** de la
+sesión; el body **no** admite el documento del playbook, así que lo probado es
+exactamente lo guardado/publicado (semántica **Guardar → Probar**).
+
+**Errores honestos**: `invalid_body` 400 · `draft_not_found` 409 (sin fallback
+silencioso a published) · `published_not_found` 409 · `no_open_stage` 409 ·
+`ai_not_configured` 503 · `jev_failed` 502 · `no_decision` 502 ·
+`no_writer_output` 502. **Un fallo del proveedor nunca se convierte en una
+respuesta ficticia**, y el `detail` va saneado (sin tokens ni URLs).
+
+**Desviación consciente del contrato**: se anticipaba `plan.stage_slug`, pero
+`pipeline_stage` no tiene columna `slug` (solo `name`), así que la proyección
+honesta es `plan.stage_name`.
+
+**Gates**: `typecheck` + `lint` (0 errores; 3 warnings preexistentes) + `build`
+(`✓ Compiled successfully`) + **937/937 tests en 96 archivos** (40 nuevos en 3
+archivos: 19 del endpoint, **7 estructurales** que leen el código fuente y
+afirman el helper compartido y la ausencia de un motor paralelo, 14 de la UI
+renderizada a markup). **E2E NO ejecutado en este entorno**: no hay app
+levantada, ni Docker, ni `psql`. La **Sección 019** del arnés
+`scripts/e2e-selftest.mjs` está escrita y parsea (`node --check`), con su
+dispatch en `main()`, pero **no se ha ejecutado** y por tanto no se declara.
+
+**Intactos**: `/api/lab/runs`, la UI del Laboratorio, `orchestrator.ts`,
+`build-state.ts`, `writer.ts`, `resolve-plan.ts`, `client.ts`, el loader,
+`ConfigV1Schema`, option keys, runtime Published, follow-ups, WhatsApp, webhook,
+CAPI y el schema de BD. Cero dependencias nuevas.
+
+**Feature 010 completa** (corte 1 + corte 2), con el E2E de las Secciones 018 y
+019 pendiente de corrida en un entorno con app + BD.
+
+---
+
 **Actualizado: 2026-10-03 — CORTE 1 del spec 010 CERRADO (Comercial / Jev simplificado +
 bug de Publicar corregido).** Commit `refactor(playbook): simplificar Comercial Jev`.
 

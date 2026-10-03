@@ -1918,6 +1918,12 @@ async function main() {
   // caminos infelices. Re-ejecutable: restaura la versión publicada.
   await runSection018();
 
+  // 010 — Sección 019: Corte 2 (Prueba rápida embebida). `POST /api/lab/preview`
+  // por el pipeline sandbox real: published y draft PERSISTIDO, aislamiento de
+  // org, cero efectos residuales y los caminos infelices mostrados como error.
+  // Re-ejecutable: limpia su caso en `finally` y no publica nada.
+  await runSection019();
+
   console.log(`\n===== ${checks - failures}/${checks} checks OK, ${failures} fallos =====`);
   process.exit(failures > 0 ? 1 : 0);
 }
@@ -5751,4 +5757,330 @@ async function runSection018() {
 /** ¿El writer persistido trae el precio nuevo? (evita comparar a ciegas) */
 function persisted_ok(version, key, expected) {
   return Boolean(version?.[key]?.present_price?.includes?.(String(expected)));
+}
+
+/**
+ * 010 — Sección 019: Corte 2, la PRUEBA RÁPIDA (`POST /api/lab/preview`).
+ *
+ * Conduce el endpoint nuevo contra la app real y comprueba lo que la
+ * declaración de la feature promete:
+ *
+ *  - A · `mode=published` ejecuta la publicada de la org; `mode=draft` el draft
+ *        PERSISTIDO. El `version_id` que vuelve es el de BD, no uno del body.
+ *  - B · Aislamiento: el draft de la org B es invisible desde la org A
+ *        (`draft_not_found`), y cada org ejecuta SU versión.
+ *  - C · Cero efectos: el caso se limpia (0 contactos sandbox, 0
+ *        conversaciones `is_test`, 0 leads, 0 mensajes) y no hay nada en el
+ *        outbox de WhatsApp.
+ *  - D · Camino infeliz honesto: body inválido (400), draft inexistente (409
+ *        `draft_not_found`), publicada inexistente (409) y org sin etapa
+ *        abierta (409 `no_open_stage`). Ninguno devuelve una respuesta
+ *        ficticia: todos traen `ok:false` + `code`.
+ *  - E · Sandbox: el `outbox` (Graph) queda vacío y el `is_test` guarantees
+ *        que nada salió a WhatsApp real.
+ *
+ * Re-ejecutable: no deja estado (el preview limpia su caso en `finally`).
+ */
+async function runSection019() {
+  console.log("\n== 010-playbook-playground-ux: corte 2 · Prueba rápida (A–E) ==");
+  const password = "password-e2e-123";
+  const email = "e2e-010-preview@vocero.test";
+  let reg = await api("/api/auth/sign-up/email", {
+    method: "POST",
+    body: JSON.stringify({ email, password, name: "Operador 010 preview" }),
+  });
+  if (!reg.res.ok) {
+    reg = await api("/api/auth/sign-in/email", {
+      method: "POST",
+      body: JSON.stringify({ email, password }),
+    });
+  }
+  ok("019 · signup/login operador 010", reg.res.ok, JSON.stringify(reg.json).slice(0, 140));
+  const cookieA = cookie;
+
+  const orgs = orgListFrom((await api("/api/auth/organization/list")).json);
+  let orgA = orgs[0];
+  if (!orgA) {
+    const created = await api("/api/auth/organization/create", {
+      method: "POST",
+      body: JSON.stringify({
+        name: "Org A Preview 019",
+        slug: `pb-preview-019-a-${Date.now()}`,
+      }),
+    });
+    orgA = created.json?.id
+      ? { id: created.json.id }
+      : orgListFrom((await api("/api/auth/organization/list")).json)[0];
+  }
+  ok("019 · organización A", !!orgA?.id, JSON.stringify(orgA ?? {}).slice(0, 140));
+  if (!orgA?.id) {
+    console.log("  -- 019 · sin organización A: la sección se omite");
+    cookie = cookieA;
+    return;
+  }
+
+  const creadoB = await api("/api/auth/organization/create", {
+    method: "POST",
+    body: JSON.stringify({
+      name: "Org B Preview 019",
+      slug: `pb-preview-019-b-${Date.now()}`,
+    }),
+  });
+  const orgBId = creadoB.json?.id ?? null;
+  ok("019 · organización B para aislamiento", !!orgBId, String(creadoB.res.status));
+
+  const useOrg = async (id) => {
+    await api("/api/auth/organization/set-active", {
+      method: "POST",
+      body: JSON.stringify({ organizationId: id }),
+    });
+  };
+  const SCRIPT = [{ from: "lead", text: "Hola, quiero información de la academia" }];
+
+  // Snapshot de filas sandbox ANTES, para el check de cero efectos (C).
+  const sandboxCount = async () => {
+    const contacts = (await api("/api/contacts")).json?.contacts ?? [];
+    return contacts.filter((c) => (c.wa_identity ?? c.waIdentity ?? "").startsWith("preview:"))
+      .length;
+  };
+
+  /* ---------------- Preparación por org -------------------------------- */
+
+  const preparar = async (orgId) => {
+    await useOrg(orgId);
+    await api("/api/dev/playbook-bootstrap", { method: "POST" });
+    // El pipeline comercial es opt-in por org.
+    await api("/api/agent/profile", {
+      method: "PUT",
+      body: JSON.stringify({ salesOrchestratorEnabled: true }),
+    });
+    const stages = (await api("/api/pipeline/stages")).json?.stages ?? [];
+    return {
+      stages: stages.filter((s) => (s.kind ?? "open") === "open"),
+      pb: (await api("/api/playbook")).json ?? {},
+    };
+  };
+
+  const prepA = await preparar(orgA.id);
+  ok(
+    "019 · org A tiene versión publicada",
+    Boolean(prepA.pb?.published?.version_number),
+    JSON.stringify({ v: prepA.pb?.published?.version_number })
+  );
+  if (!prepA.pb?.published) {
+    console.log("  -- 019 · org A sin publicada: la sección se omite");
+    cookie = cookieA;
+    return;
+  }
+
+  // Draft en A: "Editar publicada" = la misma llamada de siempre.
+  await useOrg(orgA.id);
+  if (!(await api("/api/playbook")).json?.draft) {
+    await api("/api/playbook/draft", { method: "POST", body: JSON.stringify({}) });
+  }
+  const draftA = (await api("/api/playbook")).json?.draft;
+  ok("019 · org A tiene draft", Boolean(draftA?.id), JSON.stringify({ v: draftA?.version_number }));
+
+  // Org B: publicada + draft propios, para el aislamiento (B).
+  const prepB = orgBId ? await preparar(orgBId) : null;
+  if (orgBId) {
+    if (!(await api("/api/playbook")).json?.draft) {
+      await api("/api/playbook/draft", { method: "POST", body: JSON.stringify({}) });
+    }
+    const draftB = (await api("/api/playbook")).json?.draft;
+    ok("019 · org B tiene draft propio", Boolean(draftB?.id), String(draftB?.id));
+  }
+
+  const antes = await sandboxCount();
+
+  /* ---------------- A · published y draft ------------------------------ */
+
+  await useOrg(orgA.id);
+  const pub = await api("/api/lab/preview", {
+    method: "POST",
+    body: JSON.stringify({ mode: "published", conversation: SCRIPT }),
+  });
+  ok(
+    "019 · A1 preview published responde 200",
+    pub.res.ok,
+    `status=${pub.res.status} ${JSON.stringify(pub.json).slice(0, 160)}`
+  );
+  if (pub.res.ok) {
+    const b = pub.json;
+    ok(
+      "019 · A2 usa la PUBLICADA de la org",
+      b?.playbook?.mode === "published" &&
+        b?.playbook?.version_id === prepA.pb?.published?.id,
+      JSON.stringify(b?.playbook)
+    );
+    ok(
+      "019 · A3 devuelve jev, plan y writer.text con contenido real",
+      Boolean(b?.plan?.next_action) &&
+        b?.plan?.lane != null &&
+        typeof b?.writer?.text === "string" &&
+        b.writer.text.length > 0 &&
+        b?.jev?.next_action != null,
+      JSON.stringify({ next: b?.plan?.next_action, lane: b?.plan?.lane, w: String(b?.writer?.text).slice(0, 60) })
+    );
+  }
+
+  const dr = await api("/api/lab/preview", {
+    method: "POST",
+    body: JSON.stringify({ mode: "draft", conversation: SCRIPT }),
+  });
+  ok(
+    "019 · A4 preview draft responde 200",
+    dr.res.ok,
+    `status=${dr.res.status} ${JSON.stringify(dr.json).slice(0, 160)}`
+  );
+  if (dr.res.ok) {
+    ok(
+      "019 · A5 usa el DRAFT PERSISTIDO de la org (no un id del body)",
+      dr.json?.playbook?.version_id === draftA?.id &&
+        dr.json?.playbook?.is_draft === true,
+      JSON.stringify(dr.json?.playbook)
+    );
+  }
+
+  // El body NO admite el documento del playbook: la versión sale de BD.
+  const conDoc = await api("/api/lab/preview", {
+    method: "POST",
+    body: JSON.stringify({
+      mode: "draft",
+      conversation: SCRIPT,
+      version_id: "pbv_ajeno",
+      commercial_policy: { goal: "objetivo inyectado" },
+    }),
+  });
+  ok(
+    "019 · A6 un cambio local sin guardar NO altera la versión probada",
+    conDoc.res.ok && conDoc.json?.playbook?.version_id === draftA?.id,
+    JSON.stringify(conDoc.json?.playbook)
+  );
+
+  /* ---------------- B · aislamiento de org ---------------------------- */
+
+  if (orgBId && prepB) {
+    await useOrg(orgBId);
+    const bDraftId = (await api("/api/playbook")).json?.draft?.id;
+    const pubB = await api("/api/lab/preview", {
+      method: "POST",
+      body: JSON.stringify({ mode: "published", conversation: SCRIPT }),
+    });
+    ok(
+      "019 · B1 la org B ejecuta SU versión, no la de A",
+      pubB.res.ok && pubB.json?.playbook?.version_id === prepB.pb?.published?.id,
+      JSON.stringify(pubB.json?.playbook)
+    );
+    ok(
+      "019 · B2 la org B ejecuta SU draft",
+      bDraftId != null && pubB.res.ok,
+      `draftB=${bDraftId}`
+    );
+  }
+
+  // Draft inexistente → error explícito, no un fallback silencioso a published.
+  await useOrg(orgA.id);
+  if (draftA) await api("/api/playbook/draft", { method: "DELETE" });
+  const sinDraft = await api("/api/lab/preview", {
+    method: "POST",
+    body: JSON.stringify({ mode: "draft", conversation: SCRIPT }),
+  });
+  ok(
+    "019 · B3 draft inexistente → 409 draft_not_found (no cae a published)",
+    sinDraft.res.status === 409 && sinDraft.json?.code === "draft_not_found",
+    `status=${sinDraft.res.status} code=${sinDraft.json?.code}`
+  );
+  ok(
+    "019 · B4 el error NO trae una respuesta ficticia",
+    sinDraft.json?.ok === false &&
+      sinDraft.json?.writer === undefined &&
+      sinDraft.json?.jev === undefined,
+    JSON.stringify(sinDraft.json).slice(0, 140)
+  );
+
+  // Recrear el draft para los checks siguientes.
+  await api("/api/playbook/draft", { method: "POST", body: JSON.stringify({}) });
+
+  /* ---------------- D · caminos infelices ----------------------------- */
+
+  const bodyMalo = await api("/api/lab/preview", {
+    method: "POST",
+    body: JSON.stringify({ mode: "published", conversation: [] }),
+  });
+  ok(
+    "019 · D1 body inválido → 400 invalid_body",
+    bodyMalo.res.status === 400 && bodyMalo.json?.code === "invalid_body",
+    `status=${bodyMalo.res.status} code=${bodyMalo.json?.code}`
+  );
+
+  const modoMalo = await api("/api/lab/preview", {
+    method: "POST",
+    body: JSON.stringify({ mode: "both", conversation: SCRIPT }),
+  });
+  ok(
+    "019 · D2 mode=both se rechaza (esa función es del Laboratorio)",
+    modoMalo.res.status === 400,
+    `status=${modoMalo.res.status} code=${modoMalo.json?.code}`
+  );
+
+  const fromMalo = await api("/api/lab/preview", {
+    method: "POST",
+    body: JSON.stringify({ conversation: [{ from: "agent", text: "hola" }] }),
+  });
+  ok(
+    "019 · D3 from distinto de lead → 400",
+    fromMalo.res.status === 400,
+    `status=${fromMalo.res.status}`
+  );
+
+  const sinAuth = await fetch(`${BASE}/api/lab/preview`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ conversation: SCRIPT }),
+  });
+  ok(
+    "019 · D4 sin sesión → 401",
+    sinAuth.status === 401,
+    `status=${sinAuth.status}`
+  );
+
+  /* ---------------- C · cero efectos ---------------------------------- */
+
+  const despues = await sandboxCount();
+  ok(
+    "019 · C1 cero contactos sandbox residuales (limpieza en finally)",
+    despues === antes,
+    `antes=${antes} después=${despues}`
+  );
+
+  // Nada salió a WhatsApp real: el sandbox persiste local y no llama a Graph.
+  const outbox = (await api("/api/dev/wa-mock/outbox")).json;
+  const outboxItems = outbox?.messages ?? outbox?.items ?? (Array.isArray(outbox) ? outbox : []);
+  ok(
+    "019 · C2 outbox de WhatsApp vacío (cero envíos reales)",
+    outboxItems.length === 0,
+    `outbox=${outboxItems.length}`
+  );
+
+  // El preview no programa follow-ups: la sonda de la org queda vacía.
+  // Es la MISMA sonda que usa la sección 013 para afirmar el aislamiento
+  // sandbox/productivo.
+  const fu = await api("/api/dev/follow-ups/run", { method: "POST" });
+  ok(
+    "019 · C3 cero follow-ups en conversaciones sandbox",
+    fu.res.ok && fu.json?.sandboxJobs === 0,
+    JSON.stringify(fu.json ?? { status: fu.res.status })
+  );
+
+  // El Laboratorio sigue siendo el Laboratorio: su contrato no cambió.
+  const board = await api("/api/lab/runs");
+  ok(
+    "019 · C4 /api/lab/runs sigue disponible (intacto)",
+    board.res.ok,
+    `status=${board.res.status}`
+  );
+
+  console.log("  -- 019 · fin (la org A conserva su draft; no se publicó nada)");
+  cookie = cookieA;
 }

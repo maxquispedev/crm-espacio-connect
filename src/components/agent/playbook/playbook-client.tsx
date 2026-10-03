@@ -18,7 +18,6 @@
  */
 
 import * as React from "react";
-import Link from "next/link";
 
 import { Button } from "@/components/ui/button";
 import {
@@ -40,6 +39,7 @@ import {
 } from "./json-editor";
 import { CONFIG_EDITABLE_KEYS, reassembleDocuments } from "./draft-actions";
 import { PlaybookDraftEditor } from "./playbook-draft-editor";
+import { PlaybookQuickPreview } from "./playbook-preview";
 import { PlaybookVersionsList } from "./playbook-versions-list";
 import type {
   PlaybookStateDto,
@@ -75,6 +75,10 @@ export function PlaybookClient() {
   const [deleting, setDeleting] = React.useState(false);
   const [rollingBackId, setRollingBackId] = React.useState<string | null>(null);
   const [issues, setIssues] = React.useState<ValidationIssue[]>([]);
+  // `dirty` vive en el editor (calcula el `useMemo` del draft persistido) pero
+  // la columna de Prueba rápida lo necesita para avisar de que prueba el
+  // último draft GUARDADO. Se sube por callback; no se recalcula aquí.
+  const [draftDirty, setDraftDirty] = React.useState(false);
 
   const [historyOpen, setHistoryOpen] = React.useState(false);
   const [publishOpen, setPublishOpen] = React.useState(false);
@@ -379,19 +383,24 @@ export function PlaybookClient() {
         </p>
       ) : null}
 
-      {draft ? (
-        // `key={draft.id}`: al crear/eliminar/publicar un draft distinto se
-        // remonta el editor y los dos documentos se reproyectan desde cero.
-        // Es lo que evita que un refetch pise lo que el admin está escribiendo.
-        <DraftEditorPane
-          key={draft.id}
-          draft={draft}
-          issues={issues}
-          saving={saving}
-          validating={validating}
-          publishing={publishing}
-          deleting={deleting}
-          canDelete={published !== null}
+      {/* Editor + Prueba rápida (Corte 2, C2-6). En desktop la prueba vive en
+          la columna derecha; en pantalla estrecha cae debajo del editor. El
+          grid hace ambas cosas sin duplicar markup ni estado. */}
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,1fr)_360px] lg:items-start">
+        {draft ? (
+          // `key={draft.id}`: al crear/eliminar/publicar un draft distinto se
+          // remonta el editor y los dos documentos se reproyectan desde cero.
+          // Es lo que evita que un refetch pise lo que el admin está escribiendo.
+          <DraftEditorPane
+            key={draft.id}
+            draft={draft}
+            issues={issues}
+            saving={saving}
+            validating={validating}
+            publishing={publishing}
+            deleting={deleting}
+            canDelete={published !== null}
+            onDirtyChange={setDraftDirty}
           onSave={async (doc) => {
             setSaving(true);
             setNotice(null);
@@ -456,17 +465,20 @@ export function PlaybookClient() {
           }}
           onPublish={() => setPublishOpen(true)}
           onDelete={() => void deleteDraft()}
-        />
-      ) : null}
+          />
+        ) : (
+          <p className="text-sm text-muted-foreground">
+            No hay draft abierto: la Prueba rápida puede ejecutar la versión
+            publicada. Usa “Editar publicada” para abrir uno.
+          </p>
+        )}
 
-      {/* Enlace de texto, no CTA: el Laboratorio conserva su función completa
-          (contrato §8). La prueba rápida del corte 2 será el atajo. */}
-      <p className="text-xs text-muted-foreground">
-        ¿Quieres ver la conversación completa que produce el agente?{" "}
-        <Link href="/lab" className="underline underline-offset-2 hover:text-foreground">
-          Abrir Laboratorio completo
-        </Link>
-      </p>
+        {/* Columna de Prueba rápida (Corte 2). Cierra el ciclo
+            pegar → validar → guardar → publicar → probar sin salir de la
+            pantalla, y sin duplicar el pipeline del Laboratorio. El enlace
+            "Abrir Laboratorio completo" vive aquí (C2-9). */}
+        <PlaybookQuickPreview hasDraft={draft !== null} dirty={draftDirty} />
+      </div>
 
       {/* Historial en modal (C1-5). `PlaybookVersionsList` no cambia de props
           ni de API: lo que cambia es dónde vive. El ancho extra lo aporta un
@@ -606,6 +618,7 @@ function DraftEditorPane({
   onDiscard,
   onPublish,
   onDelete,
+  onDirtyChange,
 }: {
   draft: PlaybookVersionDto;
   issues: ValidationIssue[];
@@ -619,6 +632,12 @@ function DraftEditorPane({
   onDiscard: () => Promise<void>;
   onPublish: () => void;
   onDelete: () => void;
+  /**
+   * Sube `dirty` al contenedor. Lo necesita la columna de Prueba rápida para
+   * avisar de que se prueba el último draft GUARDADO (C2-8). No cambia la
+   * regla de la action bar: esa sigue siendo `draftActions()`.
+   */
+  onDirtyChange?: (dirty: boolean) => void;
 }) {
   const configState = useJsonDocState(projectConfig(draft));
   const jevState = useJsonDocState(draft.jev_questions);
@@ -635,6 +654,11 @@ function DraftEditorPane({
       JSON.stringify(jev) !== JSON.stringify(draft.jev_questions)
     );
   }, [configState, jevState, draft]);
+
+  // El `dirty` es info del padre ahora, no un estado local duplicado.
+  React.useEffect(() => {
+    onDirtyChange?.(dirty);
+  }, [dirty, onDirtyChange]);
 
   const lastValidAt = React.useRef(0);
   const runValidate = React.useCallback(() => {
