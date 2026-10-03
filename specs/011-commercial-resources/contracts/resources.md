@@ -114,3 +114,49 @@ ajeno, 413 oversized, 415 no MP4, 422 configuración/archivo vacío/inválido,
 Nombre se sanea para presentación; solo assetId/org validados determinan path.
 Detectar al menos estructura/firma MP4 en bytes, no confiar en extensión/MIME;
 no introducir transcodificador ni garantizar codec por esa detección.
+
+
+### Implementación del corte 2
+
+Política de autorización igual a las APIs de playbook/configuración vigentes:
+`withAuth` exige sesión y membership activa revalidada; permite miembros
+autenticados sin filtro nuevo owner/admin. Toda lectura de dominio scoped;
+organizationId nunca llega desde JSON/multipart/query del cliente. PUT JSON
+estricto rechaza propiedades adicionales; upload acepta exactamente un `file`
+y ningún otro campo. GET incluye `videos: [{slot, configured, media}]` donde
+`media` es null o `{assetId,fileName,fileSize,mimeType,previewUrl}`. Nunca devuelve
+storagePath/waMediaId. PUT video devuelve esa misma fila; PUT pago devuelve
+`{paymentInstructions}` normalizado. Ausente devuelve los tres slots vacíos y
+cobro vacío sin insertar filas. Errores usan `{error:{code,message}}`.
+
+`upsertCommercialResource` acepta un tercer executor BD opcional (select/insert),
+por defecto getDb(): permite que el upload valide el asset recién insertado y
+actualice el slot **dentro de la misma transacción**. No duplica validación ni
+store. Disco escrito primero con saveMediaFile; transaction inserta media_asset
+local available (waMediaId null) y upsert del vínculo. Nombre saneado para
+presentación; no determina path. No Graph, conversación, credenciales o envío.
+
+Validación de bytes: boxes ISO BMFF delimitadas (incluidas sizes extendidas),
+ftyp compatible MP4, moov/mvhd/track handler vide y mdat con contenido; MIME
+exacto video/mp4, bytes positivos hasta MEDIA_LIMITS.video.maxBytes. No prueba
+codec/decodificación ni aceptación de Meta. Falso/audio-only MP4 → 415;
+archivo vacío → 422; oversized → 413; multipart/JSON mal formado → 400;
+cobro incompleto → 422; slot fuera de catálogo → 404; persistencia → 500
+controlado sin detalles internos.
+
+Compensación elimina solo archivo nuevo confirmado huérfano tras fallo de
+escritura parcial o rollback. Nunca elimina filas/archivos históricos. Si el
+commit devuelve error con resultado incierto, consulta asset por org/id: si
+existe, conserva disco; si la consulta falla, conserva disco por seguridad
+(podría quedar un huérfano para limpieza posterior). La API informa error e
+invita a recargar para conocer estado; no promete que un commit incierto nunca
+se publicó. El vínculo anterior se conserva ante fallos reconocidos previos
+al commit. La respuesta se construye fuera del catch de persistencia, para
+que un fallo posterior no borre el binario ya publicado.
+
+La UI se monta dentro de Comercial/Jev junto al editor, con estado independiente
+y aun sin playbook. Upload persiste al seleccionar archivo; cobro solo al pulsar
+Guardar cobro. Upload no pierde cambios de cobro aún sin guardar. Error conserva
+formulario/preview anteriores y libera controles. No escribe ConfigV1 ni KB.
+E2E 020/codec/reinicio y constraints físicos PostgreSQL pendientes en este entorno;
+ver tasks.md y quickstart. No nueva decisión comercial para Obsidian.

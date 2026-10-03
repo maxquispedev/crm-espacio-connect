@@ -1,5 +1,7 @@
 "use client";
 
+import { CommercialResourcesClient } from "./commercial/resources-client";
+
 import { useCallback, useEffect, useState } from "react";
 import { Plus, Sparkles, Trash2 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
@@ -203,7 +205,7 @@ export function AgentClient() {
           <KbSection entries={entries} kbSize={kbSize} onChanged={() => void refetch()} />
         ) : null}
 
-        {tab === "playbook" ? <PlaybookClient /> : null}
+        {tab === "playbook" ? <><PlaybookClient /><CommercialResourcesClient /></> : null}
       </div>
     </div>
   );

@@ -552,3 +552,31 @@ Conviene que los tengas en la cabeza, no escondidos:
   de `next_action` y las 5 lanes son listas cerradas en el editor. Es deliberado:
   garantiza que una expectativa con un typo no se pueda guardar (y que luego
   compararía mal sin explicación).
+
+
+## Recursos comerciales (spec 011, corte 2)
+
+En **Comercial / Jev → Recursos comerciales**, selecciona un MP4 para cada demo:
+Matrícula y panel, Pagos y saldos y Matrícula online. Seleccionar el archivo lo
+sube y guarda localmente; puedes reemplazarlo y ver estado, nombre, tamaño y
+preview privada. Máximo 16 MiB, MIME video/mp4 y estructura de video MP4 válida.
+La detección no garantiza codec: si Meta lo rechaza al enviarlo, prepara un MP4
+compatible. No se convierte a documento ni se transcodifica. La administración
+no requiere conversación, credenciales Meta o IA y no envía WhatsApp.
+
+Para cobro, añade hasta cinco transferencias (banco, titular, moneda y cuenta
+o CCI), Yape completo o link HTTPS opcional; pulsa **Guardar cobro**. Campos
+incompletos se rechazan sin publicar parte del bloque. Quita transferencias y
+vacía Yape/link para guardar una configuración vacía. Solo se guarda al pulsar
+ese botón; subir un video no guarda ni descarta cambios locales de cobro.
+
+Estos recursos pertenecen a la organización activa y se guardan fuera del
+playbook y la base de conocimiento. Publicar o rollback no los modifica.
+Config/Preguntas, Guardar/Publicar, historial y Prueba rápida siguen disponibles.
+Los reemplazos conservan media histórica. Si un guardado devuelve error,
+conserva el formulario y recarga para comprobar el estado persistido antes de
+reintentar. MEDIA_DIR debe estar en un volumen persistente para sobrevivir redeploy.
+
+Este corte administra recursos; su entrega automática por Jev llegará en los
+cortes siguientes. Gate técnico verde, pero **E2E UI/codec/reinicio pendiente**
+en este entorno sin app/BD/ffmpeg: no está verificado punta a punta.

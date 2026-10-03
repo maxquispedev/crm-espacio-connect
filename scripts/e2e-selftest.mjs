@@ -157,6 +157,12 @@ async function collectSse(predicate, { timeoutMs = 12000, trigger } = {}) {
 }
 
 async function main() {
+  // Ejecutar únicamente la superficie del corte 011 C2, sin conectar WhatsApp.
+  if (process.env.E2E_SECTION === "020") {
+    await runSection020();
+    console.log(`\n===== ${checks - failures}/${checks} checks OK, ${failures} fallos =====`);
+    process.exit(failures > 0 ? 1 : 0);
+  }
   if (!BOT_KEY || BOT_KEY.length < 16) {
     console.error(
       "BOT_API_KEY ausente o corta (<16): los checks de /api/bot/* no pueden correr."
@@ -1923,6 +1929,8 @@ async function main() {
   // org, cero efectos residuales y los caminos infelices mostrados como error.
   // Re-ejecutable: limpia su caso en `finally` y no publica nada.
   await runSection019();
+
+  await runSection020();
 
   console.log(`\n===== ${checks - failures}/${checks} checks OK, ${failures} fallos =====`);
   process.exit(failures > 0 ? 1 : 0);
@@ -6083,4 +6091,213 @@ async function runSection019() {
 
   console.log("  -- 019 · fin (la org A conserva su draft; no se publicó nada)");
   cookie = cookieA;
+}
+
+/**
+ * 011 C2 — Sección 020: UI real Playwright + API privada + PostgreSQL local.
+ * No conversaciones, credenciales Meta, mensajes ni acciones de Jev.
+ * E2E_SECTION=020 permite correr solo este corte. BD dedicada obligatoria:
+ * E2E_COMMERCIAL_DATABASE_URL (o DATABASE_URL validada), nombre
+ * commercial_resources_test[_...] / vocero_e2e[_...]. App con mocks locales.
+ * Fixture H.264 de ffmpeg en /tmp, nunca material real ni binario en Git.
+ * Opcional E2E_COMMERCIAL_RESTART_ARGV_JSON: argv del reinicio de la app de
+ * pruebas; tras reinicio comprueba UI, ids, bytes y cobro antes de terminar.
+ */
+async function runSection020() {
+  console.log("\n== 011-commercial-resources: 020 · UI real + happy/unhappy ==");
+  const dbUrl = process.env.E2E_COMMERCIAL_DATABASE_URL ?? process.env.DATABASE_URL;
+  const local = (url) => ["localhost", "127.0.0.1", "[::1]"].includes(new URL(url).hostname);
+  if (!dbUrl || !local(BASE) || !local(dbUrl) ||
+      !/^(commercial_resources_test|vocero_e2e)(_|$)/.test(new URL(dbUrl).pathname.slice(1)) ||
+      process.env.WA_MOCK_ENABLED !== "true" || process.env.NODE_ENV === "production") {
+    throw new Error("020 requiere app y BD dedicadas locales, WA_MOCK_ENABLED=true y entorno de desarrollo");
+  }
+  // Fallar con diagnóstico antes de crear fixture/usuarios si falta app o BD.
+  const health = await fetch(`${BASE}/api/health`);
+  if (!health.ok) throw new Error(`020 app/BD no saludables: HTTP ${health.status}`);
+  const { default: postgres } = await import("postgres");
+  const sql = postgres(dbUrl, { max: 1, onnotice: () => {} });
+  const { chromium } = await import("playwright");
+  const { readFile } = await import("node:fs/promises");
+  const { generateCommercialVideo } = await import("./e2e-commercial-video.mjs");
+  const savedCookie = cookie;
+  let browser;
+  let previousOrg;
+  try {
+    await sql`SELECT 1`;
+    const fixture = await generateCommercialVideo();
+    const bytes = await readFile(fixture);
+    const password = "password-e2e-123";
+    let login = await api("/api/auth/sign-up/email", {
+      method: "POST", body: JSON.stringify({ email: "e2e@vocero.test", password, name: "Operador E2E" }),
+    });
+    if (!login.res.ok) login = await api("/api/auth/sign-in/email", {
+      method: "POST", body: JSON.stringify({ email: "e2e@vocero.test", password }),
+    });
+    ok("020 · sesión operador", login.res.ok);
+    if (!login.res.ok) throw new Error("020 requiere el operador fixture e2e@vocero.test");
+    previousOrg = (await api("/api/auth/get-session")).json?.session?.activeOrganizationId;
+    const makeOrg = async (letter) => {
+      const created = await api("/api/auth/organization/create", { method: "POST", body: JSON.stringify({
+        name: `Recursos E2E ${letter}`, slug: `resources-020-${letter}-${Date.now()}`,
+      }) });
+      ok(`020 · organización ${letter}`, created.res.ok && !!created.json?.id);
+      if (!created.json?.id) throw new Error("020 no pudo crear organización de prueba");
+      return created.json.id;
+    };
+    const orgA = await makeOrg("a");
+    const orgB = await makeOrg("b");
+    await api("/api/auth/organization/set-active", { method: "POST", body: JSON.stringify({ organizationId: orgA }) });
+    // Solo fixture local: habilita bootstrap de playbook para observar editor
+    // vigente junto a recursos, sin crear ninguna conversación ni envío.
+    await sql`INSERT INTO agent_profile (id, organization_id, name, sales_orchestrator_enabled)
+      VALUES (${`agp_020_${Date.now()}`}, ${orgA}, 'E2E', true)
+      ON CONFLICT (organization_id) DO UPDATE SET sales_orchestrator_enabled = true`;
+    const bootstrap = await api("/api/dev/playbook-bootstrap", { method: "POST" });
+    ok("020 · bootstrap fixture playbook", bootstrap.res.ok);
+    await api("/api/playbook/draft", { method: "POST", body: "{}" });
+    const playbookBefore = (await api("/api/playbook")).json;
+    const kbBefore = (await api("/api/kb")).json;
+    const outboxBefore = (await api("/api/dev/wa-mock/outbox")).json;
+    ok("020 · sin credenciales Meta", (await sql`SELECT id FROM meta_credentials WHERE organization_id = ${orgA}`).length === 0);
+
+    browser = await chromium.launch({ headless: true });
+    const context = await browser.newContext();
+    const syncCookies = async () => {
+      await context.clearCookies();
+      await context.addCookies(cookie.split("; ").map((entry) => {
+        const split = entry.indexOf("=");
+        return { name: entry.slice(0, split), value: entry.slice(split + 1), url: BASE };
+      }));
+    };
+    await syncCookies();
+    const page = await context.newPage();
+    const openUi = async () => {
+      await page.goto(`${BASE}/agent`);
+      await page.getByRole("tab", { name: "Comercial / Jev", exact: true }).click();
+      await page.getByRole("heading", { name: "Recursos comerciales", exact: true }).waitFor();
+      await page.getByRole("button", { name: "Guardar cobro", exact: true }).waitFor();
+    };
+    await openUi();
+    await page.getByRole("tab", { name: "Config", exact: true }).waitFor();
+    ok("020 · Config/Preguntas, historial y Prueba rápida vigentes", await page.getByRole("tab", { name: "Config", exact: true }).count() === 1 &&
+      await page.getByRole("tab", { name: "Preguntas Jev", exact: true }).count() === 1 &&
+      await page.getByRole("button", { name: "Historial", exact: true }).count() === 1 &&
+      await page.getByText("Prueba rápida", { exact: true }).count() === 1);
+    const slots = ["demo_enrollment_panel", "demo_payments_balances", "demo_online_enrollment"];
+    const originalIds = [];
+    for (const slot of slots) {
+      const row = page.locator(`[data-resource-slot="${slot}"]`);
+      ok(`020 · ${slot} vacío`, (await row.textContent()).includes("Sin configurar"));
+      const uploaded = page.waitForResponse((res) => res.url().endsWith(`/videos/${slot}`) && res.request().method() === "PUT");
+      await row.locator('input[type="file"]').setInputFiles(fixture);
+      const response = await uploaded;
+      ok(`020 · ${slot} upload UI`, response.status() === 200);
+      const initial = await response.json(); originalIds.push(initial.media.assetId);
+      await row.getByText("Configurado", { exact: true }).waitFor();
+      ok(`020 · ${slot} preview privada reproduce`, await row.locator("video").evaluate(async (video) => {
+        video.muted = true;
+        await video.play(); video.pause(); return video.videoWidth > 0 && video.duration > 0;
+      }));
+      const replaced = page.waitForResponse((res) => res.url().endsWith(`/videos/${slot}`) && res.request().method() === "PUT");
+      await row.locator('input[type="file"]').setInputFiles(fixture);
+      const replacement = await replaced; const current = await replacement.json();
+      ok(`020 · ${slot} replacement UI`, replacement.status() === 200 && current.media.assetId !== initial.media.assetId);
+      // Esperar UI habilitada, no solo HTTP; evita carrera con el siguiente clic.
+      await page.waitForFunction(() => [...document.querySelectorAll('[data-resource-slot] input')].every((input) => !input.disabled));
+    }
+    await page.getByRole("button", { name: "Añadir transferencia", exact: true }).click();
+    await page.getByLabel("Banco 1", { exact: true }).fill("Banco sintético");
+    await page.getByLabel("Titular 1", { exact: true }).fill("Titular de prueba");
+    await page.getByLabel("Cuenta 1", { exact: true }).fill("0001-0002");
+    await page.getByLabel("Teléfono Yape", { exact: true }).fill("+51 999888777");
+    await page.getByLabel("Titular Yape", { exact: true }).fill("Prueba sintética");
+    await page.getByLabel("Link de pago HTTPS", { exact: true }).fill("https://payments.example.test/synthetic");
+    ok("020 · cambios de cobro sin guardar no persisten", (await api("/api/commercial-resources")).json?.paymentInstructions?.yape === null);
+    const saved = page.waitForResponse((res) => res.url().endsWith("/api/commercial-resources") && res.request().method() === "PUT");
+    await page.getByRole("button", { name: "Guardar cobro", exact: true }).click();
+    ok("020 · guardar cobro UI", (await saved).status() === 200);
+    await page.getByRole("status").filter({ hasText: "Cobro guardado" }).waitFor();
+    const snapshot = (await api("/api/commercial-resources")).json;
+    await openUi();
+    ok("020 · releer pago conserva ceros y normalización", await page.getByLabel("Cuenta 1", { exact: true }).inputValue() === "0001-0002" &&
+      await page.getByLabel("Teléfono Yape", { exact: true }).inputValue() === "999888777");
+    for (const video of snapshot.videos) {
+      const res = await api(video.media.previewUrl);
+      ok(`020 · ${video.slot} bytes persistidos`, res.res.ok && Buffer.from(await res.res.arrayBuffer()).equals(bytes));
+    }
+    for (const id of originalIds) ok("020 · preview histórica conservada", (await api(`/api/media/${id}`)).res.ok);
+
+    // UI infeliz: falso MP4/oversized conserva vínculo y vuelve a habilitarse.
+    for (const [name, payload, status] of [
+      ["falso.mp4", Buffer.from("fake MP4"), 415],
+      ["grande.mp4", Buffer.alloc(16 * 1024 * 1024 + 1), 413],
+      ["vacio.mp4", Buffer.alloc(0), 422],
+    ]) {
+      const slot = slots[0];
+      const response = page.waitForResponse((res) => res.url().endsWith(`/videos/${slot}`) && res.request().method() === "PUT");
+      await page.locator(`[data-resource-slot="${slot}"] input`).setInputFiles({ name, mimeType: "video/mp4", buffer: payload });
+      ok(`020 · ${name} UI rechaza`, (await response).status() === status);
+      await page.getByRole("alert").waitFor();
+      await page.waitForFunction(() => !document.querySelector('[data-resource-slot] input').disabled);
+      ok(`020 · ${name} conserva vínculo`, (await api("/api/commercial-resources")).json.videos[0].media.assetId === snapshot.videos[0].media.assetId);
+    }
+    await page.getByLabel("Titular Yape", { exact: true }).fill("");
+    const invalid = page.waitForResponse((res) => res.url().endsWith("/api/commercial-resources") && res.request().method() === "PUT");
+    await page.getByRole("button", { name: "Guardar cobro", exact: true }).click();
+    ok("020 · Yape incompleto UI 422", (await invalid).status() === 422);
+    await page.getByRole("alert").filter({ hasText: "yape.holder" }).waitFor();
+    ok("020 · cobro inválido conserva bloque", JSON.stringify((await api("/api/commercial-resources")).json.paymentInstructions) === JSON.stringify(snapshot.paymentInstructions));
+    ok("020 · ConfigV1/KB intactos", JSON.stringify((await api("/api/playbook")).json) === JSON.stringify(playbookBefore) &&
+      JSON.stringify((await api("/api/kb")).json) === JSON.stringify(kbBefore));
+
+    await api("/api/auth/organization/set-active", { method: "POST", body: JSON.stringify({ organizationId: orgB }) });
+    const foreign = await api(snapshot.videos[0].media.previewUrl);
+    ok("020 · preview ajena 404", foreign.res.status === 404);
+    const other = (await api("/api/commercial-resources")).json;
+    ok("020 · recursos B aislados", other.videos.every((video) => !video.configured) && other.paymentInstructions.yape === null);
+    await api("/api/auth/organization/set-active", { method: "POST", body: JSON.stringify({ organizationId: orgA }) });
+    await syncCookies();
+    for (const resource of ["/api/commercial-resources", snapshot.videos[0].media.previewUrl]) {
+      ok("020 · sin sesión 401", (await fetch(`${BASE}${resource}`)).status === 401);
+    }
+    ok("020 · ningún mensaje/conversación", (await sql`SELECT id FROM conversation WHERE organization_id = ${orgA}`).length === 0 &&
+      (await sql`SELECT id FROM message WHERE organization_id = ${orgA}`).length === 0);
+    ok("020 · cero Graph", JSON.stringify((await api("/api/dev/wa-mock/outbox")).json) === JSON.stringify(outboxBefore));
+
+    if (process.env.E2E_COMMERCIAL_RESTART_ARGV_JSON) {
+      const argv = JSON.parse(process.env.E2E_COMMERCIAL_RESTART_ARGV_JSON);
+      if (!Array.isArray(argv) || !argv.length || argv.some((arg) => typeof arg !== "string")) throw new Error("Restart argv inválido");
+      const { execFile } = await import("node:child_process");
+      const { promisify } = await import("node:util");
+      await promisify(execFile)(argv[0], argv.slice(1));
+      const up = await waitFor(async () => { try { return (await fetch(`${BASE}/api/health`)).ok; } catch { return false; } }, 60000);
+      ok("020 · app reiniciada saludable", !!up);
+      await openUi();
+      ok("020 · reinicio conserva vínculos/cobro", JSON.stringify((await api("/api/commercial-resources")).json) === JSON.stringify(snapshot));
+      ok("020 · reinicio UI conserva cuenta", await page.getByLabel("Cuenta 1", { exact: true }).inputValue() === "0001-0002");
+      for (const video of snapshot.videos) {
+        const preview = await api(video.media.previewUrl);
+        ok(`020 · reinicio ${video.slot} conserva binario`, preview.res.ok && Buffer.from(await preview.res.arrayBuffer()).equals(bytes));
+      }
+    } else console.log("  PENDIENTE 020 · persistencia tras reinicio: falta E2E_COMMERCIAL_RESTART_ARGV_JSON (recarga sí verificada)");
+    // Vacío válido por UI, después del checkpoint de persistencia completo.
+    await openUi();
+    await page.getByRole("button", { name: "Quitar transferencia 1", exact: true }).click();
+    await page.getByLabel("Teléfono Yape", { exact: true }).fill("");
+    await page.getByLabel("Titular Yape", { exact: true }).fill("");
+    await page.getByLabel("Link de pago HTTPS", { exact: true }).fill("");
+    const cleared = page.waitForResponse((res) => res.url().endsWith("/api/commercial-resources") && res.request().method() === "PUT");
+    await page.getByRole("button", { name: "Guardar cobro", exact: true }).click();
+    ok("020 · guardar vacío UI", (await cleared).status() === 200);
+    await page.getByRole("status").filter({ hasText: "Cobro guardado" }).waitFor();
+    await openUi();
+    ok("020 · vacío releído", await page.getByLabel("Teléfono Yape", { exact: true }).inputValue() === "" &&
+      await page.getByLabel("Link de pago HTTPS", { exact: true }).inputValue() === "");
+  } finally {
+    if (browser) await browser.close();
+    if (previousOrg) await api("/api/auth/organization/set-active", { method: "POST", body: JSON.stringify({ organizationId: previousOrg }) });
+    cookie = savedCookie;
+    await sql.end();
+  }
 }

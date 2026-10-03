@@ -28,8 +28,10 @@ export class CommercialResourceMediaError extends Error {
   }
 }
 
-async function requireLocalVideo(organizationId: string, assetId: string): Promise<void> {
-  const rows = await getDb().select().from(schema.mediaAsset).where(
+type ResourceDb = Pick<ReturnType<typeof getDb>, "select" | "insert">;
+
+async function requireLocalVideo(organizationId: string, assetId: string, db: ResourceDb = getDb()): Promise<void> {
+  const rows = await db.select().from(schema.mediaAsset).where(
     scoped(schema.mediaAsset.organizationId, organizationId, eq(schema.mediaAsset.id, assetId))
   ).limit(1);
   const asset = rows[0];
@@ -73,14 +75,15 @@ export async function getCommercialResource(
 /** Valida todo antes de escribir. Upsert atómico; conserva id/createdAt del slot. */
 export async function upsertCommercialResource(
   organizationId: string,
-  input: CommercialResourceValue
+  input: CommercialResourceValue,
+  db: ResourceDb = getDb()
 ): Promise<CommercialResource> {
   const condition = scoped(schema.commercialResource.organizationId, organizationId);
   const value = CommercialResourceValueSchema.parse(input);
   if (value.slot !== "payment_instructions") {
-    await requireLocalVideo(organizationId, value.mediaAssetId);
+    await requireLocalVideo(organizationId, value.mediaAssetId, db);
   }
-  const rows = await getDb().insert(schema.commercialResource).values({
+  const rows = await db.insert(schema.commercialResource).values({
     id: newId("commercialResource"), organizationId, ...value,
   }).onConflictDoUpdate({
     target: [schema.commercialResource.organizationId, schema.commercialResource.slot],

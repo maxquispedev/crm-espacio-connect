@@ -1,5 +1,70 @@
 # CURRENT STATE — Espacio Connect
 
+**Actualizado: 2026-10-03 — Spec 011, C2: administración de demos y cobro implementada.**
+
+Objetivo único: **Comercial / Jev → Recursos comerciales**, con API administrativa
+local y UI mínima. Commit de cierre:
+`feat(commercial): administrar demos y recursos de cobro`; HEAD inicial
+`ceb1438eba5a32782a4401a75c77a4fc520132ef`, un commit atómico, sin deploy/push.
+
+Tres slots MP4 con subir/reemplazar, estado, nombre/tamaño y preview privada
+por `/api/media/[assetId]`. Transferencias (máximo cinco), Yape y link HTTPS
+opcionales con **Guardar cobro** explícito. Recursos fuera de ConfigV1/KB;
+editor Config/Preguntas, Guardar/Publicar, historial y Prueba rápida vigentes.
+No se modificó el comportamiento de Jev ni se envió WhatsApp. No se requieren
+conversación, credenciales Meta ni proveedor de IA para administrar recursos.
+Auth igual a Comercial/Jev vigente: cualquier miembro con sesión, tenant
+resuelto/revalidado por sesión; JSON/multipart estrictos sin org/paths del body.
+
+Decisión técnica: `saveMediaFile` escribe en MEDIA_DIR; asset y vínculo se
+persisten en una transacción con el store de C1 (executor opcional). Se valida
+MIME video/mp4, no vacío, límite nativo 16 MiB, ftyp/boxes/moov/track vide/mdat;
+no garantiza codec/aceptación de Meta. No fallback a documento ni transcodificador
+runtime. Asset inmutable por reemplazo, históricos conservados. Fallo de disco
+parcial/rollback conserva anterior y compensa archivo nuevo; commit incierto
+conserva archivo si hay asset o no puede probar ausencia con BD. En este último
+caso podría quedar huérfano para limpieza posterior; se devuelve error controlado
+que invita a recargar. No se borra media histórica ni referencias concurrentes.
+
+**Evidencia:** typecheck → lint → build → test **exit 0**;
+**1040 pass / 4 PostgreSQL skipped**, 100 archivos verdes / 1 omitido.
+34 tests nuevos API/UI; commercial **103 pass / 4 skipped**; regresión seleccionada
+media/sales/playbook/Lab **282/282**. Lint 0 errores / tres warnings previos.
+Se usó `pnpm --pm-on-fail=ignore`, igual al checkpoint anterior; gate con sockets
+locales autorizados. Detalle/comandos en `specs/011-commercial-resources/tasks.md`.
+
+**E2E 020 PENDIENTE (happy/unhappy UI real y reinicio):** arnés existente extendido
+con Playwright, generación preparada de MP4 H.264 sintético fuera de Git,
+upload/replacement,
+preview reproducible, cobro completo/vacío/incompleto, persistencia, aislamiento,
+sin sesión, ConfigV1/KB intactos y cero mensajes/Graph. Parsea (`node --check` de
+ambos scripts, exit 0), pero `E2E_SECTION=020 pnpm --pm-on-fail=ignore test:e2e`
+con app/BD/mocks localhost salió **1 antes del setup**, ECONNREFUSED :3000 tras
+autorizar sockets (primer intento EPERM). Sin app ni ejecutables postgres/psql/
+pg_ctl/docker disponibles. Generador de fixture intentado, **exit 1 por ffmpeg
+no disponible**: generación/codec/reproducción también pendientes. No MP4 reales
+ni binarios en Git. No se ejerció UI en navegador, ni se observó un reinicio.
+
+**BD física C1 sigue PENDIENTE:** cuatro tests opt-in de migración/constraints
+omitidos; dobles ORM/scoped/FS no sustituyen PostgreSQL. **No READY punta a punta**.
+T1124 queda abierto por E2E; C3/C4 sin iniciar. Constitution Check sin excepción,
+V técnico verde e IX pendiente; sin decisión de negocio nueva para Obsidian.
+
+Archivos clave: `src/server/commercial/resources.ts`,
+`src/app/api/commercial-resources/{route.ts,videos/[slot]/route.ts}`,
+`src/components/agent/commercial/resources-client.tsx`, `agent-client.tsx`,
+`src/lib/commercial/{dto,store}.ts`, tests API/UI, arnés sección 020/generador,
+contrato resources, quickstart y `docs/playbook.md`.
+Logs temporales `/tmp/commercial-c2-{typecheck,lint,build,test,targeted,regression,e2e,video}.log`.
+
+**Siguiente paso exacto:** app+PostgreSQL dedicado+mocks y Chromium/ffmpeg;
+aplicar/reaplicar migración y correr suite opt-in C1; ejecutar 020 con el comando
+de `specs/011-commercial-resources/quickstart.md`, configurando reinicio de app
+de pruebas y MEDIA_DIR persistente, registrar evidencia. Luego sesión nueva para
+**solo C3**. Esta sesión termina tras el único commit de C2 y árbol limpio.
+
+---
+
 **Actualizado: 2026-10-03 — Spec 011, C1: fundación y persistencia implementadas.**
 
 Objetivo único: recursos comerciales tenant-safe, sin superficie UI/HTTP ni

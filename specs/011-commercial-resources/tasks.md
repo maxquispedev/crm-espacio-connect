@@ -1,7 +1,7 @@
 # Tasks — 011 Commercial Resources
 
 **Estado:** C1 implementado con gates técnicos verdes; BD real y E2E PENDIENTES.
-C2–C4 sin iniciar.
+C2 implementado con gate técnico verde / E2E PENDIENTE; C3–C4 sin iniciar.
 Dependency order: bootstrap → C1 → C2 → C3 → pausa operativa → C4.
 Un corte = sesión nueva de codex exec = objetivo único = commit atómico único.
 Prompts ejecutables autocontenidos: .ai/tasks/commercial-resources/01–04.
@@ -94,21 +94,98 @@ productivo. La comprobación del runner será estática; NO ejecutar pipeline.
 
 ## Corte 2 — UI Comercial / Jev → Recursos comerciales
 
-**Estado:** PENDIENTE. **Commit previsto:** `feat(commercial): administrar demos y recursos de cobro`.
+**Estado:** IMPLEMENTADO; gate técnico VERDE. E2E UI/BD/reinicio PENDIENTES.
+**Commit de cierre:** `feat(commercial): administrar demos y recursos de cobro`.
 
-- [ ] T1121 API administrativa authenticated/org de sesión y upload local.
-- [ ] T1122 UI mínima tres MP4 + cobro + preview privada sin modificar editor.
-- [ ] T1123 Validación byte/MIME/tamaño y replacement conservando anterior en fallo.
-- [ ] T1124 Tests API/UI, E2E UI happy/unhappy y gates completos.
-- [ ] T1125 Actualizar tasks/CURRENT_STATE/docs relevantes, revisar diff, UN commit y árbol limpio.
+- [x] T1121 API administrativa authenticated/org de sesión y upload local.
+- [x] T1122 UI mínima tres MP4 + cobro + preview privada sin modificar editor.
+- [x] T1123 Validación byte/MIME/tamaño y replacement conservando anterior en fallo.
+- [ ] T1124 Tests API/UI y gates completos VERDES; self-test 020 preparado e
+  intentado, **E2E happy/unhappy UI real PENDIENTE**, sin escenarios ejecutados.
+- [x] T1125 tasks/CURRENT_STATE/contratos/doc de operación actualizados;
+  revisión diff y cierre en UN commit, sin marcar cortes futuros.
 
-### Evidencia durable del corte
+### Evidencia durable del corte — 2026-10-03
 
-- HEAD inicial / commit final: pendiente.
-- Archivos y decisiones técnicas: pendiente.
-- Comandos/tests/gates y resultados: no ejecutados.
-- E2E happy/unhappy: no ejecutado; registrar causa si no disponible.
-- Pendientes y siguiente paso exacto: ejecutar solo este corte con su task.
+- HEAD inicial: `ceb1438eba5a32782a4401a75c77a4fc520132ef` (árbol limpio,
+  guardado en `/tmp/commercial-c2-head`); log sin commit previo de C2.
+  Dependencia C1 contrastada: schema/ids, migración 0009 + journal, validadores,
+  store y 69 tests verdes; cuatro pruebas PostgreSQL siguen omitidas.
+  Commit final identificado por el subject de cierre; hash mediante git log,
+  sin hash autorreferente. Una sola implementación, sin runner anidado/deploy/push.
+- API nueva: GET/PUT `/api/commercial-resources`, PUT multipart
+  `/api/commercial-resources/videos/[slot]`. `withAuth` y org de sesión;
+  misma política de Comercial/Jev vigente (miembros autenticados, sin nuevo
+  filtro de rol). JSON/form estrictos rechazan org/paths externos. Preview
+  reutiliza `/api/media/[assetId]`, con scoped/404 para assets ajenos.
+- UI independiente en `agent-client.tsx` junto a `PlaybookClient`: recursos
+  disponibles incluso sin playbook, tres uploads/replacements, estado/metadata
+  y video privado; hasta cinco transferencias, Yape/link y Guardar cobro explícito.
+  Upload no pierde cambios locales de cobro. Config/Preguntas, Guardar/Publicar,
+  historial y Prueba rápida conservados; sin writes a ConfigV1/KB.
+- Decisión técnica: `saveMediaFile` primero; transacción asset + upsert del
+  vínculo usando executor opcional del store existente. MP4 nativo hasta
+  `MEDIA_LIMITS.video.maxBytes`, MIME exacto, bytes no vacíos, boxes ISO BMFF
+  delimitadas, ftyp compatible, moov/mvhd/track vide y mdat. Esto **no valida
+  codec** ni garantiza aceptación de Meta; no document fallback/transcodificación.
+  Nuevo asset inmutable; los históricos y lectores concurrentes permanecen.
+- Compensación: fallo de disco parcial o rollback BD elimina solo archivo nuevo
+  comprobado huérfano. Ante commit incierto, no borra si el asset existe; si BD
+  no permite probar ausencia, conserva archivo y responde 500 controlado.
+  Podría requerir limpieza posterior de ese huérfano; no GC ni borrado a ciegas.
+  Mensajes de API sin rutas/secretos. Fallo reconocido antes de commit conserva
+  vínculo anterior; resultado incierto invita a recargar, sin promesa falsa.
+- Constitution Check reevaluado: I/III sesión/scoped/FK y preview privada;
+  II PostgreSQL/MEDIA_DIR propios; IV upsert y sender/webhook intactos;
+  VI spec/plan/tasks previos; VII compensación incierta documentada;
+  VIII administración para producto actual; V gate verde; IX **pendiente**.
+  Sin nueva decisión comercial que sincronizar en Obsidian.
+- Tests nuevos: `commercial-resources-api.test.ts` **26** (handlers/withAuth,
+  ORM/scoped/store/FS y preview reales, ejecutor BD/auth simulados),
+  `commercial-resources-ui.test.ts` **8** (JSX real renderizado y proyección
+  cobro/error). Cubren todos los slots y reemplazos, pago vacío/completo/partial,
+  firma falsa/audio-only/MIME/oversized/límite exacto, disco parcial, rollback
+  BD, commit incierto, BD inaccesible, concurrencia y tenants/sin sesión.
+  Estos tests **no equivalen a conducir UI con Playwright ni a PostgreSQL real**.
+- `pnpm --pm-on-fail=ignore exec vitest run tests/unit/commercial-*.test.ts`:
+  **103 pass / 4 skipped**, 4 archivos verdes / 1 omitido.
+- Regresión media-send, send-media-kind-override, sales-orchestrator, sales-writer,
+  sales-resolve-plan, sales-questions-freeze, playbook-*, lab-pipeline-real,
+  lab-preview-*: **282/282**, 25 archivos.
+- Gate completo, en orden, exit 0:
+  `pnpm --pm-on-fail=ignore typecheck && pnpm --pm-on-fail=ignore lint && pnpm --pm-on-fail=ignore build && pnpm --pm-on-fail=ignore test`.
+  **1040 pass / 4 PostgreSQL skipped**, 100 archivos verdes / 1 omitido;
+  lint 0 errores / 3 warnings preexistentes (anuncio-origen/build-state).
+  pnpm usa la opción del checkpoint anterior por fallo del gestor fuera del
+  script; sin cambios de package/lock. Gate con sockets locales autorizados
+  para las pruebas HTTP existentes.
+- Arnés extendido **020**, siguiente número libre: UI real Playwright,
+  upload+replacement+preview reproducible de cada slot, cobro explícito y
+  recarga, campos parciales y archivos inválidos, aislamiento, sin sesión,
+  ConfigV1/KB intactos y cero mensajes/Graph. BD local dedicada obligatoria,
+  mocks; ejecución aislada `E2E_SECTION=020` evita setup de conexión WhatsApp.
+  Reinicio opcional por argv explícito del entorno de pruebas; si falta,
+  imprime PENDIENTE, sin contar recarga como reinicio.
+- `node --check scripts/e2e-selftest.mjs` y
+  `node --check scripts/e2e-commercial-video.mjs`: **exit 0**.
+- Self-test intentado: `E2E_SECTION=020 pnpm --pm-on-fail=ignore test:e2e`,
+  con `APP_BASE_URL=http://127.0.0.1:3000`, DATABASE_URL local dedicado
+  `commercial_resources_test_c2`, WA_MOCK_ENABLED=true, BOT_API_KEY placeholder
+  y Graph/LLM/Jev hacia mocks localhost (comando completo en quickstart).
+  **exit 1 antes del setup**, ECONNREFUSED 127.0.0.1:3000. Primer intento
+  sandbox EPERM; reintento con sockets autorizados confirmó app ausente.
+  Sin postgres/psql/pg_ctl/docker disponibles. Ninguna llamada WhatsApp real.
+- Fixture H.264 sintética: generador **solo de tests**
+  `scripts/e2e-commercial-video.mjs`, salida `/tmp` y ffmpeg/libx264 del entorno
+  (sin dependencia nueva de app). `node scripts/e2e-commercial-video.mjs`:
+  **exit 1**, ffmpeg ausente; generación/reproducción **PENDIENTES**.
+  Ningún video real o sintético binario en Git. No transcodificador en runtime.
+- Logs `/tmp/commercial-c2-{typecheck,lint,build,test,targeted,regression,e2e,video}.log`.
+- **No READY punta a punta**. Siguiente paso exacto: provisionar app+PostgreSQL
+  local dedicado+mocks+Chromium/ffmpeg, aplicar y repetir migración/suite opt-in
+  de C1, ejecutar sección 020 por quickstart incluyendo reinicio administrado,
+  registrar evidencia real; después reconstruir contexto en sesión nueva para
+  **solo C3**. No se inició C3 ni se modificaron acciones/respuestas Jev.
 
 ## Corte 3 — Entrega automática de demos nativas
 
