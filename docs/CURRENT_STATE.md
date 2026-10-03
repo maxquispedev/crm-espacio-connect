@@ -1,5 +1,48 @@
 # CURRENT STATE — Espacio Connect
 
+**Actualizado: 2026-10-03 — Bootstrap SDD del spec 011 (Recursos comerciales de Jev).**
+
+Preparados `specs/011-commercial-resources/` (spec, plan, tasks, research,
+contratos y quickstart), `.ai/tasks/commercial-resources/` (overview + cuatro
+prompts autocontenidos) y `scripts/ai/run-commercial-resources-codex.sh`.
+**Ningún corte implementado:** sin cambios de app, schema, migraciones,
+respuestas Jev ni videos en Git. El estado funcional de 010 descrito abajo sigue vigente.
+
+Cortes dependency-ordered: **1** modelo tenant-safe + media_asset + cobro preparado;
+**2** UI Comercial/Jev → Recursos comerciales, subida local MP4 y cobro;
+**3** entrega nativa de demos + caption, facts post-video y sandbox;
+**4** acción explícita `send_payment_instructions`, contrato 1.1 compatible con
+1.0, destinos configurados y handoff posterior. Recursos independientes de
+KB factual y del versionado de estrategia; no multi-producto ni DAM/billing.
+
+Hallazgos técnicos para la siguiente sesión: media vive en MEDIA_DIR/org/assetId;
+la subida actual del inbox envía WhatsApp y no sirve de upload administrativo;
+sendMediaMessage marca origin=operator y necesita origen IA compatible en C3;
+demoShownAt hoy se marca tras texto, deberá depender del video; las siete keys
+1.0/V2 están protegidas y no pueden ampliarse invalidando Published antiguas.
+V2/fixture/hash quedan intactos, C4 introduce extensión explícita 1.1/V3.
+
+Runner deriva del patrón de 008/009/010: una sesión NUEVA por corte, GNU timeout
+(default 90m), stdout+stderr en vivo con tee, heartbeat 25s, logs ignorados,
+START_CUT/END_CUT, árbol limpio y exactamente un commit por corte. Sin resume,
+reset/checkout/clean ni deploy. El Codex instalado no anuncia --full-auto:
+preflight prefiere ese flag cuando exista, si no usa --approve-for-me con sandbox
+workspace-write y revisión automática; no bypass de permisos.
+
+**Verificación bootstrap:** `bash -n scripts/ai/run-commercial-resources-codex.sh`
+verde; revisión estática del runner y `git diff --check`. **Runner NO ejecutado.**
+Gates de app y E2E de 011 no ejecutados (solo preparación SDD/shell); ningún corte
+se declara listo. Tasks conserva los cuatro cortes pendientes y pausa operativa.
+Commit de este bloque: `docs(ai): bootstrap commercial resources SDD and Codex runner`.
+
+**Siguiente paso exacto**, desde terminal Bash/WSL externa en raíz:
+`START_CUT=1 END_CUT=3 CUT_TIMEOUT=90m bash scripts/ai/run-commercial-resources-codex.sh`.
+Después registrar verificación de los tres videos reales/persistencia en producción
+antes de reanudar 4–4. C4 requiere actualizar draft a 1.1, probar y publicar
+explícitamente para activar pago; señalar la decisión comercial para Obsidian.
+
+---
+
 **Actualizado: 2026-10-03 — CORTE 2 del spec 010 CERRADO (Prueba rápida embebida).**
 Commit `feat(playbook): añadir prueba rápida sandbox`.
 
