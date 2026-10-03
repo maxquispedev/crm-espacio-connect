@@ -1901,6 +1901,10 @@ async function main() {
   // con el pipeline REAL, expected outcomes y cero efectos residuales.
   await runSection015();
 
+  // 009 — Sección 016: editor técnico JSON (corte 1). El ciclo completo y
+  // los tres caminos infelices (JSON inválido, Zod inválido, guardarraíl).
+  await runSection016();
+
   console.log(`\n===== ${checks - failures}/${checks} checks OK, ${failures} fallos =====`);
   process.exit(failures > 0 ? 1 : 0);
 }
@@ -4396,6 +4400,292 @@ async function runSection015() {
     method: "PUT",
     body: JSON.stringify({ salesOrchestratorEnabled: false }),
   });
+
+  cookie = cookieA;
+}
+
+/**
+ * 009 — Sección 016: editor técnico JSON (Feature 009, Corte 1, T915).
+ *
+ * Conduce, vía HTTP real contra la app, el MISMO ciclo que ejecuta la UI
+ * nueva de `/agent` → "Comercial / Jev". Al ser una proyección de cliente
+ * (dos textareas reassembly en un `ConfigV1`), el ciclo se verifica sobre
+ * la API sin depender del navegador, que es donde vive el contrato.
+ *
+ * Cubre el reassembly `{...configEdit, jev_questions: jevEdit}` y el ciclo
+ * crear draft → validar → guardar → publicar → historial → rollback →
+ * eliminar draft, más los TRES caminos infelices obligatorios:
+ *  1. JSON sintácticamente inválido: 400 `bad_json`, sin crash. El
+ *     `position` del mensaje es lo que la UI traduce a línea/columna.
+ *  2. JSON válido pero Zod inválido (`monthlyBase` string): 422 con `path`.
+ *  3. Guardarraíl violado (option key protegida): 422 con motivo claro.
+ */
+async function runSection016() {
+  console.log("\n== 009-playbook-runtime-admin: editor técnico JSON (corte 1) ==");
+  const email = "e2e-009-json@vocero.test";
+  const password = "password-e2e-123";
+  let reg = await api("/api/auth/sign-up/email", {
+    method: "POST",
+    body: JSON.stringify({ email, password, name: "Operador 009" }),
+  });
+  if (!reg.res.ok) {
+    reg = await api("/api/auth/sign-in/email", {
+      method: "POST",
+      body: JSON.stringify({ email, password }),
+    });
+  }
+  ok("016 · signup/login operador 009", reg.res.ok, JSON.stringify(reg.json));
+  const cookieA = cookie;
+
+  let org = orgListFrom((await api("/api/auth/organization/list")).json)[0];
+  if (!org) {
+    const createdOrg = await api("/api/auth/organization/create", {
+      method: "POST",
+      body: JSON.stringify({ name: "Playbook JSON E2E 009", slug: `pb-json-e2e-009-${Date.now()}` }),
+    });
+    org = createdOrg.json?.id
+      ? { id: createdOrg.json.id }
+      : orgListFrom((await api("/api/auth/organization/list")).json)[0];
+  }
+  if (org?.id) {
+    await api("/api/auth/organization/set-active", {
+      method: "POST",
+      body: JSON.stringify({ organizationId: org.id }),
+    });
+  }
+  ok("016 · organización del operador 009", !!org?.id, JSON.stringify(org));
+
+  await api("/api/dev/playbook-bootstrap", { method: "POST" });
+  if ((await api("/api/playbook")).json?.draft) {
+    await api("/api/playbook/draft", { method: "DELETE" });
+  }
+
+  const published = (await api("/api/playbook")).json?.published;
+  ok(
+    "016 · hay versión publicada para trabajar",
+    Boolean(published?.jev_questions && published?.offer),
+    JSON.stringify({ v: published?.version_number })
+  );
+  if (!published) {
+    cookie = cookieA;
+    return;
+  }
+
+  // --- Proyección: el mismo split que hacen los dos textareas ---------
+  // `projectConfig` elige los ocho bloques, NO el spread del DTO: hacer
+  // `const {...rest} = dto` se traería `id`, `status`, `created_at`… y el
+  // PUT (cuerpo `.strict()`) los rechazaría.
+  const configEdit = {
+    product: published.product,
+    offer: published.offer,
+    commercial_policy: published.commercial_policy,
+    priorities: published.priorities,
+    writer: published.writer,
+    prohibitions: published.prohibitions,
+    handoff: published.handoff,
+    urgency_rules: published.urgency_rules,
+  };
+  const jevEdit = published.jev_questions;
+  const reassembled = { ...configEdit, jev_questions: jevEdit };
+  // El validate necesita `schema_version` (z.literal("1.0") es obligatorio);
+  // el PUT no lo lleva porque su cuerpo es strict de los nueve bloques.
+  const validateDoc = { schema_version: published.schema_version, ...reassembled };
+
+  ok(
+    "016 · el reassembly del PUT son 9 claves (8 bloques + jev_questions)",
+    Object.keys(reassembled).length === 9 && reassembled.jev_questions !== undefined,
+    JSON.stringify(Object.keys(reassembled))
+  );
+  ok(
+    "016 · el reassembly no arrastra metadatos del DTO",
+    !("id" in reassembled) && !("status" in reassembled) && !("created_at" in reassembled),
+    JSON.stringify(Object.keys(reassembled))
+  );
+  ok(
+    "016 · el documento a validar añade schema_version (10 claves)",
+    Object.keys(validateDoc).length === 10 && validateDoc.schema_version === "1.0",
+    JSON.stringify(Object.keys(validateDoc))
+  );
+  ok(
+    "016 · los bloques proyectados conservan el contenido publicado",
+    configEdit.offer.monthlyBase === published.offer.monthlyBase &&
+      configEdit.writer.present_price === published.writer.present_price &&
+      JSON.stringify(jevEdit) === JSON.stringify(published.jev_questions),
+    JSON.stringify({
+      monthlyBase: configEdit.offer.monthlyBase,
+      present_price: configEdit.writer?.present_price,
+    })
+  );
+
+  // Invariante que el editor técnico debe respetar: sin `schema_version` el
+  // servidor rechaza el documento. Este check ata la decisión de diseño.
+  const sinSchema = await api("/api/playbook/validate", {
+    method: "POST",
+    body: JSON.stringify(reassembled),
+  });
+  ok(
+    "016 · validar SIN schema_version → 422 (por eso el editor lo reinyecta)",
+    sinSchema.res.status === 422,
+    JSON.stringify({ status: sinSchema.res.status, details: sinSchema.json?.details })
+  );
+
+  // --- Camino infeliz 1: JSON sintácticamente inválido ---------------
+  // Lo que un textarea puede contener a media escritura. El cliente lo ve
+  // antes de enviar, pero si llega al servidor debe ser 400 limpio.
+  const badJson = await api("/api/playbook/validate", {
+    method: "POST",
+    body: '{"product": {"name": "X",},}',
+  });
+  ok(
+    "016 · JSON sintácticamente inválido → 400 bad_json, sin crash",
+    badJson.res.status === 400 && badJson.json?.code === "bad_json",
+    JSON.stringify({ status: badJson.res.status, body: badJson.json })
+  );
+
+  // La traducción a línea/columna que hace la UI a partir de `position`.
+  const sintactico = '{\n  "product": {\n    "name": "X",\n  },\n}';
+  let parseMsg = "";
+  let parseLine = null;
+  try {
+    JSON.parse(sintactico);
+  } catch (err) {
+    parseMsg = err.message;
+    const pos = /position (\d+)/.exec(err.message);
+    if (pos) {
+      parseLine = sintactico.slice(0, Number(pos[1])).split("\n").length;
+    }
+  }
+  ok(
+    "016 · el error de sintaxis trae position y la UI puede dar línea",
+    /position \d+/.test(parseMsg) && parseLine !== null,
+    JSON.stringify({ msg: parseMsg, linea: parseLine })
+  );
+
+  // --- Camino infeliz 2: JSON válido, Zod inválido --------------------
+  const zodRoto = { ...validateDoc, offer: { ...published.offer, monthlyBase: "247" } };
+  const valZod = await api("/api/playbook/validate", {
+    method: "POST",
+    body: JSON.stringify(zodRoto),
+  });
+  const zodPaths = (valZod.json?.details ?? []).map((d) => d.path);
+  ok(
+    "016 · Zod inválido (monthlyBase string) → 422 con su path",
+    valZod.res.status === 422 &&
+      valZod.json?.code === "validation_failed" &&
+      zodPaths.some((p) => p.startsWith("offer.monthlyBase")),
+    JSON.stringify({ status: valZod.res.status, paths: zodPaths })
+  );
+
+  // --- Camino infeliz 3: guardarraíl violado -------------------------
+  // `next_action` es engine-required: sus option keys son contrato. En las
+  // dos formas del documento, porque el PUT strict no acepta `schema_version`
+  // (eso daría 400 y no probaríamos el candado).
+  const jevGuardado = {
+    ...published.jev_questions,
+    next_action: {
+      ...published.jev_questions.next_action,
+      options: [{ key: "opcion_inventada", label: "Inventada" }],
+    },
+  };
+  const guardiaRoto = { ...validateDoc, jev_questions: jevGuardado };
+  const guardiaRotoPut = { ...reassembled, jev_questions: jevGuardado };
+  const valGuard = await api("/api/playbook/validate", {
+    method: "POST",
+    body: JSON.stringify(guardiaRoto),
+  });
+  ok(
+    "016 · option key protegida alterada → 422 con motivo claro",
+    valGuard.res.status === 422 &&
+      (valGuard.json?.details ?? []).length > 0 &&
+      (valGuard.json?.details ?? []).some((d) =>
+        d.path.startsWith("jev_questions.next_action")
+      ),
+    JSON.stringify({ status: valGuard.res.status, details: valGuard.json?.details })
+  );
+  ok(
+    "016 · el guardarraíl degrada con 422, nunca con 5xx",
+    valGuard.res.status < 500,
+    String(valGuard.res.status)
+  );
+
+  // --- El ciclo completo, con el documento reassemblado ---------------
+  const valOk = await api("/api/playbook/validate", {
+    method: "POST",
+    body: JSON.stringify(validateDoc),
+  });
+  ok(
+    "016 · el documento reassemblado valida 200 (ciclo del editor)",
+    valOk.res.ok && valOk.json?.ok === true,
+    JSON.stringify(valOk.json)
+  );
+
+  const created = await api("/api/playbook/draft", { method: "POST", body: "{}" });
+  ok("016 · crear draft → 201", created.res.status === 201, JSON.stringify(created.json).slice(0, 200));
+
+  if (created.json?.draft) {
+    const nuevoPrecio = "S/999 (precio de prueba 009)";
+    const put = await api("/api/playbook/draft", {
+      method: "PUT",
+      body: JSON.stringify({ ...reassembled, writer: { ...published.writer, present_price: nuevoPrecio } }),
+    });
+    ok("016 · guardar documento completo → 200", put.res.ok, JSON.stringify(put.json).slice(0, 200));
+    ok(
+      "016 · el guardado conserva el resto del ConfigV1 (jev_questions intacto)",
+      put.json?.draft?.writer?.present_price === nuevoPrecio &&
+        put.json?.draft?.jev_questions?.next_action !== undefined,
+      JSON.stringify({ price: put.json?.draft?.writer?.present_price })
+    );
+
+    // El candado vive en el servidor: el PUT tampoco es puerta trasera.
+    const putGuard = await api("/api/playbook/draft", {
+      method: "PUT",
+      body: JSON.stringify(guardiaRotoPut),
+    });
+    ok(
+      "016 · PUT con guardarraíl violado → 422 (el servidor manda)",
+      putGuard.res.status === 422,
+      JSON.stringify({ status: putGuard.res.status, body: putGuard.json })
+    );
+
+    const pub = await api("/api/playbook/publish", {
+      method: "POST",
+      body: JSON.stringify({ notes: "E2E 009: ciclo del editor JSON" }),
+    });
+    ok("016 · publicar → 200", pub.res.ok, JSON.stringify(pub.json).slice(0, 200));
+    ok(
+      "016 · la publicada en vigor recoge el cambio del editor",
+      (await api("/api/playbook")).json?.published?.writer?.present_price === nuevoPrecio,
+      JSON.stringify({
+        actual: (await api("/api/playbook")).json?.published?.writer?.present_price,
+      })
+    );
+  }
+
+  const vs = (await api("/api/playbook/versions")).json?.versions ?? [];
+  ok(
+    "016 · el historial incluye una versión publicada",
+    vs.some((v) => v.status === "published"),
+    JSON.stringify(vs.map((v) => ({ n: v.version_number, s: v.status })))
+  );
+
+  const anterior = vs.find((v) => v.status === "archived");
+  if (anterior) {
+    const roll = await api("/api/playbook/rollback", {
+      method: "POST",
+      body: JSON.stringify({ version_id: anterior.id, notes: "E2E 009: rollback del editor" }),
+    });
+    ok("016 · rollback → 200", roll.res.ok, JSON.stringify(roll.json).slice(0, 200));
+  }
+
+  const del = await api("/api/playbook/draft", { method: "DELETE" });
+  ok("016 · eliminar draft → 200 (idempotente)", del.res.ok, JSON.stringify(del.json).slice(0, 140));
+
+  const finalState = await api("/api/playbook");
+  ok(
+    "016 · tras el ciclo completo sigue habiendo una publicada en vigor",
+    finalState.res.ok && Boolean(finalState.json?.published) && !finalState.json?.draft,
+    JSON.stringify({ p: finalState.json?.published?.version_number, d: finalState.json?.draft })
+  );
 
   cookie = cookieA;
 }

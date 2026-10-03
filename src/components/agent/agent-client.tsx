@@ -16,7 +16,7 @@ type TabId = "comportamiento" | "conocimiento" | "playbook";
 const TABS: readonly { id: TabId; label: string }[] = [
   { id: "comportamiento", label: "Comportamiento" },
   { id: "conocimiento", label: "Conocimiento" },
-  { id: "playbook", label: "Sales Playbook" },
+  { id: "playbook", label: "Comercial / Jev" },
 ];
 
 type Profile = {

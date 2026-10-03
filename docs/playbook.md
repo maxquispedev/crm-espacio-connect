@@ -37,12 +37,13 @@ una **versión nueva**, nunca una edición sobrescrita.
 
 ## Cómo crear un draft
 
-Todo el editor vive en la pestaña **Sales Playbook**, en la pantalla de
+Todo el editor vive en la pestaña **Comercial / Jev**, en la pantalla de
 configuración del agente.
 
-1. Abre esa pestaña. Verás la tarjeta de la versión publicada en vigor.
-2. Pulsa **Crear draft desde esta versión**. El borrador arranca como copia
-   exacta de lo que está publicado hoy.
+1. Abre esa pestaña. Verás la tarjeta **Estado y versionado** con la versión
+   publicada en vigor, la de schema, las fechas y las notas.
+2. Pulsa **Crear draft**. El borrador arranca como copia exacta de lo que está
+   publicado hoy.
 3. Edita lo que necesites y guarda.
 4. Cuando estés conforme, publica (sección siguiente).
 
@@ -58,6 +59,70 @@ Reglas del borrador:
 - Si tu organización aún no tiene ninguna versión publicada, no hay punto de
   partida del cual copiar. La siembra la hace el sistema al arrancar; si falta,
   es un problema de despliegue y le toca al administrador.
+
+---
+
+## Los dos documentos JSON
+
+La pestaña edita tu estrategia como **dos documentos JSON**, no como un
+formulario. Es deliberado: los formularios obligaban a pelear con una grilla de
+campos para cambiar un precio, y la estrategia comercial son datos, no un
+formulario.
+
+| # | Documento | Qué contiene |
+|---|---|---|
+| **1** | **Configuración comercial JSON** | `product`, `offer`, `commercial_policy`, `priorities`, `writer`, `prohibitions`, `handoff`, `urgency_rules` |
+| **2** | **Preguntas Jev JSON** | el objeto `jev_questions` completo |
+
+Los dos son **el mismo playbook**, partido en dos para que no tengas que buscar
+las preguntas entre el resto de la configuración. No son dos piezas
+independientes: al guardar se unen en un único documento y eso es lo que se
+persiste. Si prefieres trabajar con el documento entero en un solo sitio,
+puedes copiar los bloques del editor 1 y las preguntas del editor 2 a un
+archivo propio y pegarlas de vuelta.
+
+Notas prácticas de edición:
+
+- El texto viene **formateado** con 2 espacios. Pégalo como te venga: el botón
+  **Formatear JSON** lo vuelve a formatear sin cambiar nada de contenido.
+- **Formatear JSON** se deshabilita solo si el documento **no** es JSON válido.
+  Nunca escribe un documento que no haya sido capaz de leer.
+- Mientras haya un error de sintaxis, **Validar** y **Guardar** están
+  deshabilitados: no tiene sentido mandar al servidor algo que el propio editor
+  no puede leer.
+
+### Errores de sintaxis
+
+Si el JSON no parsea, el editor te dice **exactamente dónde**:
+
+```text
+JSON inválido · línea 12, columna 5 · Unexpected token } in JSON at position 287
+```
+
+La línea y la columna se calculan a partir del texto que escribiste, así que
+apuntan a tu documento, no a un contador interno. Si el motor no da posición,
+se muestra el error crudo **sin inventar** línea ni columna.
+
+### Errores de validación (los decide el servidor)
+
+Pulsar **Validar** manda el documento completo al servidor. Es el **servidor**
+quien dice si tu playbook es válido: el editor no implementa las reglas por su
+cuenta, así que nunca puede dejar pasar algo que el motor vaya a rechazar.
+
+Los errores aparecen junto al editor que los produjo, con su ruta literal:
+
+```text
+offer.monthlyBase · Expected number, received string
+jev_questions.next_action · clave protegida: no se puede editar
+```
+
+- Un error cuyo camino empieza por `jev_questions` sale bajo el **editor 2**;
+  el resto, bajo el **editor 1**.
+- El texto a la izquierda de cada error es la **ruta exacta** dentro del
+  documento. Si ves `offer.monthlyBase`, el problema está en ese campo concreto,
+  no "en la oferta" en general.
+- **Guardar sin validar es legítimo**: puedes dejar el draft a medias mientras
+  trabajas. **Publicar** no: el backend revalida el documento entero.
 
 ---
 
@@ -92,7 +157,7 @@ y por qué se publicó.
 
 El rollback es tu salida rápida cuando algo publicado sale mal.
 
-1. Pulsa **Ver historial** en el editor del playbook.
+1. Pulsa **Ver historial** en la pestaña **Comercial / Jev**.
 2. En el **Historial de versiones**, localiza la versión que quieres recuperar. Solo
    las versiones archivadas que no son la actual ofrecen la acción **Rollback a V{n}**.
 3. Pulsa **Rollback a V{n}**, escribe el **Comentario** obligatorio (por qué
@@ -132,11 +197,24 @@ sola: publica una versión.
 
 ---
 
-## Qué hace el editor Jev (tres clases)
+## Qué significan los candados de las preguntas Jev (tres clases)
 
-Las preguntas que el agente hace para entender al cliente no son todas iguales. El
-editor las agrupa en tres clases, cada una con un candado distinto (lo verás con una
-insignia junto a la pregunta).
+Las preguntas que el agente hace para entender al cliente no son todas iguales. La
+pestaña te muestra, bajo el editor 2, una **leyenda** con las tres clases y qué
+pregunta pertenece a cada una. Ya no se editan visualmente, pero la leyenda se
+mantiene porque explica por qué el servidor va a rechazar ciertos cambios, en vez de
+que los descubras con un error.
+
+| Clase | Qué no puedes cambiar | Qué sí puedes |
+|---|---|---|
+| 🔒 `engine-required` | key, type, option keys, y no se pueden desactivar | las descripciones |
+| 📊 `known-signal` | key, type y option keys | las descripciones, y activar/desactivar |
+| ➕ `analytical` | nada del contrato | todo: crear, renombrar, duplicar, eliminar |
+
+Los candados **no se aplican en el navegador**: los aplica el servidor cuando
+validas o guardas. Si tocas algo bloqueado, recibes un 422 con la ruta exacta del
+campo y el motivo. Eso significa que puedes experimentar libremente en el editor:
+nada de lo que escribas llega a la base si el servidor no lo acepta.
 
 ### 🔒 `engine-required` — el contrato del motor
 
@@ -189,8 +267,11 @@ libertad total: crearlas, desactivarlas, renombrarlas, duplicarlas y eliminarlas
 ## Cómo correr el laboratorio comercial
 
 El Laboratorio es tu banco de pruebas: antes de publicar un cambio relevante,
-lo pruebas. Elige en qué versión quieres correr la evaluación (selector
-**Playbook**) y pulsa **Correr evaluación**.
+lo pruebas. La pestaña **Comercial / Jev** tiene un botón **Abrir el Laboratorio**
+justo encima de los editores, para que no tengas que buscarlo en el menú.
+
+En el Laboratorio eliges en qué versión quieres correr la evaluación (selector
+**Playbook**) y pulsas **Correr evaluación**.
 
 | Modo | Qué corre |
 |---|---|
@@ -311,7 +392,7 @@ configurarlo a mano.
   código** como `DEFAULTS_ONLY`: se usan en las pruebas y como respaldo documentado
   si faltara una versión publicada. **No se borraron.**
 
-Para ver tu versión sembrada: abre la pestaña **Sales Playbook**. Ahí verás la
+Para ver tu versión sembrada: abre la pestaña **Comercial / Jev**. Ahí verás la
 versión publicada en vigor y su historial.
 
 ---

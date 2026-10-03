@@ -46,29 +46,128 @@
 sin tocar comportamiento, conocimiento, infraestructura durable, validación
 backend, guardarraíles, versionado ni Laboratorio. **No activa producción.**
 
-- [ ] **T911** — Sustituir `playbook-draft-editor.tsx` por el editor de
+- [x] **T911** — Sustituir `playbook-draft-editor.tsx` por el editor de
   **Configuración comercial JSON** (textarea monoespaciado, 2 namespaces,
   botón Formatear, errores de parseo con línea/columna).
   `**/src/components/agent/playbook/**`
-- [ ] **T912** — Sustituir `jev-questions-editor.tsx` por el editor de
+  - **Hecho**: `playbook-draft-editor.tsx` pasó de 8 formularios a un
+    `JsonEditor` sobre el `ConfigV1` sin `jev_questions`
+    (`CONFIG_EDITABLE_KEYS`), con barra de acciones (Validar / Guardar /
+    Descartar / Publicar / Eliminar draft) y `dirty` por contenido.
+  - Primitivas nuevas en `**/json-editor.tsx**`: `parseJsonDocument` (nunca
+    lanza, devuelve el error con línea/columna desde el `position` de V8,
+    leyendo también la forma moderna `(line X column Y)`), `formatJsonDocument`
+    y `useJsonDocState`. `FormatButton` se deshabilita si no parsea y
+    `format()` **no escribe nunca** un documento que no haya parseado.
+  - **Evidencia**: `tests/unit/playbook-json-editor.test.ts` (11 tests) fija el
+    contrato de línea/columna, el formateo a 2 espacios y el round-trip.
+    El test verifica que la posición calculada **señala el mismo carácter que
+    señala V8**, en vez de fijar un número.
+
+- [x] **T912** — Sustituir `jev-questions-editor.tsx` por el editor de
   **Preguntas Jev JSON**, conservando la legibilidad de las clases de guardarraíl
   (`engine-required` / known signal / analytical-custom).
   `**/src/components/agent/playbook/**`
-- [ ] **T913** — Integrar el ciclo completo en `playbook-client.tsx`: crear
+  - **Hecho**: `jev-questions-editor.tsx` (966 → ~200 líneas) es un `JsonEditor`
+    del objeto `jev_questions` completo, con la **leyenda de guardarraíles**
+    (🔒 / 📊 / ➕ + etiqueta + lista de claves por clase + tooltip) construida
+    desde `constants.ts` (`classifyJevQuestion`, `JEV_QUESTION_CLASS_*`). La
+    leyenda sobrevive aunque el JSON no parsee: cae al último objeto válido.
+  - **No se reimplementó ninguna validación**: los candados siguen siendo
+    exclusivamente del servidor (`ConfigV1Schema` + `assertJevProtectedKeys`).
+    La UI solo **explica** por qué el servidor va a rechazar algo.
+
+- [x] **T913** — Integrar el ciclo completo en `playbook-client.tsx`: crear
   draft, validar (`POST /api/playbook/validate`), guardar, publicar, historial,
   rollback; mostrar versión publicada, draft, `schema_version` y
   `version_number`; CTA al Laboratorio.
   `**/src/components/agent/playbook/playbook-client.tsx**`
-- [ ] **T914** — Podar los componentes de formulario que queden **sin ninguna
+  - **Hecho**: proyección (`projectConfig` quita `jev_questions`) y reassembly
+    (`{ ...configEdit, jev_questions: jevEdit }`) en `DraftEditorPane`; el `PUT`
+    manda el **documento completo**, igual que antes. Botón **Validar** con
+    throttle de 800 ms que siempre llama al endpoint; `details[]` se reparten
+    con `issuesForConfig` / `issuesForJev` para que cada error salga junto a su
+    editor con su `path` literal. Se reutilizan crear draft, guardar, publicar
+    (nota obligatoria), historial, rollback y eliminar draft.
+  - **Estado/versionado**: tarjeta nueva con versión publicada, draft,
+    `schema_version`, `version_number`, fechas y notas (`formatDateTime`).
+  - **CTA al Laboratorio**: enlace a `/lab` sobre los editores. **No** se
+    construyó un segundo laboratorio ni se duplicó su runner; `Button` de este
+    repo no soporta `asChild`, así que el CTA es un `Link` con las clases del
+    botón outline.
+  - **Corrección de un defecto heredado**: el editor anterior perdía el
+    comentario del draft (el textarea escribía `notes` pero `handleSave` solo
+    mandaba `config`) y un fallo de red de la validación inyectaba un issue
+    falso que **bloqueaba Publicar**. En la versión nueva los fallos de red son
+    un aviso, no un `details[]` inventado, así que no pueden bloquear nada.
+  - **Asimetría que había que respetar (hallazgo del corte, con test):** el
+    documento **debe llevar `schema_version` para `validate`** y **no debe
+    llevarlo para el `PUT`**. `ConfigV1Schema` declara
+    `schema_version: z.literal("1.0")` **obligatorio**, así que
+    `POST /api/playbook/validate` rechaza un body sin él; y
+    `PUT /api/playbook/draft` usa un cuerpo `.strict()` de los nueve bloques
+    que lo rechazaría si fuera. La UI lo resuelve reinyectando
+    `draft.schema_version` solo en la llamada a validar. Queda atado por
+    `tests/unit/playbook-json-editor.test.ts` (grupo "el documento que se
+    manda a cada endpoint") para que nadie lo rompa creyendo que sobra.
+
+- [x] **T914** — Podar los componentes de formulario que queden **sin ninguna
   referencia** (verificado con grep + typecheck + lint). Nada de borrados
   heroicos: lo dudoso se deja sin uso y se documenta.
   `**/src/components/agent/playbook/fields.tsx**`
+  - **Hecho**: `fields.tsx` pasó de 465 a **solo `Modal`**. Se borraron
+    `FieldRow`, `TextField`, `TextAreaField`, `NumberField`, `SelectField`,
+    `SwitchField`, `StringListEditor` y `BlockSection`.
+  - **Prueba** (el `grep` es la prueba, `tsc` no avisa de exports sin usar):
+    tras la sustitución, en `src/`, `tests/` y `scripts/`, los nueve exports
+    dan **0 referencias** salvo `Modal` (7: import + 2 usos en
+    `playbook-client.tsx`). Se borraron los nueve, no los siete candidatos que
+    sugería el enunciado.
+  - **Corrección al `plan.md` §3.4**: el plan daba `BlockSection` por
+    sobreviviente. No lo sobrevivió: solo lo usaba el editor por bloques que
+    este corte sustituye. **No queda nada sin uso por duda**; lo dudoso que se
+    dejó fue el `type JevQuestions`, que se conserva exportado en
+    `jev-questions-editor.tsx` (0 importadores, pero es parte de la superficie
+    del módulo).
+
 - [ ] **T915** — E2E del ciclo en la UI nueva, incluidos los caminos infelices
   (JSON inválido, Zod inválido, guardarraíl violado): mensaje claro, sin crash.
   `**/scripts/e2e-selftest.mjs**`, `**/tests/e2e/**`
-- [ ] **T916** — Actualizar `docs/playbook.md` (el dueño ahora edita JSON) y
+  - **Código: HECHO y registrado.** Sección 016 (`runSection016`) agregada al
+    arnés y llamada en `main()`: verifica el reassembly (9 claves, idéntico a
+    la publicada), el ciclo crear draft → validar → guardar → publicar →
+    historial → rollback → eliminar draft, y los **tres caminos infelices
+    obligatorios**: JSON inválido → 400 `bad_json` sin crash; `monthlyBase`
+    como string → 422 con `path` `offer.monthlyBase`; option key protegida de
+    `next_action` alterada → 422 con `path` y nunca 5xx (también en el `PUT`:
+    el candado es del servidor). `node --check scripts/e2e-selftest.mjs` verde.
+  - **EJECUCIÓN EN VIVO: PENDIENTE.** Este entorno no tiene Docker, `psql` ni
+    PostgreSQL, y la app no está levantada, así que `pnpm test:e2e` no puede
+    correr. Conforme a la Constitución IX, esto **no** se reporta como verificado
+    en vivo: queda pendiente para una sesión con stack disponible. La sección
+    es API-only y no depende de selectores de DOM, que es donde cambió la UI.
+  - Guion guiado: no se modificó `tests/e2e/us-sales-playbook.md` porque
+    describe el comportamiento de negocio (publicar/rollback), que no cambió.
+    Se dejó la organización de pruebas como estaba.
+
+- [x] **T916** — Actualizar `docs/playbook.md` (el dueño ahora edita JSON) y
   `docs/CURRENT_STATE.md`.
+  - `docs/playbook.md`: sección nueva **"Los dos documentos JSON"** con los dos
+    documentos y qué contiene cada uno, el botón **Formatear JSON**, los errores
+    de sintaxis con línea/columna, los errores del servidor con su `path` y el
+    reparto por editor; la sección de candados Jev reescrita como **leyenda**;
+    el CTA al Laboratorio documentado; referencias a la pestaña actualizadas a
+    **Comercial / Jev**.
+  - `docs/CURRENT_STATE.md`: checkpoint nuevo al principio con el estado real.
   Commit: `feat(playbook): simplificar editor técnico JSON`
+
+### Constancia de cambio de regla (para que no se lea como regresión)
+
+> **La regla histórica "NO JSON crudo" (`.ai/tasks/sales-playbook/04-cut4-ui-playbook.md`,
+> línea 133) queda SUPERSEDED para la pestaña de playbook**, por decisión
+> explícita del dueño en el spec 009 §3.1. Sustituir los formularios por dos
+> editores JSON **es el objetivo de este corte**, no una regresión ni un
+> descuido. La regla sigue vigente en el resto del producto.
 
 ## Corte 2 — Baseline comercial vigente
 

@@ -1,5 +1,52 @@
 # CURRENT STATE — Espacio Connect
 
+**Actualizado: 2026-10-03 — Corte 1 del spec 009 (Editor técnico JSON del Playbook).**
+La pestaña de playbook en Agente pasó de ocho formularios por bloques a **dos
+editores JSON técnicos** (`textarea` monoespaciado, sin dependencias nuevas):
+**1. Configuración comercial JSON** (`product`, `offer`, `commercial_policy`,
+`priorities`, `writer`, `prohibitions`, `handoff`, `urgency_rules`) y **2.
+Preguntas Jev JSON** (`jev_questions`). La pestaña se renombró a **Comercial /
+Jev**; `Comportamiento` y `Conocimiento` intactas.
+
+Se conserva el ciclo completo (crear draft, validar, guardar, publicar con nota,
+historial, rollback, eliminar draft), se muestran versión publicada/draft,
+`schema_version` y `version_number`, fechas y notas, y hay un CTA **Abrir el
+Laboratorio** hacia `/lab` (el Laboratorio existente; no se duplicó su runner).
+
+**Regla histórica "NO JSON crudo": SUPERSEDED** para esta pestaña. La UI por
+formularios nunca se usó para su propósito real; el usuario objetivo edita
+configuración técnica. Queda registrado en
+`specs/009-playbook-runtime-admin/tasks.md` para que no se lea después como
+regresión. Sigue vigente en el resto del producto.
+
+El split Config / Preguntas Jev es una **proyección de cliente**: al guardar se
+reassembla `{ ...configEdit, jev_questions: jevEdit }` y se hace
+`PUT /api/playbook/draft` con el `ConfigV1` completo, **igual que antes**. Cero
+migraciones, cero endpoints nuevos, cero cambios en `ConfigV1Schema`,
+`constants.ts`, el loader, la base de datos o el Laboratorio. El cliente **no**
+implementa Zod: `POST /api/playbook/validate` sigue siendo la autoridad y los
+`details[]` se pintan junto al editor con su `path` literal. Los errores de
+sintaxis muestran línea y columna calculadas desde el `position` de `JSON.parse`
+(sin inventarlas si el motor no da posición). `fields.tsx` quedó reducido a
+`Modal` (lo usan publicar y rollback); los ocho primitivos de formulario se
+borraron tras verificar con grep que quedaban **sin ninguna referencia**
+(incluido `BlockSection`, que el plan daba por sobreviviente: no lo sobrevivió).
+
+**NO se tocó producción:** `SALES_PLAYBOOK_RUNTIME_ENABLED` sigue en `false`
+(eso es el corte 3). Cero cambios en `package.json`. Sender, webhook, CAPI,
+follow-ups y option keys contractuales de Jev, sin tocar.
+
+Gates: `pnpm typecheck` verde, `pnpm lint` verde (0 errores, 3 warnings
+preexistentes), `pnpm build` verde, **830/830 tests en 89 archivos** verdes
+(incluye 11 nuevos en `tests/unit/playbook-json-editor.test.ts`).
+E2E: la sección 016 del arnés (`scripts/e2e-selftest.mjs`) cubre el ciclo
+completo y los tres caminos infelices (JSON inválido → 400 `bad_json`, Zod
+inválido → 422 con `path`, guardarraíl violado → 422), y parsea con
+`node --check`; **no se ejecutó en vivo en esta sesión** porque el entorno no
+tiene Docker, `psql` ni PostgreSQL ni la app levantada. Queda como verificación
+pendiente.
+Commit único: `feat(playbook): simplificar editor técnico JSON`.
+
 ## Checkpoint de handoff — campaña Vende Veloz lista para operar (2026-10-01)
 
 Corte para retomar en una nueva sesión sin reconstruir contexto:
