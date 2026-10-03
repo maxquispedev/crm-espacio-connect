@@ -45,7 +45,7 @@ describe("normalizeJevResponse — contracto dinámico", () => {
           buying_timing: { type: "choice", choice: "unknown" },
           main_value_proposition: {
             type: "choice",
-            choice: "operations",
+            choice: "operational_control",
           },
           next_action: { type: "choice", choice: "ask_more_questions" },
           needs_human_call: { type: "noul", noul: 0.2 },
@@ -312,7 +312,7 @@ describe("normalizeJevResponse — contracto dinámico", () => {
       type: "score",
       enabled: true,
       instructions: "Magnitud del dolor actual",
-      criteria: { "0": "leve", "1": "medio", "2": "fuerte" },
+      criteria: ["leve", "medio", "fuerte"],
     };
     const activeQuestions: Record<string, JevQuestionDefinition> = {
       next_action: JEV_SALES_QUESTIONS_V2.next_action,

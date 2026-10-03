@@ -1,68 +1,4 @@
-/**
- * Tipos congelados del contrato de preguntas que Jev (TypeSafe) puede
- * resolver para el orchestrator de Ventas.
- *
- * Cada `JevQuestionDefinition` describe una pregunta que el motor puede
- * enviar al proveedor LLM. Las preguntas marcadas como `enabled = false`
- * en un playbook publicado NO se incluyen en el payload que el
- * orchestrator manda a Jev — son contratos que la agencia desactivó para
- * este negocio concreto (ver T303).
- *
- * El set por defecto (`JEV_SALES_QUESTIONS_V2`) NO lleva `enabled`: por
- * definición, todas las preguntas del set canónico están activas. El
- * runtime las trata como `enabled = true` cuando el campo está ausente.
- * El campo pasa a ser requerido al PUBLICAR un playbook (ver
- * `lib/sales/playbook/schema.ts`), donde `enabled = false` sí significa
- * "no preguntar" para esta organización.
- */
-export type JevQuestionDefinition =
-  | {
-      type: "choice";
-      enabled?: boolean;
-      instructions: string;
-      criteria: Record<string, string>;
-    }
-  | {
-      type: "noul";
-      enabled?: boolean;
-      instructions: string;
-      criteria: { true: string; false: string };
-    }
-  | {
-      type: "score";
-      enabled?: boolean;
-      instructions: string;
-      criteria: readonly string[];
-    };
-
-/** Conjunto activo que el motor va a enviar a Jev. */
-export type JevQuestions = Readonly<Record<string, JevQuestionDefinition>>;
-
-/** Devuelve solo las preguntas marcadas como activas (o no-marcadas). */
-export function pickActiveQuestions(
-  questions: JevQuestions | Record<string, JevQuestionDefinition> | undefined
-): Record<string, JevQuestionDefinition> {
-  const out: Record<string, JevQuestionDefinition> = {};
-  if (!questions) return out;
-  for (const [key, q] of Object.entries(questions)) {
-    if (q.enabled === false) continue;
-    out[key] = q;
-  }
-  return out;
-}
-
-/**
- * Set congelado de preguntas por defecto para el orchestrator.
- *
- * Fuente: maxquispedev/jevveloz/config/questions-v2.json.
- * Este objeto refleja el contrato canónico §7 del documento
- * `docs/SALES_ORCHESTRATOR.md`. El freeze test
- * (`sales-questions-freeze.test.ts`) exige que el JSON literal de este
- * bloque coincida exactamente con el bloque de preguntas que aparece en
- * ese documento — no añadir ni quitar claves, no cambiar nombres, no
- * reordenar.
- */
-export const JEV_SALES_QUESTIONS_V2 = {
+{
   "real_operational_need": {
     "type": "noul",
     "instructions": "¿Existe evidencia de que esta academia tiene actualmente una necesidad operativa real que Vende Veloz 365 puede ayudar a resolver?",
@@ -71,6 +7,7 @@ export const JEV_SALES_QUESTIONS_V2 = {
       "false": "La operación relevante ya está adecuadamente resuelta o no existe evidencia de una necesidad operativa actual."
     }
   },
+
   "product_fit": {
     "type": "score",
     "instructions": "Evalúa qué tan bien las capacidades de Vende Veloz 365 corresponden objetivamente con el tipo de operación de esta academia. Evalúa únicamente compatibilidad funcional, independientemente de si actualmente quiere cambiar de sistema o comprar.",
@@ -82,6 +19,7 @@ export const JEV_SALES_QUESTIONS_V2 = {
       "Encaje muy fuerte: las capacidades del producto corresponden ampliamente con la forma en que opera la academia."
     ]
   },
+
   "motivation_to_change": {
     "type": "score",
     "instructions": "Evalúa si existe una razón concreta para que la academia cambie, mejore o reorganice su forma actual de trabajar.",
@@ -93,6 +31,7 @@ export const JEV_SALES_QUESTIONS_V2 = {
       "Muy alta: necesita cambiar pronto y está evaluando activamente cómo implementar una nueva solución."
     ]
   },
+
   "purchase_intent": {
     "type": "score",
     "instructions": "Evalúa el nivel actual de intención comercial del lead basándote únicamente en lo que ha expresado o hecho dentro de la conversación. Diferencia curiosidad, evaluación e intención concreta de avanzar.",
@@ -104,6 +43,7 @@ export const JEV_SALES_QUESTIONS_V2 = {
       "Muy alta: expresa claramente intención de contratar, pagar, comenzar o coordinar la implementación."
     ]
   },
+
   "buying_timing": {
     "type": "choice",
     "instructions": "Determina exclusivamente el horizonte temporal de compra o implementación. No uses como evidencia las fechas u horarios para llamadas, demos, reuniones o seguimientos comerciales. Que un prospecto quiera reunirse hoy, mañana o la próxima semana no significa que quiera implementar en ese plazo. Si solo se conoce cuándo quiere conversar pero no cuándo quiere implementar, elige unknown.",
@@ -115,6 +55,7 @@ export const JEV_SALES_QUESTIONS_V2 = {
       "no_current_plan": "El prospecto deja claro que solo está curioseando, informándose o evaluando y que actualmente no tiene ningún plan concreto de implementación."
     }
   },
+
   "main_value_proposition": {
     "type": "choice",
     "instructions": "Determina cuál es el ángulo de valor más relevante para continuar comercialmente con este prospecto en este momento. Elige según la necesidad expresada o inferida del contexto. No prometas generación de demanda, ventas ni nuevos alumnos.",
@@ -126,6 +67,7 @@ export const JEV_SALES_QUESTIONS_V2 = {
       "no_relevant_value_now": "El producto puede corresponder al tipo de academia, pero actualmente no existe una necesidad, motivación de cambio o problema concreto que justifique continuar comercialmente."
     }
   },
+
   "next_action": {
     "type": "choice",
     "instructions": "Decide la siguiente acción comercial. El objetivo es avanzar leads con una necesidad real sin convertir la conversación en una encuesta, sin forzar llamadas innecesarias y sin perseguir prospectos sin intención. No hagas preguntas adicionales solamente porque podría existir un problema no mencionado.",
@@ -139,6 +81,7 @@ export const JEV_SALES_QUESTIONS_V2 = {
       "disqualify": "El prospecto no presenta una necesidad relevante, está satisfecho con su solución actual, no muestra motivación de cambio o no existe un motivo comercial concreto para continuar."
     }
   },
+
   "needs_human_call": {
     "type": "noul",
     "instructions": "¿Existe una razón clara por la que este prospecto necesite una llamada humana antes de poder continuar o cerrar razonablemente por WhatsApp?",
@@ -147,40 +90,4 @@ export const JEV_SALES_QUESTIONS_V2 = {
       "false": "La conversación puede continuar, mostrar el producto, presentar precio y potencialmente cerrar razonablemente por WhatsApp."
     }
   }
-} as const satisfies Record<string, JevQuestionDefinition>;
-
-/**
- * Tipos narrow de las respuestas válidas que `normalize.ts` puede
- * devolver. El motor solo exige `next_action` y `needs_human_call`; el
- * resto son señales conocidas que el consumidor (writer, UI) consume
- * cuando están presentes (T304, T305).
- */
-export type NextActionChoice =
-  | "ask_more_questions"
-  | "show_operations_demo"
-  | "show_online_enrollment_demo"
-  | "present_price"
-  | "schedule_call"
-  | "schedule_follow_up"
-  | "disqualify";
-
-export type BuyingTimingChoice = keyof typeof JEV_SALES_QUESTIONS_V2.buying_timing.criteria;
-
-export type MainValuePropositionChoice = keyof typeof JEV_SALES_QUESTIONS_V2.main_value_proposition.criteria;
-
-export type NoulAnswer = { type: "noul"; noul: number };
-export type ScoreAnswer = { type: "score"; score: number };
-export type ChoiceAnswer<T extends string> = { type: "choice"; choice: T };
-
-export type NormalizedNoul = NoulAnswer;
-export type NormalizedScore = ScoreAnswer;
-export type NormalizedChoice<T extends string> = ChoiceAnswer<T>;
-export type NormalizedAnswer =
-  | NormalizedNoul
-  | NormalizedScore
-  | NormalizedChoice<string>;
-
-export type NextActionAnswer = NormalizedChoice<NextActionChoice>;
-export type BuyingTimingAnswer = NormalizedChoice<BuyingTimingChoice>;
-export type MainValuePropositionAnswer =
-  NormalizedChoice<MainValuePropositionChoice>;
+}

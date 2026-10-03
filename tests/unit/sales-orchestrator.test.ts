@@ -268,7 +268,7 @@ describe("runSalesOrchestratorTurn", () => {
       ok: true,
       decision: makeDecision({
         nextAction: "schedule_follow_up",
-        buyingTiming: "this_year",
+        buyingTiming: "future_season",
       }),
       snapshot: {},
     });

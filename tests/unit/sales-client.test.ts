@@ -5,6 +5,10 @@ import { fileURLToPath } from "node:url";
 import { resetEnvCache } from "@/lib/env";
 import { evaluateJev, type JevEvaluateInput } from "@/server/sales/client";
 import { validJevRaw } from "./sales-fixtures";
+import canonicalQuestions from "../fixtures/jev-questions-v2.json";
+import { VENDE_VELOZ_PLAYBOOK_V1 } from "@/lib/sales/playbook/v1";
+import { ConfigV1Schema } from "@/lib/sales/playbook/schema";
+import { VENDE_VELOZ_PRODUCT, VENDE_VELOZ_COMMERCIAL_POLICY } from "@/server/sales/vende-veloz";
 
 function stubBaseEnv() {
   vi.stubEnv("APP_BASE_URL", "http://localhost:3000");
@@ -37,6 +41,41 @@ function abortError(): Error {
 }
 
 describe("evaluateJev (adapter)", () => {
+  it.each(["launch", "playbook"] as const)(
+    "%s: el JSON HTTP final conserva score arrays y choice/noul records",
+    async (mode) => {
+      vi.stubEnv("TYPESAFE_API_KEY", "local-test");
+      vi.stubEnv("TYPESAFE_JEV_ENDPOINT", "https://jev.test.example/evaluate");
+      vi.stubEnv("JEV_MODEL", "jev-test");
+      resetEnvCache();
+      const config = ConfigV1Schema.parse(JSON.parse(JSON.stringify(VENDE_VELOZ_PLAYBOOK_V1)));
+      const fetchMock = vi.fn().mockImplementation(async (_url: string, init: RequestInit) => {
+        const payload = JSON.parse(String(init.body));
+        for (const key of ["product_fit", "motivation_to_change", "purchase_intent"] as const) {
+          expect(Array.isArray(payload.questions[key].criteria)).toBe(true);
+          expect(payload.questions[key].criteria).toEqual(canonicalQuestions[key].criteria);
+        }
+        for (const question of Object.values(payload.questions) as Array<{type: string; criteria: unknown}>) {
+          expect(Array.isArray(question.criteria)).toBe(question.type === "score");
+        }
+        expect(payload.questions).toEqual(mode === "launch" ? canonicalQuestions : config.jev_questions);
+        return new Response(JSON.stringify(validJevRaw()), { status: 200 });
+      });
+      vi.stubGlobal("fetch", fetchMock);
+      const result = await evaluateJev({
+        state: {
+          ...EMPTY_STATE,
+          product: VENDE_VELOZ_PRODUCT,
+          commercial_policy: VENDE_VELOZ_COMMERCIAL_POLICY,
+          conversation: [{ from: "lead", text: "Tengo una academia, uso Excel para alumnos y pagos. Quiero conocer el precio." }],
+        },
+        questions: mode === "playbook" ? config.jev_questions : undefined,
+      });
+      expect(result.ok).toBe(true);
+      expect(fetchMock).toHaveBeenCalledOnce();
+    }
+  );
+
   beforeEach(() => {
     stubBaseEnv();
     resetEnvCache();

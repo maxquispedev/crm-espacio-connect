@@ -205,90 +205,97 @@ Congelada. Sincronizada desde `jevveloz/config/commercial-policy.json` (referenc
 
 ## 7. Jev V2 — contrato de preguntas
 
-Validado. Sincronizado desde `src/server/sales/questions.ts` (`JEV_SALES_QUESTIONS_V2`). Freeze local testeable: este bloque debe coincidir **exactamente** con la constante `JEV_SALES_QUESTIONS_V2`. **No reescribir. No “mejorar”. No añadir preguntas. No añadir `pause_and_wait`. No convertir en un lead score único.**
+Fuente de verdad: `maxquispedev/jevveloz/config/questions-v2.json`, blob
+`fe3e075ca43aec8f82e5bc34eb677ae6dcf82b68` (2026-10-02). Copia independiente
+en `tests/fixtures/jev-questions-v2.json`. El freeze compara fuente, código y
+este bloque. `score.criteria` es array ordenado de strings; `choice.criteria`
+es Record<string,string>; `noul.criteria` conserva true/false. No inventar
+escalas ni opciones. Las ocho preguntas se restauran literalmente del upstream.
 
 ```json
 {
-  "next_action": {
-    "type": "choice",
-    "instructions": "Elige la siguiente acción comercial que el agente debe tomar, considerando el momentum del lead y la información recopilada hasta ahora.",
-    "criteria": {
-      "ask_more_questions": "Necesitamos más información antes de avanzar.",
-      "show_operations_demo": "Vale la pena mostrar cómo Vende Veloz resuelve la operación diaria.",
-      "show_online_enrollment_demo": "Vale la pena mostrar cómo Vende Veloz resuelve la inscripción online.",
-      "present_price": "Tenemos suficiente evidencia para presentar el precio con confianza.",
-      "schedule_call": "Lo correcto es agendar una llamada con un humano del equipo.",
-      "schedule_follow_up": "Ahora no es buen momento, pero el lead sigue siendo relevante; deja un seguimiento programado.",
-      "disqualify": "El lead no encaja con Vende Veloz 365; cerramos sin quemar más turnos."
-    }
-  },
   "real_operational_need": {
     "type": "noul",
     "instructions": "¿Existe evidencia de que esta academia tiene actualmente una necesidad operativa real que Vende Veloz 365 puede ayudar a resolver?",
     "criteria": {
-      "true": "Hay síntomas operativos claros y actuales.",
-      "false": "No hay señales de una necesidad operativa actual."
+      "true": "Existen procesos manuales, información dispersa, falta de control, dependencia excesiva de WhatsApp, Excel o papel, dificultad para consultar la operación o una necesidad concreta relacionada con alumnos, pagos, ventas, horarios, asistencia, matrículas u otras capacidades existentes del producto.",
+      "false": "La operación relevante ya está adecuadamente resuelta o no existe evidencia de una necesidad operativa actual."
     }
   },
   "product_fit": {
     "type": "score",
-    "instructions": "En escala 0..3, ¿qué tan bien Vende Veloz 365 encaja con el tipo de academia y el momento del lead?",
-    "criteria": {
-      "0": "No encaja con su realidad.",
-      "1": "Encaje débil; tendría que forzar el producto.",
-      "2": "Encaje razonable con ajustes.",
-      "3": "Encaje natural con su operación."
-    }
+    "instructions": "Evalúa qué tan bien las capacidades de Vende Veloz 365 corresponden objetivamente con el tipo de operación de esta academia. Evalúa únicamente compatibilidad funcional, independientemente de si actualmente quiere cambiar de sistema o comprar.",
+    "criteria": [
+      "Sin encaje: las capacidades del producto prácticamente no corresponden con la operación de la academia.",
+      "Encaje débil: algunas capacidades podrían servir, pero existe poca correspondencia.",
+      "Encaje moderado: varias capacidades son aplicables a la operación.",
+      "Encaje fuerte: el producto corresponde claramente con gran parte de la operación de la academia.",
+      "Encaje muy fuerte: las capacidades del producto corresponden ampliamente con la forma en que opera la academia."
+    ]
   },
   "motivation_to_change": {
     "type": "score",
-    "instructions": "En escala 0..3, ¿qué tanta urgencia / motivación al cambio demuestra el lead en este momento?",
-    "criteria": {
-      "0": "No hay intención real de moverse del status quo.",
-      "1": "Insatisfacción pasiva; nada concreto en el horizonte.",
-      "2": "Incomodidad real; evalúa alternativas.",
-      "3": "Dolor agudo; busca activamente resolver."
-    }
+    "instructions": "Evalúa si existe una razón concreta para que la academia cambie, mejore o reorganice su forma actual de trabajar.",
+    "criteria": [
+      "Ninguna: está satisfecha con su situación actual y no expresa ningún motivo para cambiar.",
+      "Débil: existe curiosidad o alguna molestia menor, pero no una razón clara para cambiar.",
+      "Moderada: reconoce una limitación concreta y está explorando alternativas.",
+      "Alta: existe un problema importante que quiere resolver y está buscando activamente una alternativa.",
+      "Muy alta: necesita cambiar pronto y está evaluando activamente cómo implementar una nueva solución."
+    ]
   },
   "purchase_intent": {
     "type": "score",
-    "instructions": "En escala 0..3, ¿qué tan probable es que concrete una compra de Vende Veloz 365 en este momento si le damos el siguiente paso correcto?",
-    "criteria": {
-      "0": "Casi seguro no compra ahora.",
-      "1": "Compraría solo si el precio cambia mucho.",
-      "2": "Compraría si la oferta es razonable.",
-      "3": "Listo para cerrar en este turno."
-    }
+    "instructions": "Evalúa el nivel actual de intención comercial del lead basándote únicamente en lo que ha expresado o hecho dentro de la conversación. Diferencia curiosidad, evaluación e intención concreta de avanzar.",
+    "criteria": [
+      "Muy baja: curiosidad general sin señales de evaluación real.",
+      "Baja: solicita información, pero no muestra señales claras de considerar una implementación.",
+      "Media: está evaluando activamente cómo funcionaría para su academia.",
+      "Alta: muestra señales concretas como preguntar precio, pedir una demostración, proponer horarios, involucrar a un decisor o expresar que quiere implementar.",
+      "Muy alta: expresa claramente intención de contratar, pagar, comenzar o coordinar la implementación."
+    ]
   },
   "buying_timing": {
     "type": "choice",
-    "instructions": "Define el momento de compra más probable del lead, según lo que haya dicho explícitamente o lo que se pueda inferir.",
+    "instructions": "Determina exclusivamente el horizonte temporal de compra o implementación. No uses como evidencia las fechas u horarios para llamadas, demos, reuniones o seguimientos comerciales. Que un prospecto quiera reunirse hoy, mañana o la próxima semana no significa que quiera implementar en ese plazo. Si solo se conoce cuándo quiere conversar pero no cuándo quiere implementar, elige unknown.",
     "criteria": {
-      "now": "Quiere/necesita decidir pronto (semanas).",
-      "this_quarter": "Espera resolver este trimestre.",
-      "this_year": "Planea resolver este año.",
-      "exploring": "Está explorando, sin compromiso temporal.",
-      "unknown": "No hay señal suficiente para inferirlo."
+      "now": "El prospecto expresa explícitamente que quiere contratar, comenzar, implementar o resolverlo ahora o en los próximos días.",
+      "soon": "El prospecto expresa explícitamente que quiere implementar dentro de las próximas semanas o pocos meses, pero no inmediatamente.",
+      "future_season": "El prospecto indica explícitamente una temporada, apertura, campaña, mes o fecha futura para la que necesita tener implementada la solución.",
+      "unknown": "Existe interés o necesidad, pero todavía no ha indicado cuándo quiere implementar. También aplica cuando únicamente ha indicado cuándo desea tener una llamada, reunión o demostración.",
+      "no_current_plan": "El prospecto deja claro que solo está curioseando, informándose o evaluando y que actualmente no tiene ningún plan concreto de implementación."
     }
   },
   "main_value_proposition": {
     "type": "choice",
-    "instructions": "Resume en una etiqueta cuál es el valor principal que más le importa al lead (lo que activaría la decisión).",
+    "instructions": "Determina cuál es el ángulo de valor más relevante para continuar comercialmente con este prospecto en este momento. Elige según la necesidad expresada o inferida del contexto. No prometas generación de demanda, ventas ni nuevos alumnos.",
     "criteria": {
-      "operations": "Centralizar la operación diaria del negocio.",
-      "enrollment": "Resolver la inscripción online.",
-      "retention": "Retener y recuperar alumnos.",
-      "admin_overhead": "Quitar carga administrativa al dueño.",
-      "visibility": "Visibilidad en tiempo real del negocio.",
-      "unspecified": "Aún no está claro o no aplica."
+      "operational_control": "El principal valor es centralizar alumnos, pagos, ventas, saldos, horarios, asistencia y la operación diaria.",
+      "reduce_whatsapp_dependency": "El principal problema es depender demasiado de WhatsApp para consultas, matrículas, seguimiento, pagos o coordinación.",
+      "online_enrollment": "El prospecto ha expresado específicamente una necesidad relacionada con matrícula online, recepción de inscripciones o automatización de ese proceso.",
+      "reduce_manual_work": "El principal valor es reducir tareas repetitivas, duplicidad de registro o trabajo administrativo manual.",
+      "no_relevant_value_now": "El producto puede corresponder al tipo de academia, pero actualmente no existe una necesidad, motivación de cambio o problema concreto que justifique continuar comercialmente."
+    }
+  },
+  "next_action": {
+    "type": "choice",
+    "instructions": "Decide la siguiente acción comercial. El objetivo es avanzar leads con una necesidad real sin convertir la conversación en una encuesta, sin forzar llamadas innecesarias y sin perseguir prospectos sin intención. No hagas preguntas adicionales solamente porque podría existir un problema no mencionado.",
+    "criteria": {
+      "ask_more_questions": "Existe una señal concreta de necesidad o interés, pero falta una información esencial para saber qué mostrar o cómo encaja Vende Veloz.",
+      "show_operations_demo": "Existe una necesidad operativa identificada y conviene mostrar brevemente cómo Vende Veloz centraliza alumnos, pagos, ventas y operación diaria.",
+      "show_online_enrollment_demo": "El prospecto ha expresado específicamente una necesidad relacionada con matrícula online, inscripciones o automatización de ese proceso.",
+      "present_price": "El prospecto ya entiende el valor relevante, existe suficiente contexto y muestra interés concreto para presentar la propuesta económica.",
+      "schedule_call": "Existe interés real, pero la complejidad de la operación, múltiples sedes, múltiples decisores, integraciones, API, necesidades especiales o una solicitud explícita hacen recomendable una conversación humana.",
+      "schedule_follow_up": "Existe buen encaje e interés, pero el prospecto ha indicado que la necesidad corresponde a una temporada, apertura o fecha futura. Registrar el interés y retomar cerca del momento adecuado.",
+      "disqualify": "El prospecto no presenta una necesidad relevante, está satisfecho con su solución actual, no muestra motivación de cambio o no existe un motivo comercial concreto para continuar."
     }
   },
   "needs_human_call": {
     "type": "noul",
-    "instructions": "¿Vale la pena pasar este lead a un humano del equipo comercial en este turno?",
+    "instructions": "¿Existe una razón clara por la que este prospecto necesite una llamada humana antes de poder continuar o cerrar razonablemente por WhatsApp?",
     "criteria": {
-      "true": "Sí, hay valor real en intervención humana ahora.",
-      "false": "No, el agente puede seguir avanzando."
+      "true": "La operación es compleja, existen múltiples sedes o decisores, requiere API, integraciones o desarrollos especiales, hay necesidades difíciles de resolver por chat o el prospecto solicita explícitamente una reunión.",
+      "false": "La conversación puede continuar, mostrar el producto, presentar precio y potencialmente cerrar razonablemente por WhatsApp."
     }
   }
 }

@@ -1,4 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { createServer } from "node:http";
+import * as env from "@/lib/env";
+import canonicalQuestions from "../fixtures/jev-questions-v2.json";
 
 import { runSalesOrchestratorTurn } from "@/server/sales/orchestrator";
 import { makeDecision } from "./sales-fixtures";
@@ -149,6 +152,69 @@ function published(version: number) {
 }
 
 describe("lanzamiento: builder + orquestador + resolver reales", () => {
+  it("turno production-like usa cliente HTTP real sin 422 por criteria; falla seguro si Jev rechaza", async () => {
+    const received: unknown[] = [];
+    let reject = false;
+    const provider = createServer(async (req, res) => {
+      let body = "";
+      for await (const chunk of req) body += chunk;
+      const payload = JSON.parse(body);
+      received.push(payload.questions);
+      const invalid = Object.values(payload.questions).some((q) => {
+        const question = q as { type: string; criteria: unknown };
+        return question.type === "score" && !Array.isArray(question.criteria);
+      });
+      res.setHeader("content-type", "application/json");
+      if (invalid || reject) {
+        res.statusCode = 422;
+        res.end(JSON.stringify({ detail: [{ loc: ["body", "questions", "product_fit", "score", "criteria"], msg: "Input should be a valid list" }] }));
+      } else {
+        res.end(JSON.stringify({ answers: {
+          next_action: { type: "choice", choice: "present_price" },
+          needs_human_call: { type: "noul", noul: 0.1 },
+        } }));
+      }
+    });
+    try {
+      await new Promise<void>((resolve, rejectListen) => {
+        provider.once("error", rejectListen);
+        provider.listen(0, "127.0.0.1", resolve);
+      });
+      const address = provider.address();
+      if (!address || typeof address === "string") throw new Error("Puerto local ausente");
+      // Config sintética del adaptador: no lee ni modifica variables/secretos.
+      vi.spyOn(env, "isJevConfigured").mockReturnValue(true);
+      vi.spyOn(env, "getEnv").mockReturnValue({
+        APP_BASE_URL: "http://localhost:3000", DATABASE_URL: "postgresql://test:test@localhost/test",
+        BETTER_AUTH_SECRET: "local-test-placeholder", ENCRYPTION_KEY: Buffer.alloc(32).toString("base64"),
+        META_WEBHOOK_VERIFY_TOKEN: "local-test", META_GRAPH_API_VERSION: "v25.0",
+        META_GRAPH_BASE_URL: "http://localhost", OPENROUTER_BASE_URL: "http://localhost",
+        AGENT_COALESCE_MS: 0, MEDIA_DIR: "/tmp", NODE_ENV: "test",
+        TYPESAFE_API_KEY: "synthetic-test", TYPESAFE_JEV_ENDPOINT: `http://127.0.0.1:${address.port}/jev`, JEV_MODEL: "local-jev",
+      });
+      const client = await vi.importActual<typeof import("@/server/sales/client")>("@/server/sales/client");
+      evaluateJev.mockImplementation(client.evaluateJev);
+      writeSalesReply.mockResolvedValue({ ok: true, text: "Oferta conocida" });
+      deliverReply.mockResolvedValue(true);
+      const conv = queueTurn("org_1", "cv_http");
+      await runSalesOrchestratorTurn({ organizationId: "org_1", conversationId: conv.id, conversation: conv as never });
+      expect(received).toEqual([canonicalQuestions]);
+      expect(deliverReply).toHaveBeenCalledOnce();
+      expect(leadPatches.some(p => p.automationLane === "auto_close")).toBe(true);
+
+      reject = true;
+      const failed = queueTurn("org_1", "cv_http_rejected");
+      await runSalesOrchestratorTurn({ organizationId: "org_1", conversationId: failed.id, conversation: failed as never });
+      expect(received).toEqual([canonicalQuestions, canonicalQuestions]);
+      expect(deliverReply).toHaveBeenCalledOnce();
+      expect(leadPatches.at(-1)?.lastJevError).toContain("422");
+    } finally {
+      vi.restoreAllMocks();
+      provider.closeAllConnections();
+      await new Promise<void>(resolve => provider.close(() => resolve()));
+    }
+  });
+
   it("Published V1 y publicación posterior no cambian defaults; conserva Meta, perfil, lane, CRM y follow-ups por tenant", async () => {
     evaluateJev.mockResolvedValue({ ok: true, decision: makeDecision({ nextAction: "present_price" }), snapshot: {} });
     writeSalesReply.mockResolvedValue({ ok: true, text: "Oferta conocida" });
@@ -165,6 +231,10 @@ describe("lanzamiento: builder + orquestador + resolver reales", () => {
           source: "Meta Ads", ad_context: { source_type: "ad", headline: "Ordena tu academia", body: "Control de pagos" },
         }), questions: JEV_SALES_QUESTIONS_V2,
       });
+      const input = evaluateJev.mock.calls.at(-1)![0];
+      for (const key of ["product_fit", "motivation_to_change", "purchase_intent"]) {
+        expect(Array.isArray(input.questions[key].criteria)).toBe(true);
+      }
       expect(writeSalesReply).toHaveBeenLastCalledWith(expect.objectContaining({
         product: VENDE_VELOZ_PRODUCT, policy: VENDE_VELOZ_COMMERCIAL_POLICY,
         offer: VENDE_VELOZ_OFFER, writerInstructions: undefined,

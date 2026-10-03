@@ -972,3 +972,54 @@ contexto/efectos, sandbox intacto, claim global atómico con SKIP LOCKED.
 - Commit único: fix(follow-ups): estabilizar worker para lanzamiento.
   Sin pendientes del objetivo; próximo paso operativo: deploy habitual,
   no ejecutado ni requerido para este hotfix. Sin decisión comercial nueva.
+
+## Hotfix contrato Jev validado — 2026-10-02
+
+Restauración del contrato existente, sin feature ni estrategia nueva.
+Fuente: maxquispedev/jevveloz/config/questions-v2.json (blob
+fe3e075ca43aec8f82e5bc34eb677ae6dcf82b68), copia independiente en
+`tests/fixtures/jev-questions-v2.json`. Score usa listas ordenadas; choice
+usa records y noul true/false. Restaurar las ocho preguntas exactas y las
+uniones de respuesta canónicas; conservar runtime false y configs editables.
+Clarificación: alcance aprobado explícitamente por el incidente productivo.
+Constitution Check: sin servicios, secretos, tenant queries ni sender nuevos;
+sandbox e idempotencia intactos. Sin decisiones de negocio nuevas.
+Análisis: Zod/ConfigV1/editor/V1 ya conservan arrays; el tipo runtime y el
+hardcode/freeze divergieron. El cast del orchestrator oculta la incompatibilidad.
+
+- [x] JC1 — Restaurar preguntas/tipo y consumidores de claves canónicas; retirar cast.
+- [x] JC2 — Freeze independiente, regresiones payload HTTP, Zod/API y lanzamiento.
+- [x] JC3 — Typecheck/lint/test/build y E2E comercial happy/unhappy según entorno.
+- [x] JC4 — Evidencia, CURRENT_STATE, doc de contrato y commit atómico.
+
+
+### Evidencia JC y handoff
+
+- Fuente GitHub recuperada directamente, blob `fe3e075ca43aec8f82e5bc34eb677ae6dcf82b68`;
+  freeze verifica hash Git del contenido (salvo newline final), igualdad JSON
+  de las ocho preguntas y docs §7, arrays de cinco strings y records choice/noul.
+- Tipo score readonly string[]; Zod/ConfigV1/editor/serialización/persistencia
+  ya usan arrays y se preservaron. Cast incompatible retirado del orchestrator.
+  Claves de respuesta y serializer alineados con fuente, resolver restaura
+  exactamente la condición future_season anterior al commit regresivo.
+- HTTP local: builder/orquestador/resolver/cliente reales con conversación
+  isTest=false, aiEnabled=true, handoffAt=null y lane auto. Proveedor estricto
+  captura JSON canónico completo, responde 200 y se observa entrega + auto_close.
+  422 forzado persiste error y no agrega outbound. BD/writer/delivery simulados;
+  NO equivale al E2E completo con Next/PostgreSQL ni llamada real a TypeSafe.
+- API PUT rechaza record score para las tres preguntas antes de persistir.
+  Payload HTTP launch y ConfigV1 roundtrip conservan arrays. Regresión launch
+  mantiene runtime false, aislamiento, atribución, scheduling y perfil.
+- Gates verdes: typecheck, lint (0 errores/3 warnings previos), build,
+  test **830/830 en 89 archivos**; `node --check scripts/e2e-follow-ups.mjs` verde.
+  pnpm --pm-on-fail=ignore igual que checkpoint anterior, sin cambiar package/lock.
+  Test HTTP requiere permiso de socket local fuera del sandbox (EPERM inicial,
+  rerun autorizado verde). Logs `/tmp/jev-{typecheck,lint,tests,build}.log`.
+- [ ] E2E completo app+PostgreSQL: pendiente; localhost:3000/api/health no
+  conecta, Docker/postgres/psql ausentes. No se usó .env para levantar ni se
+  contactó el proveedor real. Arnés existente actualizado para rechazar scores
+  en objeto, impidiendo futuros falsos verdes.
+- Commit único: `fix(sales): restaurar contrato Jev validado para score criteria`.
+  Árbol limpio tras commit; no deploy en esta sesión. Siguiente paso: ejecutar
+  arnés comercial con stack efímero disponible y desplegar por flujo habitual.
+  Sin pricing/reglas comerciales nuevas ni sincronización Obsidian necesaria.

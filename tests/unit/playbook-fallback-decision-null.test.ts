@@ -54,10 +54,10 @@ describe("fallback con decision.* null (T305)", () => {
     });
   });
 
-  it("resolve-plan: buyingTiming = this_year → mantiene future_season (branching V2)", () => {
+  it("resolve-plan: buyingTiming = future_season → mantiene future_season (branching V2)", () => {
     const plan = resolveSalesPlan({
       decision: decisionWithNulls({
-        buyingTiming: { type: "choice", choice: "this_year" },
+        buyingTiming: { type: "choice", choice: "future_season" },
       }),
       currentSalesState: BASE_FACTS,
       currentPipelineStage: "interested",

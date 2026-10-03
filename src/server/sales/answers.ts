@@ -31,20 +31,9 @@ export type NormalizedChoice<T extends string> = {
  * El runtime valida contra `JEV_SALES_QUESTIONS_V2.buying_timing.criteria`
  * — esta unión debe coincidir con esas claves.
  */
-export type BuyingTimingChoice =
-  | "now"
-  | "this_quarter"
-  | "this_year"
-  | "exploring"
-  | "unknown";
+export type BuyingTimingChoice = import("./questions").BuyingTimingChoice;
 
-export type MainValuePropositionChoice =
-  | "operations"
-  | "enrollment"
-  | "retention"
-  | "admin_overhead"
-  | "visibility"
-  | "unspecified";
+export type MainValuePropositionChoice = import("./questions").MainValuePropositionChoice;
 
 export type NextActionChoice =
   | "ask_more_questions"

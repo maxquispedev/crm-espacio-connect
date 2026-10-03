@@ -18,11 +18,22 @@ if (process.env.FOLLOW_UP_E2E !== '1' ||
 process.env.TZ = 'America/Lima';
 let writerFail = false;
 let writerDelay = 0;
-const answers = {real_operational_need:{type:'noul',noul:0.62},product_fit:{type:'score',score:2.4},motivation_to_change:{type:'score',score:1.8},purchase_intent:{type:'score',score:1.5},buying_timing:{type:'choice',choice:'unknown'},main_value_proposition:{type:'choice',choice:'operations'},next_action:{type:'choice',choice:'present_price'},needs_human_call:{type:'noul',noul:0.12}};
+const answers = {real_operational_need:{type:'noul',noul:0.62},product_fit:{type:'score',score:2.4},motivation_to_change:{type:'score',score:1.8},purchase_intent:{type:'score',score:1.5},buying_timing:{type:'choice',choice:'unknown'},main_value_proposition:{type:'choice',choice:'operational_control'},next_action:{type:'choice',choice:'present_price'},needs_human_call:{type:'noul',noul:0.12}};
 const provider = http.createServer(async (req,res) => {
-  for await (const chunk of req) { void chunk; }
+  let body = "";
+  for await (const chunk of req) { body += chunk; }
   res.setHeader('content-type','application/json');
-  if(req.url === '/jev') {res.end(JSON.stringify({model:'local-jev',answers}));return;}
+  if(req.url === '/jev') {
+    const payload = JSON.parse(body);
+    const invalid = Object.entries(payload.questions).find(([, q]) =>
+      q.type === 'score' && (!Array.isArray(q.criteria) || q.criteria.some(c => typeof c !== 'string')));
+    if (invalid) {
+      res.statusCode = 422;
+      res.end(JSON.stringify({detail:[{loc:['body','questions',invalid[0],'score','criteria'],msg:'Input should be a valid list'}]}));
+      return;
+    }
+    res.end(JSON.stringify({model:'local-jev',answers}));return;
+  }
   if(writerDelay) await new Promise(resolve=>setTimeout(resolve,writerDelay));
   if(writerFail) {res.statusCode=503;res.end('{}');return;}
   res.end(JSON.stringify({choices:[{message:{content:JSON.stringify({text:'¿Retomamos lo que conversamos?'})}}]}));

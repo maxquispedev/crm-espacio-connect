@@ -21,7 +21,7 @@ export function mockJevRaw(): {
       buying_timing: { type: "choice", choice: "unknown" },
       main_value_proposition: {
         type: "choice",
-        choice: "operations",
+        choice: "operational_control",
       },
       next_action: { type: "choice", choice: "ask_more_questions" },
       needs_human_call: { type: "noul", noul: 0.12 },

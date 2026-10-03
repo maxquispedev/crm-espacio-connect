@@ -1,3 +1,4 @@
+import { BUYING_TIMING_OPTION_KEYS, MAIN_VALUE_PROPOSITION_OPTION_KEYS } from "@/lib/sales/playbook/constants";
 import { schema } from "@/lib/db";
 import type { AutomationLane, ContactSalesDto, SalesSnapshotDto } from "@/lib/types";
 import { AUTOMATION_LANES } from "@/server/sales/lanes";
@@ -14,22 +15,9 @@ const NEXT_ACTIONS = new Set([
   "disqualify",
 ]);
 
-const BUYING_TIMINGS = new Set([
-  "now",
-  "this_quarter",
-  "this_year",
-  "exploring",
-  "unknown",
-]);
+const BUYING_TIMINGS = new Set<string>(BUYING_TIMING_OPTION_KEYS);
 
-const MAIN_VALUE_PROPOSITIONS = new Set([
-  "operations",
-  "enrollment",
-  "retention",
-  "admin_overhead",
-  "visibility",
-  "unspecified",
-]);
+const MAIN_VALUE_PROPOSITIONS = new Set<string>(MAIN_VALUE_PROPOSITION_OPTION_KEYS);
 
 /**
  * DTO operativo del estado comercial. No incluye snapshot crudo ni probabilities.

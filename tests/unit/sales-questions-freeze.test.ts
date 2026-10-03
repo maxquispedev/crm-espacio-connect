@@ -1,8 +1,11 @@
 import { readFileSync } from "node:fs";
+import { createHash } from "node:crypto";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { JEV_SALES_QUESTIONS_V2 } from "@/server/sales/questions";
+import canonicalQuestions from "../fixtures/jev-questions-v2.json";
+import { VENDE_VELOZ_PLAYBOOK_V1 } from "@/lib/sales/playbook/v1";
 import {
   VENDE_VELOZ_COMMERCIAL_POLICY,
   VENDE_VELOZ_OFFER,
@@ -25,6 +28,46 @@ function jsonAfterHeading(heading: string): unknown {
 }
 
 describe("contrato congelado Jev V2 / producto / política", () => {
+  it("la fixture conserva el blob validado de upstream (excepto newline final)", () => {
+    const content = readFileSync(
+      resolve(dirname(fileURLToPath(import.meta.url)), "../fixtures/jev-questions-v2.json")
+    );
+    const source = content.subarray(0, content.length - 1);
+    expect(content.at(-1)).toBe(10);
+    const blob = createHash("sha1")
+      .update(`blob ${source.length}\0`)
+      .update(source)
+      .digest("hex");
+    expect(blob).toBe("fe3e075ca43aec8f82e5bc34eb677ae6dcf82b68");
+  });
+
+  it("las ocho preguntas coinciden con la fuente upstream independiente", () => {
+    expect(JEV_SALES_QUESTIONS_V2).toEqual(canonicalQuestions);
+    expect(Object.keys(JEV_SALES_QUESTIONS_V2)).toHaveLength(8);
+  });
+
+  it.each(["product_fit", "motivation_to_change", "purchase_intent"] as const)(
+    "%s usa la lista canónica de cinco criterios, también en ConfigV1",
+    (key) => {
+      const question = JEV_SALES_QUESTIONS_V2[key];
+      expect(Array.isArray(question.criteria)).toBe(true);
+      expect(question.criteria).toHaveLength(5);
+      expect(question.criteria).toEqual(canonicalQuestions[key].criteria);
+      expect(VENDE_VELOZ_PLAYBOOK_V1.jev_questions[key]?.criteria).toEqual(question.criteria);
+    }
+  );
+
+  it("choice conserva records y noul conserva exclusivamente true/false", () => {
+    for (const [key, question] of Object.entries(JEV_SALES_QUESTIONS_V2)) {
+      if (question.type === "score") continue;
+      expect(Array.isArray(question.criteria)).toBe(false);
+      expect(question.criteria).toEqual(canonicalQuestions[key as keyof typeof canonicalQuestions].criteria);
+      if (question.type === "noul") {
+        expect(Object.keys(question.criteria)).toEqual(["true", "false"]);
+      }
+    }
+  });
+
   it("JEV_SALES_QUESTIONS_V2 equivale exactamente al bloque §7 del documento", () => {
     const frozen = jsonAfterHeading("## 7. Jev V2");
     expect(JEV_SALES_QUESTIONS_V2).toEqual(frozen);

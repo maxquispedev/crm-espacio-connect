@@ -583,9 +583,9 @@ describe("PUT /api/playbook/draft (T203) — guardarraíles Jev", () => {
       ...buyingTiming,
       criteria: {
         inmediatamente: buyingTiming.criteria.now,
-        this_quarter: buyingTiming.criteria.this_quarter,
-        this_year: buyingTiming.criteria.this_year,
-        exploring: buyingTiming.criteria.exploring,
+        soon: buyingTiming.criteria.soon,
+        future_season: buyingTiming.criteria.future_season,
+        no_current_plan: buyingTiming.criteria.no_current_plan,
         unknown: buyingTiming.criteria.unknown,
       },
     } as never;

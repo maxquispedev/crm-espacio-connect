@@ -279,6 +279,24 @@ beforeEach(() => {
 });
 
 describe("engine-required (2): presencia, type y enabled fijos", () => {
+  it.each(["product_fit", "motivation_to_change", "purchase_intent"])(
+    "PUT rechaza %s.criteria como record antes de persistir",
+    async (key) => {
+      await openDraft();
+      const qs = structuredClone(VENDE_VELOZ_PLAYBOOK_V1.jev_questions);
+      const original = qs[key];
+      expect(original?.type).toBe("score");
+      const invalid = {
+        ...qs,
+        [key]: { ...original, criteria: { "0": "Bajo", "1": "Alto" } },
+      };
+      const { status, body } = await putQuestions(invalid);
+      expect(status).toBe(422);
+      expect(JSON.stringify(body)).toContain("criteria");
+      expect(versionsByOrg.get("org_a")!.find(v => v.status === "draft")!.jevQuestionsJson).toEqual(qs);
+    }
+  );
+
   it("422 engine_required_type_mismatch si next_action pasa a noul", async () => {
     await openDraft();
     const qs = tamperedQuestions();
