@@ -153,6 +153,35 @@ y por qué se publicó.
 
 ---
 
+## ⚠️ Antes de encender el runtime: publica el baseline comercial
+
+**Este es el paso que falta hoy.** El runtime productivo sigue **apagado**
+(`SALES_PLAYBOOK_RUNTIME_ENABLED = false`), así que las conversaciones reales están
+usando todavía el fallback del código. Ese fallback ya trae la oferta vigente de la
+primera cohorte, pero el plan es que en un paso posterior el motor lea la
+**publicada** de tu organización.
+
+Antes de encender el motor, haz esto:
+
+1. Abre **Agente → Comercial / Jev**.
+2. Crea un borrador y revisa que el bloque de oferta tenga la oferta vigente de la
+   primera cohorte:
+   - `setup`: **0** (implementación asistida incluida, sin costo de setup);
+   - `monthlyBase`: **247**;
+   - `includedActiveStudents`: **50**;
+   - `extraPerActiveStudent`: **1** (desde el alumno 51);
+   - que el primer mes se paga por adelantado y que no hay permanencia obligatoria;
+   - que la renovación del dominio (desde el 2º año) queda **aparte** y **no
+     encabeza el pitch**.
+3. **Publica** esa versión con un comentario que lo explique.
+4. Solo después de tener una **versión publicada** con este baseline se puede
+   encender el runtime.
+
+Mientras tanto el sistema funciona igual: si no hay publicada, el motor cae al
+fallback documentado y lo dice con un aviso (ver *Cómo funciona el fallback*).
+
+---
+
 ## Cómo hacer rollback
 
 El rollback es tu salida rápida cuando algo publicado sale mal.

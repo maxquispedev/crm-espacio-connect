@@ -97,13 +97,24 @@ describe("contrato congelado Jev V2 / producto / política", () => {
     ]);
   });
 
-  it("VENDE_VELOZ_OFFER conserva el contrato de precio del writer", () => {
+  it("VENDE_VELOZ_OFFER conserva el contrato de precio del writer (baseline cohorte 1)", () => {
     expect(VENDE_VELOZ_OFFER.currency).toBe("PEN");
-    expect(VENDE_VELOZ_OFFER.setup).toBe(497);
-    expect(VENDE_VELOZ_OFFER.monthlyBase).toBe(197);
+    expect(VENDE_VELOZ_OFFER.setup).toBe(0);
+    expect(VENDE_VELOZ_OFFER.monthlyBase).toBe(247);
     expect(VENDE_VELOZ_OFFER.includedActiveStudents).toBe(50);
     expect(VENDE_VELOZ_OFFER.extraPerActiveStudent).toBe(1);
     expect(VENDE_VELOZ_OFFER.setupIsOneTime).toBe(true);
+  });
+
+  it("con setup 0 la implementación se declara incluida y la renovación de dominio va aparte", () => {
+    expect(VENDE_VELOZ_OFFER.implementation.purpose).toMatch(/incluida/i);
+    expect(VENDE_VELOZ_OFFER.implementation.includes.join(" ")).toMatch(/incluida|adelantado/i);
+    expect(VENDE_VELOZ_OFFER.implementation.includes.join(" ")).toMatch(/primer mes pagado por adelantado/i);
+    expect(VENDE_VELOZ_OFFER.implementation.includes.join(" ")).toMatch(/sin permanencia obligatoria/i);
+    expect(VENDE_VELOZ_OFFER.neverPromise.join(" ")).toMatch(/renovaci[oó]n del dominio/i);
+    // El fallback no puede seguir anunciando los precios de la cohorte anterior.
+    expect(JSON.stringify(VENDE_VELOZ_OFFER)).not.toMatch(/497/);
+    expect(JSON.stringify(VENDE_VELOZ_OFFER)).not.toMatch(/\b197\b/);
   });
 
   it("el shape del State en §8 es product/policy/crm_state/conversation con speakers lead|seller", () => {

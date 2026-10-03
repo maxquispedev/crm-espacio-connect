@@ -119,7 +119,7 @@ beforeEach(() => {
 
 import { VENDE_VELOZ_PRODUCT, VENDE_VELOZ_COMMERCIAL_POLICY, VENDE_VELOZ_OFFER } from "@/server/sales/vende-veloz";
 import { JEV_SALES_QUESTIONS_V2 } from "@/server/sales/questions";
-import { buildJevSalesState } from "@/server/sales/build-state";
+import { buildJevSalesState, SALES_PLAYBOOK_RUNTIME_ENABLED } from "@/server/sales/build-state";
 
 function queueTurn(orgId: string, conversationId: string) {
   const conv = { ...CONVERSATION, id: conversationId, organizationId: orgId };
@@ -263,5 +263,26 @@ describe("lanzamiento: builder + orquestador + resolver reales", () => {
     expect(evaluateJev).not.toHaveBeenCalled();
     expect(writeSalesReply).not.toHaveBeenCalled();
     expect(leadPatches).toHaveLength(0);
+  });
+});
+
+/**
+ * T925 (corte 2, spec 009) — regresión de freeze.
+ *
+ * El corte 2 sincroniza el baseline comercial y el bootstrap, pero
+ * **no enciende nada**: el runtime productivo sigue en `false` y las
+ * conversaciones reales siguen usando los defaults como fallback.
+ * Encenderlo es el corte 3, y este test es lo que lo hace explícito.
+ */
+describe("freeze de producción — el corte 2 NO enciende el runtime", () => {
+  it("SALES_PLAYBOOK_RUNTIME_ENABLED sigue en false", () => {
+    expect(SALES_PLAYBOOK_RUNTIME_ENABLED).toBe(false);
+  });
+
+  it("el baseline comercial quedó sincronizado aunque el runtime siga apagado", () => {
+    expect(VENDE_VELOZ_OFFER.setup).toBe(0);
+    expect(VENDE_VELOZ_OFFER.monthlyBase).toBe(247);
+    expect(VENDE_VELOZ_OFFER.includedActiveStudents).toBe(50);
+    expect(VENDE_VELOZ_OFFER.extraPerActiveStudent).toBe(1);
   });
 });

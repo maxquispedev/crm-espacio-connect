@@ -147,25 +147,28 @@ Congelado. Sincronizado desde `jevveloz/config/product.json` (referencia validad
   ],
   "how_it_starts": "El equipo puede registrar alumnos, matrículas y cobros desde el primer día. La web de matrícula y los pagos automáticos son opcionales.",
   "implementation": {
-    "price": "S/497",
-    "kind": "pago único",
+    "price": "Incluida, sin costo de implementación",
+    "kind": "incluida; el primer mes se paga por adelantado",
     "includes": [
       "Entender cómo trabaja la academia",
       "Definir el uso del sistema",
       "Configuración con funciones existentes",
       "Carga inicial acordada",
       "Usuarios y capacitación",
+      "Primer mes pagado por adelantado",
+      "Sin permanencia obligatoria",
       "30 días de acompañamiento del uso real",
-      "Dominio el primer año"
+      "Dominio .com del primer año cuando la academia lo necesita; si ya tiene uno, se conecta el existente"
     ],
     "does_not_include": [
       "Digitación o migración ilimitada",
       "Desarrollos personalizados",
-      "Gestión de publicidad o consultoría continua de marketing"
+      "Gestión de publicidad o consultoría continua de marketing",
+      "Renovación del dominio desde el segundo año, que se cotiza aparte y no se usa como argumento de venta"
     ]
   },
   "subscription": {
-    "price": "S/197 al mes",
+    "price": "S/247 al mes",
     "includes_active_students": 50,
     "extra_active_student": "S/1 por alumno activo adicional desde el 51",
     "active_student_means": "Alumno con matrícula vigente. El historial no aumenta la mensualidad."
@@ -176,10 +179,19 @@ Congelado. Sincronizado desde `jevveloz/config/product.json` (referencia validad
 `VENDE_VELOZ_OFFER` sigue existiendo como ayuda determinística del writer/CRM (no va en el State de Jev):
 
 - moneda: PEN
-- implementación: S/497 una sola vez
-- mensualidad: S/197 hasta 50 alumnos activos
+- implementación: **incluida, sin costo de setup** (no hay fee por adelantado)
+- primer mes: pagado por adelantado
+- mensualidad: S/247 hasta 50 alumnos activos
 - desde el alumno activo 51: +S/1 por alumno activo
-- jamás prometer generación de alumnos, demanda o ventas
+- permanencia: no obligatoria
+- dominio `.com` del primer año incluido cuando la academia lo necesita; si ya
+  tiene uno, se conecta el existente
+- renovación del dominio: desde el 2º año se cobra **aparte** y **no encabeza el
+  pitch**
+- jamás prometer generación de alumnos, demanda o ventas, ni que la renovación
+  del dominio esté incluida
+- objetivo de la primera cohorte: **aprendizaje** de compra, adopción, uso y
+  retención — no maximizar margen
 
 ---
 

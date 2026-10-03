@@ -206,9 +206,15 @@ function buildWriterSystemPrompt(input: WriteSalesReplyInput): string {
 }
 
 function offerBlock(offer: VendeVelozOffer): string {
+  // `setup: 0` significa implementación asistida incluida. Renderizar
+  // "- Implementación: S/0 una sola vez" mandaría un precio falso al lead
+  // (DV-7 del corte 2), así que la línea cambia por completo.
+  const setup: number = offer.setup;
   return [
     "Oferta vigente (única fuente de precio):",
-    `- Implementación: S/${offer.setup} una sola vez.`,
+    setup === 0
+      ? "- Implementación asistida incluida, sin costo de setup."
+      : `- Implementación: S/${setup} una sola vez.`,
     `- Mensualidad: S/${offer.monthlyBase} hasta ${offer.includedActiveStudents} alumnos activos.`,
     `- Desde el alumno activo ${offer.includedActiveStudents + 1}: +S/${offer.extraPerActiveStudent} por alumno activo.`,
     `- La implementación busca ${offer.implementation.purpose}: ${offer.implementation.includes.join(", ")}.`,
@@ -249,7 +255,7 @@ function defaultNextActionInstruction(action: SalesPlan["nextAction"]): string {
     case "show_online_enrollment_demo":
       return "Centra la respuesta en matrícula o inscripción online: el lead expresó esa necesidad. No inventes URL.";
     case "present_price":
-      return "Presenta la oferta vigente con claridad: implementación S/497; S/197/mes hasta 50 activos; +S/1 por alumno activo desde el 51. Sin descuentos inventados.";
+      return "Presenta la oferta vigente con claridad: la implementación asistida está incluida y no tiene costo de setup; el primer mes se paga por adelantado; S/247/mes hasta 50 alumnos activos; +S/1 por alumno activo desde el 51; sin permanencia obligatoria. Sin descuentos inventados y sin briefing de contrato.";
     case "schedule_call":
       return "Redacta una transición corta a atención humana. No inventes una hora si no fue acordada en la conversación.";
     case "schedule_follow_up":

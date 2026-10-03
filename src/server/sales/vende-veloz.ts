@@ -36,25 +36,28 @@ export const VENDE_VELOZ_PRODUCT = {
   how_it_starts:
     "El equipo puede registrar alumnos, matrículas y cobros desde el primer día. La web de matrícula y los pagos automáticos son opcionales.",
   implementation: {
-    price: "S/497",
-    kind: "pago único",
+    price: "Incluida, sin costo de implementación",
+    kind: "incluida; el primer mes se paga por adelantado",
     includes: [
       "Entender cómo trabaja la academia",
       "Definir el uso del sistema",
       "Configuración con funciones existentes",
       "Carga inicial acordada",
       "Usuarios y capacitación",
+      "Primer mes pagado por adelantado",
+      "Sin permanencia obligatoria",
       "30 días de acompañamiento del uso real",
-      "Dominio el primer año",
+      "Dominio .com del primer año cuando la academia lo necesita; si ya tiene uno, se conecta el existente",
     ],
     does_not_include: [
       "Digitación o migración ilimitada",
       "Desarrollos personalizados",
       "Gestión de publicidad o consultoría continua de marketing",
+      "Renovación del dominio desde el segundo año, que se cotiza aparte y no se usa como argumento de venta",
     ],
   },
   subscription: {
-    price: "S/197 al mes",
+    price: "S/247 al mes",
     includes_active_students: 50,
     extra_active_student: "S/1 por alumno activo adicional desde el 51",
     active_student_means:
@@ -87,13 +90,13 @@ export type VendeVelozCommercialPolicy = typeof VENDE_VELOZ_COMMERCIAL_POLICY;
 
 export const VENDE_VELOZ_OFFER = {
   currency: "PEN",
-  setup: 497,
-  monthlyBase: 197,
+  setup: 0,
+  monthlyBase: 247,
   includedActiveStudents: 50,
   extraPerActiveStudent: 1,
   setupIsOneTime: true,
   implementation: {
-    purpose: "adopción real",
+    purpose: "adopción real durante el primer mes, incluida y sin costo de implementación",
     includes: [
       "configuración del flujo acordado",
       "carga de datos acordada",
@@ -101,9 +104,18 @@ export const VENDE_VELOZ_OFFER = {
       "capacitación",
       "primeras operaciones reales",
       "acompañamiento inicial",
+      "primer mes pagado por adelantado",
+      "sin permanencia obligatoria",
+      "dominio .com del primer año cuando la academia lo necesita",
     ],
   },
-  neverPromise: ["generación de alumnos", "demanda", "ventas"],
+  neverPromise: [
+    "generación de alumnos",
+    "demanda",
+    "ventas",
+    "que la renovación del dominio desde el segundo año esté incluida",
+    "que la renovación del dominio sea el argumento principal de la venta",
+  ],
 } as const;
 
 export type VendeVelozOffer = typeof VENDE_VELOZ_OFFER;

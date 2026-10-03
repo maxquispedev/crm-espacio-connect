@@ -47,13 +47,13 @@ const VENDE_VELOZ_PLAYBOOK_V1_RAW: ConfigV1 = {
   },
   offer: {
     currency: "PEN",
-    setup: 497,
-    monthlyBase: 197,
+    setup: 0,
+    monthlyBase: 247,
     includedActiveStudents: 50,
     extraPerActiveStudent: 1,
     setupIsOneTime: true,
     implementation: {
-      purpose: "adopción real durante el primer mes",
+      purpose: "adopción real durante el primer mes, asistida e incluida sin costo de implementación",
       includes: [
         "Entender cómo trabaja la academia",
         "Configuración acordada con funciones existentes",
@@ -62,7 +62,9 @@ const VENDE_VELOZ_PLAYBOOK_V1_RAW: ConfigV1 = {
         "Usuarios y capacitación",
         "Primeras operaciones reales asistidas",
         "Acompañamiento de adopción durante 30 días",
-        "Dominio propio durante el primer año cuando aplique",
+        "Primer mes pagado por adelantado",
+        "Sin permanencia obligatoria",
+        "Dominio .com del primer año cuando la academia lo necesita; si ya tiene uno, se conecta el existente",
       ],
     },
     neverPromise: [
@@ -73,18 +75,20 @@ const VENDE_VELOZ_PLAYBOOK_V1_RAW: ConfigV1 = {
       "Recuperación de inversión en X meses",
       "Pérdidas de ventas por WhatsApp sin evidencia",
       "Falsas señales de escasez o urgencia",
+      "Que la renovación del dominio desde el segundo año esté incluida o se anuncie su costo de antemano",
+      "Que la renovación del dominio sea el argumento que encabeza la venta",
     ],
   },
   commercial_policy: {
     defaultChannel: "WhatsApp",
     goal:
-      "Avanzar comercialmente de forma automática todo lo posible y reservar la intervención humana para los casos donde aporte valor real.",
+      "Esta es la primera cohorte: el objetivo es aprender de la compra, la adopción, el uso y la retención reales. No maximizar margen ni forzar el cierre autónomo de punta a punta. Un turno que filtra tráfico, entrega información honesta y escala a una persona a tiempo vale más que uno que presiona por cerrar.",
     automationFirst:
-      "El agente puede obtener contexto, explicar el producto, mostrar demos o videos, presentar precio, resolver preguntas estándar, hacer seguimiento e intentar cerrar sin intervención humana.",
+      "El agente puede obtener el contexto mínimo, explicar el producto, mostrar demos o videos, presentar el precio vigente, resolver preguntas estándar y hacer seguimiento. Puede dejar de insistir cuando no hay encaje.",
     autoClose:
-      "Si el prospecto quiere avanzar y el caso es estándar, sin complejidad especial, el agente puede continuar hasta instrucciones de pago e implementación.",
+      "Si el prospecto quiere avanzar y el caso es estándar, el agente puede llegar hasta el precio y las condiciones y escalar a una persona para el cierre. En esta fase no se exige cerrar la venta de manera autónoma de punta a punta.",
     humanHandoff:
-      "Escalar a humano cuando exista complejidad, integraciones o API, múltiples sedes o decisores, negociación u objeciones importantes, necesidades especiales o una solicitud explícita de conversación humana.",
+      "Escalar a humano ante avance comercial genuino (intención clara de avanzar, decisor identificado, acuerdo en curso) o cuando el prospecto lo pida explícitamente. También con complejidad, integraciones o API, múltiples sedes o decisores, negociación u objeciones importantes.",
     futureInterest:
       "Si existe interés real pero la implementación corresponde a una temporada o fecha futura, programar seguimiento automático cerca de ese momento, sin inventar la fecha.",
     noResponse:
@@ -96,20 +100,20 @@ const VENDE_VELOZ_PLAYBOOK_V1_RAW: ConfigV1 = {
   },
   priorities: {
     primary: [
+      "Intención real de avanzar",
+      "Necesidad operativa real y expresada",
+      "Encaje con academias y escuelas deportivas",
       "Control operativo",
       "Alumnos y apoderados",
-      "Planes, ciclos y horarios",
-      "Pagos completos y parciales",
-      "Saldos pendientes",
-      "Control de ingresos",
-      "Siguiente ciclo y renovación",
-      "Adopción real",
+      "Pagos, saldos y control de ingresos",
+      "Adopción real durante el primer mes",
     ],
     secondary: [
+      "Contexto mínimo para decidir",
+      "Planes, ciclos y horarios",
       "Matrícula online",
-      "Automatización de tareas administrativas",
-      "Menor dependencia de WhatsApp",
       "Control de cupos",
+      "Menor dependencia de WhatsApp",
     ],
     tertiary: ["Asistencia y sesiones", "Inventario y productos"],
   },
@@ -121,7 +125,7 @@ const VENDE_VELOZ_PLAYBOOK_V1_RAW: ConfigV1 = {
     show_online_enrollment_demo:
       "Cuando el prospecto menciona matrícula online, explica cómo funciona el formulario de inscripción, qué datos captura y cómo llegan los registros al sistema sin digitación manual. Aclara que es opcional y se activa cuando la academia lo necesita.",
     present_price:
-      "Contextualiza con claridad: S/497 es puesta en marcha + adopción (pago único); después S/197 al mes hasta 50 alumnos activos; desde el alumno 51 se cobra +S/1 por alumno activo adicional. No ofrezcas descuentos que no existen y no negocies el precio base por WhatsApp.",
+      "Presenta la oferta vigente con claridad y sin rodeos: la implementación asistida está incluida y no tiene costo de setup, así que no existe fee por adelantado; el primer mes se paga por adelantado; la mensualidad es S/247 al mes hasta 50 alumnos activos y desde el alumno 51 se suma +S/1 por alumno activo adicional; no hay permanencia obligatoria. Menciona el dominio .com del primer año solo si la academia lo necesita. No menciones la renovación del dominio: desde el segundo año se cobra aparte y no encabeza el pitch. No ofrezcas descuentos que no existen, no negocies el precio base por WhatsApp y no entregues un resumen de contrato, condiciones legales ni letra chica: si el prospecto los pide, escala a una persona.",
     schedule_call:
       "Transición breve a una llamada humana. Pide el dato faltante (horario o teléfono) sin inventarlo. Aclara que el objetivo de la llamada es ordenar la complejidad, no presionar la compra.",
     schedule_follow_up:
@@ -134,10 +138,10 @@ const VENDE_VELOZ_PLAYBOOK_V1_RAW: ConfigV1 = {
       type: "noul",
       enabled: true,
       instructions:
-        "¿Existe evidencia de que esta academia tiene actualmente una necesidad operativa real que Vende Veloz 365 puede ayudar a resolver?",
+        "¿Existe evidencia de que esta academia tiene actualmente una necesidad operativa real que Vende Veloz 365 puede ayudar a resolver? En esta fase de aprendizaje pesa más la intención comercial expresada que el tamaño de la academia: una necesidad concreta en una academia pequeña vale más que un mensaje genérico de una grande.",
       criteria: {
         true:
-          "Existen procesos manuales, información dispersa, dependencia excesiva de WhatsApp, Excel o papel, dificultad para consultar la operación o una necesidad concreta relacionada con alumnos, pagos, ventas, horarios, asistencia, matrículas u otras capacidades existentes del producto.",
+          "Existen procesos manuales, información dispersa, falta de control, dependencia excesiva de WhatsApp, Excel o papel, dificultad para consultar la operación o una necesidad concreta relacionada con alumnos, pagos, ventas, horarios, asistencia, matrículas u otras capacidades existentes del producto.",
         false:
           "La operación relevante ya está adecuadamente resuelta o no existe evidencia de una necesidad operativa actual.",
       },
@@ -172,7 +176,7 @@ const VENDE_VELOZ_PLAYBOOK_V1_RAW: ConfigV1 = {
       type: "score",
       enabled: true,
       instructions:
-        "Evalúa el nivel actual de intención comercial del lead basándote únicamente en lo que ha expresado o hecho dentro de la conversación. Diferencia curiosidad, evaluación e intención concreta de avanzar.",
+        "Evalúa el nivel actual de intención comercial del lead basándote únicamente en lo que ha expresado o hecho dentro de la conversación. Diferencia curiosidad, evaluación e intención concreta de avanzar. Esta pregunta es la principal para filtrar tráfico: un mensaje que demuestra avance genuino pesa más que un prospecto que solo tiene un negocio grande o muchas preguntas. No midas intención por el tamaño de la academia ni por su facturación.",
       criteria: [
         "Muy baja: curiosidad general sin señales de evaluación real.",
         "Baja: solicita información, pero no muestra señales claras de considerar una implementación.",
@@ -203,16 +207,16 @@ const VENDE_VELOZ_PLAYBOOK_V1_RAW: ConfigV1 = {
       type: "choice",
       enabled: true,
       instructions:
-        "Determina cuál es el ángulo de valor más relevante para continuar comercialmente con este prospecto en este momento. Elige según la necesidad expresada o inferida del contexto. No prometas generación de demanda, ventas ni nuevos alumnos.",
+        "Determina cuál es el ángulo de valor más relevante para continuar comercialmente con este prospecto en este momento. Elige según la necesidad expresada o inferida del contexto, con el mínimo contexto necesario. No prometas generación de demanda, ventas ni nuevos alumnos, y no conviertas la renovación del dominio en el argumento principal: desde el segundo año se cobra aparte.",
       criteria: {
         operational_control:
-          "El principal valor es centralizar alumnos, pagos, ventas, saldos, horarios, asistencia y la operación diaria de la academia en un solo lugar.",
+          "El principal valor es centralizar alumnos, pagos, ventas, saldos, horarios, asistencia y la operación diaria.",
         reduce_whatsapp_dependency:
-          "El principal problema es depender demasiado de WhatsApp para consultas, matrículas, seguimiento, pagos o coordinación con apoderados y alumnos.",
+          "El principal problema es depender demasiado de WhatsApp para consultas, matrículas, seguimiento, pagos o coordinación.",
         online_enrollment:
           "El prospecto ha expresado específicamente una necesidad relacionada con matrícula online, recepción de inscripciones o automatización de ese proceso.",
         reduce_manual_work:
-          "El principal valor es reducir tareas repetitivas, duplicidad de registro o trabajo administrativo manual del equipo de la academia.",
+          "El principal valor es reducir tareas repetitivas, duplicidad de registro o trabajo administrativo manual.",
         no_relevant_value_now:
           "El producto puede corresponder al tipo de academia, pero actualmente no existe una necesidad, motivación de cambio o problema concreto que justifique continuar comercialmente.",
       },
@@ -221,7 +225,7 @@ const VENDE_VELOZ_PLAYBOOK_V1_RAW: ConfigV1 = {
       type: "choice",
       enabled: true,
       instructions:
-        "Decide la siguiente acción comercial. El objetivo es avanzar leads con una necesidad real sin convertir la conversación en una encuesta, sin forzar llamadas innecesarias y sin perseguir prospectos sin intención. No hagas preguntas adicionales solamente porque podría existir un problema no mencionado.",
+        "Decide la siguiente acción comercial. En esta fase de aprendizaje el objetivo es filtrar tráfico y avanzar solo a los leads que muestran intención, no forzar el cierre autónomo de punta a punta. Pide el contexto mínimo indispensable con UNA sola pregunta concreta cuando falte un dato que cambia la decisión, y nunca conviertas la conversación en una encuesta. No repreguntes lo ya respondido, no inventes dolores y no persigas a quien no ha reaccionado. Si hay avance comercial genuino o el prospecto pide hablar con una persona, la acción correcta es escalar, no insistir.",
       criteria: {
         ask_more_questions:
           "Existe una señal concreta de necesidad o interés, pero falta una información esencial para saber qué mostrar o cómo encaja Vende Veloz.",
@@ -243,7 +247,7 @@ const VENDE_VELOZ_PLAYBOOK_V1_RAW: ConfigV1 = {
       type: "noul",
       enabled: true,
       instructions:
-        "¿Existe una razón clara por la que este prospecto necesite una llamada humana antes de poder continuar o cerrar razonablemente por WhatsApp?",
+        "¿Existe una razón clara por la que este prospecto necesite una llamada humana antes de poder continuar o cerrar razonablemente por WhatsApp? En esta fase, el avance comercial genuino y la petición explícita de una persona son motivo suficiente para escalar. No exijas un cierre autónomo de punta a punta: es aceptable y correcto dejar el cierre a una persona.",
       criteria: {
         true:
           "La operación es compleja, existen múltiples sedes o decisores, requiere API, integraciones o desarrollos especiales, hay necesidades difíciles de resolver por chat o el prospecto solicita explícitamente una reunión.",
@@ -261,6 +265,8 @@ const VENDE_VELOZ_PLAYBOOK_V1_RAW: ConfigV1 = {
       "Recuperación de inversión",
       "Pérdidas de ventas por WhatsApp sin evidencia",
       "Falsas señales de escasez o urgencia",
+      "Renovación del dominio incluida desde el segundo año",
+      "Permanencia obligatoria o cancelación anticipada sin costo",
     ],
     prohibitedClaims: [
       "Garantizar alumnos",
@@ -268,19 +274,20 @@ const VENDE_VELOZ_PLAYBOOK_V1_RAW: ConfigV1 = {
       "Asegurar crecimiento de la matrícula",
       "Devolver la inversión",
       "Multiplicar la matrícula por un factor determinado",
+      "Cobrar un costo de implementación que ya está incluido",
     ],
   },
   handoff: {
     auto:
-      "Escalar si el prospecto lo pide explícitamente, si hay objeciones complejas o múltiples decisores.",
+      "Escalar si el prospecto pide explícitamente una persona, si hay avance comercial genuino o si aparece una objeción importante, negociación o múltiples decisores. No se exige cerrar la venta de forma autónoma en esta fase.",
     auto_close:
-      "Mantener auto hasta instrucciones de pago; derivar a humano solo si surge complejidad o el prospecto lo pide.",
+      "Mantener la conversación hasta entregar precio y condiciones con claridad, y derivar a una persona para el cierre. No prometer instrucciones de pago ni insistir si el prospecto no confirma avance.",
     human: "Mantener humano; no reagendar automáticamente.",
     wait: "Recordar al prospecto en el momento acordado sin presionar.",
     stop: "No insistir.",
   },
   urgency_rules:
-    "Preparación antes de temporada alta cuando el contexto del prospecto lo justifique. No asumir estacionalidad idéntica para todas las academias. No inventar urgencia.",
+    "En esta cohorte la urgencia la pone la academia, no el vendedor. No usar escasez, cuenta regresiva ni urgencia artificial. La preparación antes de una temporada alta solo se menciona si el propio prospecto habla de esa temporada. Si el prospecto no muestra intención, no transmitas presión: es preferible devolver un turno honesto que un cierre forzado.",
 };
 
 /**

@@ -1,5 +1,63 @@
 # CURRENT STATE — Espacio Connect
 
+**Actualizado: 2026-10-03 — Corte 2 del spec 009 (baseline comercial Vende Veloz).**
+El **fallback técnico** y el **bootstrap del playbook** quedaron sincronizados con la
+decisión comercial vigente de la primera cohorte: **setup 0** (implementación asistida
+incluida, sin costo de setup), **S/247/mes**, **50** alumnos activos incluidos y
+**+S/1** desde el 51, primer mes pagado por adelantado, sin permanencia obligatoria,
+dominio `.com` del primer año cuando la academia lo necesita (si ya tiene uno, se
+conecta el existente) y **renovación del dominio desde el 2º año cobrada aparte y sin
+encabezar el pitch**. El objetivo comercial del bootstrap pasa a ser **aprendizaje**
+(compra/adopción/uso/retención), no maximizar margen.
+
+**El runtime productivo sigue APAGADO.** `SALES_PLAYBOOK_RUNTIME_ENABLED` continúa en
+`false` (`src/server/sales/build-state.ts:37`) y ahora lo verifica una regresión
+explícita. Este corte **no** enciende nada; encenderlo es el corte 3.
+
+Cambios de código:
+
+- `VENDE_VELOZ_OFFER` (`src/server/sales/vende-veloz.ts`): `setup 497→0`,
+  `monthlyBase 197→247`; `implementation` y `neverPromise` reflejan la
+  implementación incluida y la renovación de dominio aparte. El bloque de producto
+  (`implementation.price`/`subscription.price`) y la lista de precios legendada de
+  `docs/SALES_ORCHESTRATOR.md` se actualizaron **en lockstep** porque el freeze test
+  los compara con igualdad exacta.
+- `VENDE_VELOZ_PLAYBOOK_V1` (`src/lib/sales/playbook/v1.ts`): mismos números, más
+  `implementation.includes`, `neverPromise`, `commercial_policy.goal` (aprendizaje),
+  `writer.present_price`, `handoff`, `urgency_rules`, `priorities` y `prohibitions`
+  coherentes con **filtrar tráfico**. En `jev_questions` se cambió **solo** el texto de
+  `instructions`; `src/server/sales/questions.ts` **NO se tocó** (sigue hash-frozen
+  contra el blob upstream).
+- `offerBlock` (`src/server/sales/writer.ts`): con `setup = 0` ya no renderiza
+  `- Implementación: S/0 una sola vez` (un precio falso que llegaría al lead); declara
+  la implementación como **incluida** (DV-7). El default interno de `present_price`
+  tenía el mismo problema y se corrigió en el mismo commit.
+
+**Drift preexistente encontrado y corregido:** los `criteria` de
+`main_value_proposition` y `real_operational_need` en `v1.ts` **ya divergían** de
+`tests/fixtures/jev-questions-v2.json` (el freeze test solo pineaba los `criteria` de
+las 3 preguntas `score`, no los de `choice`/`noul`). Se alinearon al texto canónico
+para que las 8 preguntas coincidan con la fixture, como exige el corte 2. No se tocó
+la fixture ni `questions.ts`, así que el hash `fe3e075…` sigue verde.
+
+**Pendiente reportado, no tocado por estar en zona prohibida:** el writer de
+follow-ups (`src/server/sales/follow-ups/follow-up-writer.ts:106`) sigue nombrando
+`S/497 / S/197` en la instrucción que prohíbe introducir precio antes de presentarlo.
+Con el baseline nuevo esos números son los equivocados. No se modificó porque este
+corte prohíbe tocar follow-ups; conviene corregirlo en un corte propio.
+
+Gates: `pnpm typecheck` verde, `pnpm lint` verde (0 errores, 3 warnings
+preexistentes), `pnpm build` verde, **867/867 tests en 91 archivos** verdes (nuevo
+`tests/unit/playbook-commercial-baseline.test.ts` con 18 casos, más casos de writer y
+freeze). E2E no reejecutado: este corte no cambia comportamiento observable del
+runtime porque el motor sigue apagado. Commit único:
+`feat(playbook): sincronizar baseline comercial Vende Veloz`.
+
+**👉 Paso operativo que falta antes del corte 3 (documentado en `docs/playbook.md`,
+sección *"Antes de encender el runtime: publica el baseline comercial"*):**
+crear/actualizar y **publicar desde la UI** una versión con este baseline comercial.
+Hasta que exista esa publicada, encender el runtime no tiene sentido.
+
 **Actualizado: 2026-10-03 — Corte 1 del spec 009 (Editor técnico JSON del Playbook).**
 La pestaña de playbook en Agente pasó de ocho formularios por bloques a **dos
 editores JSON técnicos** (`textarea` monoespaciado, sin dependencias nuevas):
@@ -1227,8 +1285,8 @@ tenant isolation, auditoría de versión y fallback hardcodeado.
 | Interruptor en `false` | `src/server/sales/build-state.ts:37` |
 | Loader sin cache | `src/lib/sales/playbook/loader.ts` |
 | Override solo en `is_test` | `src/server/sales/orchestrator.ts:78` |
-| Oferta vigente en código `497`/`197` | `src/server/sales/vende-veloz.ts` |
-| Hueco ejecutable: `writer.ts` emitiría "S/0" con `setup = 0` | `src/server/sales/writer.ts:211` |
+| Oferta vigente en código `0`/`247` (corte 2) | `src/server/sales/vende-veloz.ts` |
+| Hueco `writer.ts` "S/0" — **cerrado** en el corte 2 | `src/server/sales/writer.ts:211` |
 | `sales-launch-hardcoded.test.ts` **afirma hoy el congelamiento** | hay que invertirlo en el corte 3 |
 
 ### Cómo ejecutar

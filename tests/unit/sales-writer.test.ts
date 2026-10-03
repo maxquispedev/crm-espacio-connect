@@ -54,7 +54,7 @@ describe("writeSalesReply", () => {
     expect(chatJson).not.toHaveBeenCalled();
   });
 
-  it("inyecta la oferta S/497 + S/197 + S/1 y prohíbe decidir pipeline/handoff", async () => {
+  it("inyecta la oferta S/247 + S/1, declara la implementación incluida y prohíbe decidir pipeline/handoff", async () => {
     const plan = resolveSalesPlan({
       decision: makeDecision({ nextAction: "present_price" }),
       currentSalesState: BASE_FACTS,
@@ -70,16 +70,40 @@ describe("writeSalesReply", () => {
     expect(chatJson).toHaveBeenCalledOnce();
     const messages = chatJson.mock.calls[0]![1] as { role: string; content: string }[];
     const system = messages.find((m) => m.role === "system")?.content ?? "";
-    expect(system).toContain(`S/${VENDE_VELOZ_OFFER.setup}`);
     expect(system).toContain(`S/${VENDE_VELOZ_OFFER.monthlyBase}`);
     expect(system).toContain(`+S/${VENDE_VELOZ_OFFER.extraPerActiveStudent}`);
-    expect(system).toContain("S/497");
-    expect(system).toContain("S/197");
+    expect(system).toContain("S/247");
     expect(system).toMatch(/move_stage/);
     expect(system).toMatch(/PROHIBIDO/);
-    expect(VENDE_VELOZ_OFFER.setup).toBe(497);
-    expect(VENDE_VELOZ_OFFER.monthlyBase).toBe(197);
+    expect(VENDE_VELOZ_OFFER.setup).toBe(0);
+    expect(VENDE_VELOZ_OFFER.monthlyBase).toBe(247);
     expect(VENDE_VELOZ_OFFER.extraPerActiveStudent).toBe(1);
+  });
+
+  it("con setup 0 nunca renderiza 'S/0': declara la implementación asistida incluida (DV-7)", async () => {
+    const plan = resolveSalesPlan({
+      decision: makeDecision({ nextAction: "present_price" }),
+      currentSalesState: BASE_FACTS,
+      currentPipelineStage: "interested",
+    });
+    await writeSalesReply({
+      decision: makeDecision({ nextAction: "present_price" }),
+      plan,
+      conversation: [{ from: "lead", text: "¿cuánto cuesta?" }],
+      kb: [],
+      facts: BASE_FACTS,
+    });
+    const messages = chatJson.mock.calls[0]![1] as { role: string; content: string }[];
+    const system = messages.find((m) => m.role === "system")?.content ?? "";
+
+    // El hueco ejecutable de setup=0: antes producía "Implementación: S/0 una sola vez".
+    expect(system).not.toMatch(/S\/0/);
+    expect(system).not.toMatch(/una sola vez/);
+    expect(system).toMatch(/Implementación asistida incluida/i);
+    // Y el bloque de oferta conserva el resto de la oferta vigente.
+    expect(system).toContain("S/247");
+    expect(system).toContain("+S/1");
+    expect(system).toContain("50");
   });
 
   it("si el proveedor falla, no inventa texto comercial", async () => {
