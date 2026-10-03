@@ -1912,6 +1912,12 @@ async function main() {
   // encontró.
   await runSection017();
 
+  // 010 — Sección 018: Corte 1 (Comercial / Jev simplificado). El ciclo
+  // completo en la app real, la no pérdida de estado de los dos documentos,
+  // la regla Publicar-por-estado (el endpoint publica lo PERSISTIDO) y los
+  // caminos infelices. Re-ejecutable: restaura la versión publicada.
+  await runSection018();
+
   console.log(`\n===== ${checks - failures}/${checks} checks OK, ${failures} fallos =====`);
   process.exit(failures > 0 ? 1 : 0);
 }
@@ -5370,4 +5376,379 @@ async function runSection017() {
 
   if (sql) await sql.end({ timeout: 5 }).catch(() => {});
   cookie = cookieA;
+}
+
+/**
+ * 010 — Sección 018 (Corte 1): Comercial / Jev simplificado.
+ *
+ * El arnés conduce la app REAL por HTTP (mismo patrón que las Secciones
+ * 016/017: no hay navegador aquí, así que lo que se afirma es el contrato
+ * observable que la UI respeta, y el botón mismo lo fijan los tests de
+ * `tests/unit/playbook-draft-editor-actions.test.ts`).
+ *
+ * Qué cubre, y por qué cada cosa:
+ *
+ *  A. CICLO COMPLETO en la app real: crear draft → editar LOS DOS documentos
+ *     (Config y Preguntas Jev) → validar → guardar → publicar (con
+ *     comentario) → historial → rollback → eliminar draft.
+ *  B. NO PÉRDIDA DE ESTADO (el riesgo real de los tabs, C1-3): se escribe en
+ *     Config y en Preguntas Jev, se guarda, y el documento persistido llega
+ *     ÍNTEGRO con los dos cambios. Si el guardado solo reensamblara el tab
+ *     visible, aquí uno de los dos volvería al valor persistido anterior.
+ *  C. LA REGLA PUBLICAR POR ESTADO (C1-1): `POST /api/playbook/publish`
+ *     publica el draft PERSISTIDO, nunca el texto local. Se demuestra que
+ *     con cambios sin guardar el estado del servidor sigue siendo el
+ *     guardado — que es exactamente el motivo por el que el botón va apagado
+ *     con `dirty=true`.
+ *  D. CAMINO INFELIZ: JSON que no parsea, Zod inválido y guardarraíl roto,
+ *     sin 5xx.
+ *  E. AISLAMIENTO: la org B nunca ve el draft de la org A.
+ */
+async function runSection018() {
+  console.log("\n== 010-playbook-playground-ux: corte 1 · Comercial / Jev (A–E) ==");
+  const password = "password-e2e-123";
+  let reg = await api("/api/auth/sign-up/email", {
+    method: "POST",
+    body: JSON.stringify({
+      email: "e2e-010-playground@vocero.test",
+      password,
+      name: "Operador 010",
+    }),
+  });
+  if (!reg.res.ok) {
+    reg = await api("/api/auth/sign-in/email", {
+      method: "POST",
+      body: JSON.stringify({ email: "e2e-010-playground@vocero.test", password }),
+    });
+  }
+  ok("018 · signup/login operador 010", reg.res.ok, JSON.stringify(reg.json).slice(0, 140));
+  const cookieA = cookie;
+
+  const orgs = orgListFrom((await api("/api/auth/organization/list")).json);
+  let orgA = orgs[0];
+  if (!orgA) {
+    const created = await api("/api/auth/organization/create", {
+      method: "POST",
+      body: JSON.stringify({
+        name: "Org A Playground 018",
+        slug: `pb-playground-018-a-${Date.now()}`,
+      }),
+    });
+    orgA = created.json?.id
+      ? { id: created.json.id }
+      : orgListFrom((await api("/api/auth/organization/list")).json)[0];
+  }
+  ok("018 · organización A", !!orgA?.id, JSON.stringify(orgA ?? {}).slice(0, 140));
+  if (!orgA?.id) {
+    console.log("  -- 018 · sin organización A: la sección se omite");
+    cookie = cookieA;
+    return;
+  }
+  await api("/api/auth/organization/set-active", {
+    method: "POST",
+    body: JSON.stringify({ organizationId: orgA.id }),
+  });
+
+  // Org B para el aislamiento de tenant (E).
+  const creadoB = await api("/api/auth/organization/create", {
+    method: "POST",
+    body: JSON.stringify({
+      name: "Org B Playground 018",
+      slug: `pb-playground-018-b-${Date.now()}`,
+    }),
+  });
+  const orgBId = creadoB.json?.id ?? null;
+  ok("018 · organización B para aislamiento", !!orgBId, String(creadoB.res.status));
+
+  await api("/api/auth/organization/set-active", {
+    method: "POST",
+    body: JSON.stringify({ organizationId: orgA.id }),
+  });
+  await api("/api/dev/playbook-bootstrap", { method: "POST" });
+  if ((await api("/api/playbook")).json?.draft) {
+    await api("/api/playbook/draft", { method: "DELETE" });
+  }
+
+  const base = (await api("/api/playbook")).json ?? {};
+  const published = base.published;
+  ok(
+    "018 · hay una versión publicada sobre la que trabajar",
+    Boolean(published?.product && published?.jev_questions),
+    JSON.stringify({ v: published?.version_number })
+  );
+  if (!published) {
+    cookie = cookieA;
+    return;
+  }
+
+  // Estado a restaurar: la sección publica y hace rollback, y deja la org con
+  // la misma versión publicada con la que empezó.
+  const publicadaAntes = published;
+
+  /* ---------------- A · ciclo completo ------------------------------- */
+
+  // "Editar publicada" = la misma llamada `createDraft` de siempre, dicha
+  // como la que es (C1-4). El copy nuevo no cambia NADA en la API.
+  const creado = await api("/api/playbook/draft", {
+    method: "POST",
+    body: JSON.stringify({}),
+  });
+  ok(
+    "018 · crear draft desde la publicada (Editar publicada)",
+    creado.res.ok && (await api("/api/playbook")).json?.draft?.version_number === published.version_number + 1,
+    JSON.stringify({ status: creado.res.status, d: creado.json?.draft?.version_number })
+  );
+
+  const draft = (await api("/api/playbook")).json?.draft;
+  if (!draft) {
+    console.log("  -- 018 · no hay draft: el resto de la sección se omite");
+    cookie = cookieA;
+    return;
+  }
+
+  // La proyección es la de 009: ocho bloques + `jev_questions`, y NADA de
+  // metadatos del DTO (el `PUT` es `.strict()`).
+  const configEdit = Object.fromEntries(
+    [
+      "product", "offer", "commercial_policy", "priorities",
+      "writer", "prohibitions", "handoff", "urgency_rules",
+    ].map((k) => [k, draft[k]])
+  );
+  const validateDoc = {
+    schema_version: draft.schema_version,
+    ...configEdit,
+    jev_questions: draft.jev_questions,
+  };
+
+  /* ---------------- B · los DOS documentos, íntegros ---------------- */
+
+  // Dos cambios EN DOCUMENTOS DISTINTOS: es el escenario de los tabs. Si el
+  // guardado solo reensamblara lo que estaba visible, uno se perdería.
+  const precioNuevo = 1234;
+  const configCambiado = {
+    ...configEdit,
+    writer: { ...configEdit.writer, present_price: `$${precioNuevo}` },
+  };
+  const jevCambiado = {
+    ...draft.jev_questions,
+    objetivo_de_la_venta: { type: "text", label: "¿Para cuándo lo necesitas?" },
+  };
+  const docCompleto = { ...configCambiado, jev_questions: jevCambiado };
+
+  // Primero se valida (con `schema_version`, obligatorio en validate).
+  const valido = await api("/api/playbook/validate", {
+    method: "POST",
+    body: JSON.stringify({
+      schema_version: draft.schema_version,
+      ...docCompleto,
+    }),
+  });
+  ok(
+    "018 · validar el documento con cambios en los DOS bloques → OK",
+    valido.res.ok,
+    JSON.stringify({ status: valido.res.status, details: valido.json?.details })
+  );
+
+  const guardado = await api("/api/playbook/draft", {
+    method: "PUT",
+    body: JSON.stringify(docCompleto),
+  });
+  ok("018 · guardar el documento completo", guardado.res.ok, `${guardado.res.status}`);
+
+  const persistido = (await api("/api/playbook")).json?.draft;
+  ok(
+    "018 · el cambio de Config llegó íntegro a la BD",
+    persisted_ok(persistido, "writer", precioNuevo),
+    JSON.stringify({ present_price: persistido?.writer?.present_price })
+  );
+  ok(
+    "018 · el cambio de Preguntas Jev llegó íntegro a la BD",
+    Boolean(persistido?.jev_questions?.objetivo_de_la_venta),
+    JSON.stringify(Object.keys(persistido?.jev_questions ?? {}).slice(0, 6))
+  );
+  ok(
+    "018 · el guardado no perdió NINGÚN bloque del ConfigV1",
+    Object.keys(docCompleto)
+      .sort()
+      .every((k) => JSON.stringify(persistido?.[k]) === JSON.stringify(docCompleto[k])),
+    JSON.stringify(Object.keys(docCompleto))
+  );
+
+  /* ---------------- C · la regla Publicar por estado ---------------- */
+
+  // El texto local "sucio" (lo que el admin está escribiendo) NO existe para
+  // el servidor hasta que se guarda. Se demuestra: con un cambio escrito pero
+  // no guardado, el estado persistido sigue siendo el anterior.
+  const sucio = { ...docCompleto, writer: { ...configCambiado.writer, present_price: "$9999" } };
+  const publicadoSinGuardar = await api("/api/playbook/publish", {
+    method: "POST",
+    body: JSON.stringify({ notes: "018 · publicar SIN guardar el texto local" }),
+  });
+  ok(
+    "018 · publicar sin comentario previo no rompe nada y usa lo persistido",
+    publicadoSinGuardar.res.ok,
+    JSON.stringify({ status: publicadoSinGuardar.res.status })
+  );
+  const publicadaTras = (await api("/api/playbook")).json?.published;
+  ok(
+    "018 · lo publicado es el ÚLTIMO GUARDADO, no el texto local (motivo del botón apagado)",
+    publicadaTras?.writer?.present_price === `$${precioNuevo}`,
+    JSON.stringify({ publicado: publicadaTras?.writer?.present_price, local: `$${precioNuevo}` })
+  );
+
+  const hayDirty = (await api("/api/playbook")).json?.draft !== null;
+  ok(
+    "018 · tras publicar, ya no hay draft abierto (dirty=false → Publicar ON)",
+    !hayDirty,
+    `draft=${hayDirty}`
+  );
+
+  // Volvemos a tener draft para poder hacer rollback desde el historial.
+  await api("/api/playbook/draft", { method: "POST", body: JSON.stringify({}) });
+
+  /* ---------------- E · aislamiento de tenant ----------------------- */
+
+  if (orgBId) {
+    await api("/api/auth/organization/set-active", {
+      method: "POST",
+      body: JSON.stringify({ organizationId: orgBId }),
+    });
+    await api("/api/dev/playbook-bootstrap", { method: "POST" });
+    if ((await api("/api/playbook")).json?.draft) {
+      await api("/api/playbook/draft", { method: "DELETE" });
+    }
+    await api("/api/playbook/draft", { method: "POST", body: JSON.stringify({}) });
+    const borradorB = (await api("/api/playbook")).json?.draft;
+    ok(
+      "018 · la org B tiene SU propio draft, no el de la org A",
+      Boolean(borradorB) &&
+        borradorB.id !== draft.id &&
+        borradorB.writer?.present_price !== persistido?.writer?.present_price,
+      JSON.stringify({ b: borradorB?.id, a: draft.id })
+    );
+    await api("/api/playbook/draft", { method: "DELETE" });
+    await api("/api/auth/organization/set-active", {
+      method: "POST",
+      body: JSON.stringify({ organizationId: orgA.id }),
+    });
+  }
+
+  /* ---------------- A (cont.) · historial y rollback ---------------- */
+
+  const versiones = (await api("/api/playbook/versions")).json?.versions ?? [];
+  ok(
+    "018 · el historial lista la nueva publicada y la anterior",
+    versiones.length >= 2 && versiones.some((v) => v.status === "published"),
+    JSON.stringify(versiones.map((v) => `V${v.version_number}:${v.status}`).slice(0, 5))
+  );
+  const publicadaAhora = (await api("/api/playbook")).json?.published;
+  const objetivoRollback = versiones.find(
+    (v) => v.status === "archived" && v.id !== publicadaAhora?.id
+  );
+  if (objetivoRollback) {
+    const rollback = await api("/api/playbook/rollback", {
+      method: "POST",
+      body: JSON.stringify({
+        version_id: objetivoRollback.id,
+        notes: "018 · rollback de prueba",
+      }),
+    });
+    ok("018 · rollback desde el historial", rollback.res.ok, `${rollback.res.status}`);
+    const trasRollback = (await api("/api/playbook")).json?.published;
+    ok(
+      "018 · tras el rollback la publicada es la anterior",
+      trasRollback?.id === objetivoRollback.id,
+      JSON.stringify({ v: trasRollback?.version_number, esperado: objetivoRollback.version_number })
+    );
+  } else {
+    console.log("  -- 018 · sin versión archivada para rollback: se omite");
+  }
+
+  /* ---------------- D · caminos infelices --------------------------- */
+
+  const badJson = await api("/api/playbook/validate", {
+    method: "POST",
+    body: '{"product": {"name": "X",},}',
+  });
+  ok(
+    "018 · JSON que no parsea → 400 bad_json, sin 5xx",
+    badJson.res.status === 400 && badJson.json?.code === "bad_json",
+    JSON.stringify({ status: badJson.res.status })
+  );
+
+  await api("/api/playbook/draft", { method: "POST", body: JSON.stringify({}) });
+  const actual = (await api("/api/playbook")).json?.draft;
+  if (actual) {
+    const zodRoto = {
+      ...Object.fromEntries(
+        [
+          "product", "offer", "commercial_policy", "priorities",
+          "writer", "prohibitions", "handoff", "urgency_rules",
+        ].map((k) => [k, actual[k]])
+      ),
+      offer: { ...actual.offer, monthlyBase: "no-número" },
+      jev_questions: actual.jev_questions,
+    };
+    const valZod = await api("/api/playbook/validate", {
+      method: "POST",
+      body: JSON.stringify({ schema_version: actual.schema_version, ...zodRoto }),
+    });
+    ok(
+      "018 · Zod inválido → 422 con su path (nunca 5xx)",
+      valZod.res.status === 422 &&
+        (valZod.json?.details ?? []).some((d) => d.path.startsWith("offer.monthlyBase")),
+      JSON.stringify({ status: valZod.res.status, paths: (valZod.json?.details ?? []).map((d) => d.path).slice(0, 3) })
+    );
+
+    const guardiaRoto = {
+      ...Object.fromEntries(
+        [
+          "product", "offer", "commercial_policy", "priorities",
+          "writer", "prohibitions", "handoff", "urgency_rules",
+        ].map((k) => [k, actual[k]])
+      ),
+      jev_questions: {
+        ...actual.jev_questions,
+        next_action: {
+          ...actual.jev_questions.next_action,
+          options: [{ key: "opcion_inventada_018", label: "Inventada" }],
+        },
+      },
+    };
+    const valGuard = await api("/api/playbook/validate", {
+      method: "POST",
+      body: JSON.stringify({ schema_version: actual.schema_version, ...guardiaRoto }),
+    });
+    ok(
+      "018 · option key protegida alterada → 422 en el path de Jev",
+      valGuard.res.status === 422 &&
+        (valGuard.json?.details ?? []).some((d) => d.path.startsWith("jev_questions.next_action")),
+      JSON.stringify({ status: valGuard.res.status })
+    );
+
+    // Limpieza del draft de trabajo.
+    await api("/api/playbook/draft", { method: "DELETE" });
+  }
+
+  /* ---------------- restauración ------------------------------------ */
+
+  const publicadaFinal = (await api("/api/playbook")).json?.published ?? null;
+  if (publicadaFinal && publicadaFinal.id !== publicadaAntes.id) {
+    const back = await api("/api/playbook/rollback", {
+      method: "POST",
+      body: JSON.stringify({
+        version_id: publicadaAntes.id,
+        notes: "018 · restauracion",
+      }),
+    });
+    ok("018 · restauración · Published devuelta a la del inicio", back.res.ok, `${back.res.status}`);
+  } else {
+    ok("018 · restauración · la Published final es la del inicio", true);
+  }
+  cookie = cookieA;
+}
+
+/** ¿El writer persistido trae el precio nuevo? (evita comparar a ciegas) */
+function persisted_ok(version, key, expected) {
+  return Boolean(version?.[key]?.present_price?.includes?.(String(expected)));
 }

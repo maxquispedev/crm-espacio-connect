@@ -29,7 +29,6 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 
-import { formatDateTime } from "./summary";
 import { Modal } from "./fields";
 import { JevQuestionsEditor } from "./jev-questions-editor";
 import {
@@ -39,8 +38,8 @@ import {
   useJsonDocState,
   type JsonDocState,
 } from "./json-editor";
+import { CONFIG_EDITABLE_KEYS, reassembleDocuments } from "./draft-actions";
 import { PlaybookDraftEditor } from "./playbook-draft-editor";
-import { PlaybookPublishedCard } from "./playbook-published-card";
 import { PlaybookVersionsList } from "./playbook-versions-list";
 import type {
   PlaybookStateDto,
@@ -77,7 +76,7 @@ export function PlaybookClient() {
   const [rollingBackId, setRollingBackId] = React.useState<string | null>(null);
   const [issues, setIssues] = React.useState<ValidationIssue[]>([]);
 
-  const [showHistory, setShowHistory] = React.useState(false);
+  const [historyOpen, setHistoryOpen] = React.useState(false);
   const [publishOpen, setPublishOpen] = React.useState(false);
   const [publishNotes, setPublishNotes] = React.useState("");
   const [rollbackTarget, setRollbackTarget] = React.useState<{
@@ -305,63 +304,66 @@ export function PlaybookClient() {
 
   return (
     <div className="flex flex-col gap-4">
-      {/* Barra superior */}
+      {/* Cabecera compacta (C1-2). Una sola línea con lo que hay que saber
+          para operar: qué está en producción, qué se está editando, el
+          schema y el historial. La pestaña ya se llama "Comercial / Jev", así
+          que el titular no repite el nombre de la sección. */}
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex flex-col gap-0.5">
-          <h3 className="text-base font-semibold tracking-tight">
-            Sales Playbook
-          </h3>
-          {playbook ? (
-            <p className="text-xs text-muted-foreground">
-              {playbook.label} · schema{" "}
+          <h3 className="text-base font-semibold tracking-tight">Comercial / Jev</h3>
+          <p className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-muted-foreground">
+            <span>
+              Producción:{" "}
+              <span className="font-medium text-foreground">
+                {published ? `V${published.version_number}` : "—"}
+              </span>
+            </span>
+            <span aria-hidden="true">·</span>
+            <span>
+              {draft ? (
+                <>
+                  Editando:{" "}
+                  <span className="font-medium text-foreground">
+                    V{draft.version_number} draft
+                  </span>
+                </>
+              ) : (
+                "Sin draft"
+              )}
+            </span>
+            <span aria-hidden="true">·</span>
+            <span>
+              schema{" "}
               {draft?.schema_version ?? published?.schema_version ?? "1.0"}
-            </p>
-          ) : null}
+            </span>
+          </p>
         </div>
-        <div className="flex flex-wrap gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           <Button
             variant="outline"
+            size="sm"
+            onClick={() => setHistoryOpen(true)}
+          >
+            Historial
+          </Button>
+          {/* Refetch se queda (ghost, sin peso visual): la simplificación no
+              puede costar una capacidad. Solo recarga el estado del servidor. */}
+          <Button
+            variant="ghost"
             size="sm"
             onClick={() => void refetchAll()}
             disabled={loading}
+            title="Recargar el estado del servidor"
           >
             Refetch
           </Button>
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => setShowHistory((v) => !v)}
-          >
-            {showHistory ? "Ocultar historial" : "Ver historial"}
-          </Button>
-          {!draft ? (
+          {!draft && published ? (
             <Button size="sm" onClick={() => void createDraft()} disabled={creatingDraft}>
-              {creatingDraft ? "Creando draft…" : "Crear draft"}
+              {creatingDraft ? "Creando draft…" : "Editar publicada"}
             </Button>
           ) : null}
         </div>
       </div>
-
-      {/* Estado / versionado: qué está en vigor y qué se está editando. */}
-      <VersionState published={published} draft={draft} />
-
-      {/* CTA al Laboratorio: reutiliza el existente, no lo duplica. */}
-      <Card>
-        <CardContent className="flex flex-wrap items-center justify-between gap-3 py-4">
-          <p className="text-sm text-muted-foreground">
-            ¿Quieres ver cómo responde el agente con la{" "}
-            <strong>publicada</strong> frente al <strong>draft</strong>? El
-            Laboratorio corre el pipeline comercial real en sandbox y no toca
-            WhatsApp.
-          </p>
-          <Link
-            href="/lab"
-            className="inline-flex h-8 items-center justify-center gap-2 whitespace-nowrap rounded-md border border-input bg-transparent px-3 text-xs font-medium transition-colors hover:bg-accent hover:text-accent-foreground"
-          >
-            Abrir el Laboratorio
-          </Link>
-        </CardContent>
-      </Card>
 
       {notice ? <NoticeBanner notice={notice} /> : null}
       {error ? (
@@ -370,22 +372,12 @@ export function PlaybookClient() {
         </p>
       ) : null}
 
-      {published ? (
-        <PlaybookPublishedCard
-          published={published}
-          hasDraft={draft !== null}
-          creatingDraft={creatingDraft}
-          onCreateDraft={() => void createDraft()}
-          onShowHistory={() => setShowHistory(true)}
-        />
-      ) : (
-        <Card>
-          <CardContent className="py-6 text-sm text-muted-foreground">
-            No hay ninguna versión publicada todavía. Publica un draft para
-            poner el playbook en vigor.
-          </CardContent>
-        </Card>
-      )}
+      {!published ? (
+        <p className="text-sm text-muted-foreground">
+          No hay ninguna versión publicada todavía: publica un draft para poner
+          el playbook en vigor.
+        </p>
+      ) : null}
 
       {draft ? (
         // `key={draft.id}`: al crear/eliminar/publicar un draft distinto se
@@ -467,14 +459,33 @@ export function PlaybookClient() {
         />
       ) : null}
 
-      {showHistory ? (
-        <PlaybookVersionsList
-          versions={versions}
-          publishedId={published?.id ?? null}
-          onRollback={openRollback}
-          rollingBackId={rollingBackId}
-        />
-      ) : null}
+      {/* Enlace de texto, no CTA: el Laboratorio conserva su función completa
+          (contrato §8). La prueba rápida del corte 2 será el atajo. */}
+      <p className="text-xs text-muted-foreground">
+        ¿Quieres ver la conversación completa que produce el agente?{" "}
+        <Link href="/lab" className="underline underline-offset-2 hover:text-foreground">
+          Abrir Laboratorio completo
+        </Link>
+      </p>
+
+      {/* Historial en modal (C1-5). `PlaybookVersionsList` no cambia de props
+          ni de API: lo que cambia es dónde vive. El ancho extra lo aporta un
+          `className` en el panel, no el `Modal` compartido. */}
+      <Modal
+        open={historyOpen}
+        title="Historial de versiones"
+        onClose={() => setHistoryOpen(false)}
+        className="max-w-3xl"
+      >
+        <div className="-mx-2 max-h-[70vh] overflow-y-auto px-2">
+          <PlaybookVersionsList
+            versions={versions}
+            publishedId={published?.id ?? null}
+            onRollback={openRollback}
+            rollingBackId={rollingBackId}
+          />
+        </div>
+      </Modal>
 
       {/* Modal de publicación (nota obligatoria) */}
       <Modal
@@ -572,70 +583,14 @@ export function PlaybookClient() {
 }
 
 /* ============================================================
- * Estado / versionado
- * ============================================================ */
-
-function VersionState({
-  published,
-  draft,
-}: {
-  published: PlaybookVersionDto | null;
-  draft: PlaybookVersionDto | null;
-}) {
-  const rows: { label: string; value: string }[] = [
-    {
-      label: "Publicada",
-      value: published
-        ? `V${published.version_number} · schema ${published.schema_version} · ${formatDateTime(published.published_at ?? published.created_at)}`
-        : "—",
-    },
-    {
-      label: "Draft",
-      value: draft
-        ? `V${draft.version_number} · schema ${draft.schema_version} · creado ${formatDateTime(draft.created_at)}`
-        : "ninguno abierto",
-    },
-  ];
-  if (published?.notes) rows.push({ label: "Nota publicada", value: published.notes });
-  if (draft?.notes) rows.push({ label: "Nota del draft", value: draft.notes });
-
-  return (
-    <Card>
-      <CardHeader className="pb-2">
-        <CardTitle className="text-sm">Estado y versionado</CardTitle>
-      </CardHeader>
-      <CardContent>
-        <dl className="grid grid-cols-1 gap-2 sm:grid-cols-[minmax(0,10rem)_1fr]">
-          {rows.map((row) => (
-            <React.Fragment key={row.label}>
-              <dt className="text-xs font-medium text-muted-foreground">
-                {row.label}
-              </dt>
-              <dd className="text-xs">{row.value}</dd>
-            </React.Fragment>
-          ))}
-        </dl>
-      </CardContent>
-    </Card>
-  );
-}
-
-/* ============================================================
  * Panel de edición: los dos documentos JSON
  * ============================================================ */
 
 /** El `ConfigV1` menos `jev_questions` (documento 1). */
 function projectConfig(doc: PlaybookVersionDto): Record<string, unknown> {
-  return {
-    product: doc.product,
-    offer: doc.offer,
-    commercial_policy: doc.commercial_policy,
-    priorities: doc.priorities,
-    writer: doc.writer,
-    prohibitions: doc.prohibitions,
-    handoff: doc.handoff,
-    urgency_rules: doc.urgency_rules,
-  };
+  return Object.fromEntries(
+    CONFIG_EDITABLE_KEYS.map((key) => [key, doc[key]])
+  ) as Record<string, unknown>;
 }
 
 function DraftEditorPane({
@@ -688,16 +643,25 @@ function DraftEditorPane({
     if (now - lastValidAt.current < VALIDATE_THROTTLE_MS) return;
     lastValidAt.current = now;
     // `validate` sí exige `schema_version`; el `PUT` no (cuerpo strict).
-    const doc = reassemble(configState, jevState, draft.schema_version);
+    const doc = reassembleDocuments(
+      { configText: configState.text, jevText: jevState.text, schemaVersion: draft.schema_version },
+      { includeSchemaVersion: true }
+    );
     if (!doc) return;
     void onValidate(doc);
   }, [configState, jevState, draft.schema_version, onValidate]);
 
   const runSave = React.useCallback(() => {
-    const doc = reassemble(configState, jevState, undefined);
+    // Sin `schema_version`: el cuerpo del `PUT` es `.strict()` de los nueve
+    // bloques y lo pone el servidor al mergear con el draft.
+    const doc = reassembleDocuments({
+      configText: configState.text,
+      jevText: jevState.text,
+      schemaVersion: draft.schema_version,
+    });
     if (!doc) return;
     void onSave(doc);
-  }, [configState, jevState, onSave]);
+  }, [configState, jevState, draft.schema_version, onSave]);
 
   const jevEditor = (
     <JevQuestionsEditor
@@ -725,9 +689,6 @@ function DraftEditorPane({
       deleting={deleting}
       canDelete={canDelete}
       dirty={dirty}
-      versionNumber={draft.version_number}
-      schemaVersion={draft.schema_version}
-      notes={draft.notes}
     />
   );
 }
@@ -746,33 +707,6 @@ function configDocOf(state: JsonDocState): Record<string, unknown> | null {
 function jevDocOf(state: JsonDocState): Record<string, unknown> | null {
   const v = docOf(state);
   return isPlainObject(v) ? v : null;
-}
-
-/**
- * Reassembly del `ConfigV1` completo (contrato §1.2). Devuelve `null` si
- * alguno de los dos documentos no es un objeto parseable: en ese caso no
- * hay nada que mandar y la UI ya muestra el error de sintaxis.
- *
- * `includeSchemaVersion` NO es cosmético: `PUT /api/playbook/draft` usa un
- * cuerpo `.strict()` de los nueve bloques (el `schema_version` lo pone el
- * servidor al mergear con el draft), mientras que
- * `POST /api/playbook/validate` corre `ConfigV1Schema.safeParse` sobre el
- * body tal cual, y ahí `schema_version: z.literal("1.0")` es **obligatorio**.
- * Omitirlo haría que Validar fallara siempre.
- */
-function reassemble(
-  configState: JsonDocState,
-  jevState: JsonDocState,
-  schemaVersion: string | undefined
-): Record<string, unknown> | null {
-  const config = configDocOf(configState);
-  const jev = jevDocOf(jevState);
-  if (!config || !jev) return null;
-  return {
-    ...(schemaVersion ? { schema_version: schemaVersion } : {}),
-    ...config,
-    jev_questions: jev,
-  };
 }
 
 /** Lee `details[]` de un 422 sin romper si el body no es JSON. */

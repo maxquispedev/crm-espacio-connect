@@ -20,11 +20,18 @@ export function Modal({
   open,
   title,
   onClose,
+  className,
   children,
 }: {
   open: boolean;
   title: string;
   onClose: () => void;
+  /**
+   * Ancho extra para el panel. El `max-w-lg` por defecto NO cambia (el
+   * Laboratorio y el resto de la app dependen de él): quien necesite más
+   * espacio —el historial de versiones, que es una tabla— lo pide aquí.
+   */
+  className?: string;
   children: React.ReactNode;
 }) {
   React.useEffect(() => {
@@ -47,7 +54,7 @@ export function Modal({
         role="dialog"
         aria-modal="true"
         aria-label={title}
-        className="w-full max-w-lg rounded-lg border bg-card p-5 shadow-lg"
+        className={`w-full max-w-lg rounded-lg border bg-card p-5 shadow-lg ${className ?? ""}`}
         onClick={(e) => e.stopPropagation()}
       >
         <h3 className="mb-3 text-base font-semibold">{title}</h3>

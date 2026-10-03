@@ -1,5 +1,46 @@
 # CURRENT STATE — Espacio Connect
 
+**Actualizado: 2026-10-03 — CORTE 1 del spec 010 CERRADO (Comercial / Jev simplificado +
+bug de Publicar corregido).** Commit `refactor(playbook): simplificar Comercial Jev`.
+
+**Qué cambió (observable)**, todo en la capa de cliente
+(`src/components/agent/playbook/*`); backend, versionado, contrato de API y runtime
+Published **sin cambios**:
+
+- **La regla Guardar/Publicar está corregida y fijada por tests.** `Publicar` va
+  **deshabilitado con cambios sin guardar** y también con JSON que no parsea (antes se
+  habilitaba justo con `dirty=true`, y Publicar nunca miraba la sintaxis). Se mudó a la
+  función pura `draftActions()` (`draft-actions.ts`), que la consume el componente, y
+  `tests/unit/playbook-draft-editor-actions.test.ts` la ata **renderizando el componente
+  real** a markup (sin jsdom) para que el `disabled` que se afirma sea el del JSX.
+  **Sin autosave**: guardar solo se habilita por `dirty` explícito.
+- **Pantalla a una cabecera**: `Comercial / Jev` · `Producción: Vx` · `Editando: Vy draft`/`Sin draft`
+  · `schema 1.0` · `Historial`. Desaparecen la segunda cabecera "Sales Playbook", la
+  tarjeta de "Estado y versionado", la tarjeta de la versión publicada (con precio,
+  prioridades en pills y badges), el CTA con párrafo al Laboratorio y el párrafo
+  explicativo de tres frases. El Laboratorio queda como **enlace de texto** y `Refetch`
+  se conserva (ghost) para no perder una capacidad.
+- **Tabs `Config` / `Preguntas Jev`**: un editor visible a la vez. El estado de los dos
+  documentos vive en el padre, así que cambiar de tab no pierde lo escrito; `Guardar`
+  sigue reensamblando el documento completo.
+- **Historial en modal** (`className` de ancho en el panel, sin tocar el `Modal`
+  compartido) y **"Editar publicada"** en vez de "Crear draft desde esta versión" (misma
+  llamada `createDraft`).
+- Nueva pieza pura y testeable: `src/components/agent/playbook/draft-actions.ts`.
+  `PlaybookPublishedCard` se borró al quedar fuera del camino principal.
+
+**Gates**: `typecheck` + `lint` (0 errores; 3 warnings preexistentes) + `build` + **897/897
+tests en 93 archivos** (29 nuevos en 2 archivos). **E2E NO ejecutado en este entorno**: no
+hay app levantada, ni Docker, ni `psql` (`localhost:3000` sin conexión). La **Sección 018**
+del arnés `scripts/e2e-selftest.mjs` está escrita y parsea (`node --check`), con su dispatch
+en `main()`, pero **no se ha ejecutado** y por tanto no se declara. Queda pendiente correr
+`pnpm test:e2e` con `WA_MOCK_ENABLED=true`.
+
+**Corte 2 sin empezar** (la Prueba rápida embebida). El corte 1 abre el hueco donde entra:
+el editor ocupa el ancho completo porque la columna de Prueba rápida llega en el 2.
+
+---
+
 **Actualizado: 2026-10-03 — Bootstrap del spec 010 (Playbook Playground UX). SIN código tocado.**
 
 El spec `specs/010-playbook-playground-ux/` queda abierto y **ninguno de sus dos cortes ha

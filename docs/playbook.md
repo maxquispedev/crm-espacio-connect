@@ -69,10 +69,15 @@ formulario. Es deliberado: los formularios obligaban a pelear con una grilla de
 campos para cambiar un precio, y la estrategia comercial son datos, no un
 formulario.
 
-| # | Documento | Qué contiene |
-|---|---|---|
-| **1** | **Configuración comercial JSON** | `product`, `offer`, `commercial_policy`, `priorities`, `writer`, `prohibitions`, `handoff`, `urgency_rules` |
-| **2** | **Preguntas Jev JSON** | el objeto `jev_questions` completo |
+Se editan con dos pestañas, **un documento visible a la vez**:
+
+| Tab | Qué contiene |
+|---|---|
+| **Config** | `product`, `offer`, `commercial_policy`, `priorities`, `writer`, `prohibitions`, `handoff`, `urgency_rules` |
+| **Preguntas Jev** | el objeto `jev_questions` completo |
+
+Puedes cambiar de pestaña las veces que quieras: lo que escribas se queda, y
+`Guardar` junta los dos documentos en uno antes de mandarlo.
 
 Los dos son **el mismo playbook**, partido en dos para que no tengas que buscar
 las preguntas entre el resto de la configuración. No son dos piezas
@@ -87,9 +92,10 @@ Notas prácticas de edición:
   **Formatear JSON** lo vuelve a formatear sin cambiar nada de contenido.
 - **Formatear JSON** se deshabilita solo si el documento **no** es JSON válido.
   Nunca escribe un documento que no haya sido capaz de leer.
-- Mientras haya un error de sintaxis, **Validar** y **Guardar** están
-  deshabilitados: no tiene sentido mandar al servidor algo que el propio editor
-  no puede leer.
+- Mientras haya un error de sintaxis, **Validar**, **Guardar** y **Publicar**
+  están deshabilitados: no tiene sentido mandar al servidor algo que el propio
+  editor no puede leer. El tab con el JSON roto se marca con un punto rojo, por
+  si estás en el otro.
 
 ### Errores de sintaxis
 
@@ -151,24 +157,30 @@ El comentario es **obligatorio y no es un adorno**: es tu registro de auditoría
 Cuando mires una conversación antigua, verás qué versión del playbook estaba en vigor
 y por qué se publicó.
 
-### ⚠️ Guarda siempre antes de publicar (bug de la UI, corrección en el spec 010)
+### Guarda siempre antes de publicar (corregido en el corte 1 de la 010)
 
-Este documento dice "con el borrador guardado, pulsa Publicar", y esa es la regla.
-**Pero el botón `Publicar` de la pantalla está hoy invertido**: se habilita
-justo cuando hay cambios **sin guardar**, y se deshabilita cuando ya guardaste
-(`src/components/agent/playbook/playbook-draft-editor.tsx:150`).
+Este documento dice "con el borrador guardado, pulsa Publicar", y esa es la
+regla. **La pantalla ahora la aplica por ti**: `Publicar` está **deshabilitado
+mientras haya cambios sin guardar**, y su tooltip lo dice
+("Guarda los cambios antes de publicar").
 
-Por qué importa y no es un detalle: `POST /api/playbook/publish` publica el
-borrador **guardado en la base**, no el texto que estás viendo en pantalla. Si
-publicas con cambios sin guardar, se publica la versión anterior de tu borrador
-y tu trabajo sigue sin guardarse.
+Por qué es así y no un detalle: `POST /api/playbook/publish` publica el
+borrador **guardado en la base**, no el texto que estás viendo en pantalla. Con
+el botón habilitado al revés (como estaba hasta el corte 1 de la 010) se
+publicaba la versión anterior de tu borrador y tu trabajo seguía sin guardarse.
 
-**Mientras tanto, la regla operativa es: pulsa `Guardar`, espera a que confirme,
-y solo entonces `Publicar`.** El spec
-`specs/010-playbook-playground-ux/` (corte 1) invierte esa condición y añade
-pruebas que la fijan, junto con la pantalla simplificada.
+El ciclo es entonces explícito y sin sorpresas:
 
----
+| Estado | Guardar | Publicar |
+|---|---|---|
+| Cambios sin guardar | habilitado | **deshabilitado** |
+| Guardado | deshabilitado | **habilitado** |
+| JSON que no parsea | deshabilitado | deshabilitado |
+| Con una acción en vuelo | deshabilitado | deshabilitado |
+
+No hay guardado automático: si ves "Cambios sin guardar", pulsa `Guardar` y
+espera a que confirme. `Publicar` pide siempre un comentario y el servidor
+vuelve a validar el documento entero antes de publicarlo.
 
 ## ⚠️ Publica el baseline comercial antes de esperar tráfico real
 

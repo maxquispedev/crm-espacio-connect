@@ -35,8 +35,8 @@
 - [x] Artefactos: `spec.md`, `plan.md`, `research.md`, `tasks.md`,
       `contracts/playground-ui.md`, `contracts/playground-preview-api.md`.
 - [x] Runner + 3 prompts de corte.
-- [ ] **Corte 1 sin empezar.**
-- [ ] **Corte 2 sin empezar.**
+- [x] **Corte 1 cerrado** (evidencia real al final de su sección).
+- [ ] **Corte 2 sin empezar** (sigue pendiente).
 
 ## Corte 1 — Simplificar Comercial / Jev + fix de Publicar
 
@@ -44,79 +44,162 @@ Commit: `refactor(playbook): simplificar Comercial Jev`
 
 ### 1.1 El fix, primero y solo
 
-- [ ] `playbook-draft-editor.tsx:150` → `disabled={busy || dirty || anySyntaxError}`
-- [ ] `title`: "Guarda los cambios antes de publicar" cuando `dirty`; la
-      explicación del endpoint cuando no.
-- [ ] **Sin autosave.** Ningún guardado implícito en el corte.
-- [ ] Tests que **fallan contra el código de hoy** y pasan después. Tabla de
+- [x] `disabled={busy || dirty || anySyntaxError}` — la regla vive ahora en la
+      función pura `draftActions()` (`draft-actions.ts`), que consume el
+      componente; el JSX hace `disabled={!actions.publish}`.
+- [x] `title`: "Guarda los cambios antes de publicar" cuando `dirty`;
+      "Corrige la sintaxis JSON antes de publicar" con JSON roto; la del
+      endpoint cuando no.
+- [x] **Sin autosave.** Guardar solo se habilita por `dirty` explícito, y hay
+      un test que lo ata.
+- [x] Tests que **fallan contra el código de hoy** y pasan después (evidencia
+      abajo: **19 assertions en rojo** antes del fix). Tabla de
       `contracts/playground-ui.md` §6 como casos:
-  - `dirty=true` → Guardar ON, Publicar OFF.
-  - `dirty=false` → Guardar OFF, Publicar ON.
-  - JSON inválido (cualquiera de los dos) → Publicar OFF, Guardar OFF,
-      Validar OFF, Descartar ON.
-  - Con la acción en vuelo, las cinco OFF.
+  - [x] `dirty=true` → Guardar ON, Publicar OFF.
+  - [x] `dirty=false` → Guardar OFF, Publicar ON.
+  - [x] JSON inválido (cualquiera de los dos) → Publicar OFF, Guardar OFF,
+        Validar OFF, Descartar ON.
+  - [x] Con la acción en vuelo, las cinco OFF.
 
 ### 1.2 Limpieza de la pantalla principal
 
-- [ ] Cabecera compacta: `Comercial / Jev` · `Producción: Vx` ·
-      `Editando: Vy draft`/`Sin draft` · `schema 1.0` · `[Historial]`.
-- [ ] Eliminar la segunda cabecera `<h3>Sales Playbook</h3>`
-      (`playbook-client.tsx:311-313`).
-- [ ] Eliminar `VersionState` del camino principal (`:346`).
-- [ ] CTA gigante del Laboratorio (`:349-364`) → enlace de texto
-      "Abrir Laboratorio completo".
-- [ ] `PlaybookPublishedCard` fuera del camino principal (`:373-388`).
-- [ ] Sin precio como tarjeta, sin prioridades en pills, sin conteo de
+- [x] Cabecera compacta: `Comercial / Jev` · `Producción: Vx` ·
+      `Editando: Vy draft`/`Sin draft` · `schema 1.0` · `Historial`.
+- [x] Eliminada la segunda cabecera `<h3>Sales Playbook</h3>`.
+- [x] Eliminado `VersionState` del camino principal (componente borrado).
+- [x] CTA gigante del Laboratorio → enlace de texto "Abrir Laboratorio
+      completo" al pie del editor.
+- [x] `PlaybookPublishedCard` fuera del camino principal: **archivo borrado**
+      (grep confirmó que nada más lo referenciaba).
+- [x] Sin precio como tarjeta, sin prioridades en pills, sin conteo de
       preguntas, sin explicación larga Published vs Draft, sin badges de
-      guardarraíles.
-- [ ] Copy: "Crear draft desde esta versión" → **"Editar publicada"**
+      guardarraíles en el camino principal.
+- [x] Copy: "Crear draft desde esta versión" → **"Editar publicada"**
       (sigue llamando a `createDraft`).
+- [x] `Refetch` **se conserva** (ghost): la simplificación no puede costar
+      una capacidad.
 
 ### 1.3 Tabs Config / Preguntas Jev
 
-- [ ] Un solo editor JSON visible a la vez; tabs `Config` / `Preguntas Jev`.
-- [ ] Conservar textarea monoespaciado, `Formatear JSON`, error de parseo con
+- [x] Un solo editor JSON visible a la vez; tabs `Config` / `Preguntas Jev`
+      (`aria-selected` + un `role="tabpanel"`).
+- [x] Conservados textarea monoespaciado, `Formatear JSON`, error de parseo con
       línea/columna, errores server-side con `path`.
-- [ ] Conservar el reassembly del documento completo al guardar.
-- [ ] **Test de no pérdida de estado**: escribir en Config y en Preguntas,
-      cambiar de tab varias veces, guardar → el documento persistido está
-      íntegro. (Es el riesgo real de los tabs.)
-- [ ] Línea de guardarraíles discreta ("🔒 `next_action`,
-      `needs_human_call` y option keys contractuales están protegidas"), con
-      ayuda pequeña. El backend sigue siendo la autoridad.
+- [x] Conservado el reassembly del documento completo al guardar
+      (`reassembleDocuments`, la misma que se testea).
+- [x] **Test de no pérdida de estado**:
+      `tests/unit/playbook-draft-tabs.test.ts` ata que el reassembly lleva
+      **los dos** documentos (cambio en Config + cambio en Preguntas Jev a la
+      vez) y que ninguno se pierde aunque el otro sea el tab visible. El flujo
+      completo contra la app real está en la Sección 018 del E2E.
+- [x] Línea de guardarraíles discreta bajo los tabs. El backend sigue siendo
+      la autoridad.
+- [x] Un tab con JSON roto se marca con un punto rojo: el error puede estar en
+      el tab que no se está viendo.
 
 ### 1.4 Historial fuera del camino principal
 
-- [ ] Botón `Historial` → modal/panel compacto con
-      `Vx · estado · fecha · comentario` y `Rollback` donde aplique.
-- [ ] Reutilizar `PlaybookVersionsList` y las APIs actuales, sin cambiar props.
-- [ ] No tocar el `Modal` compartido; si hace falta ancho, usar `className`.
+- [x] Botón `Historial` → modal con `PlaybookVersionsList` **intacto** (mismas
+      props y APIs; el `Rollback` sigue exigiendo su comentario).
+- [x] Reutilizado `PlaybookVersionsList` sin cambiar props.
+- [x] No se toca el `Modal` compartido: se le añadió un `className`
+      **opcional** y su `max-w-lg` por defecto sigue igual para el resto de la
+      app; el historial pide `max-w-3xl`.
 
 ### 1.5 Action bar
 
-- [ ] `Validar` · `Guardar` · `Publicar` como primarias.
-- [ ] `Descartar` y `Eliminar draft` como secundarias.
-- [ ] Estados en una línea: cambios sin guardar / guardado / JSON inválido /
-      validando / publicando.
-- [ ] Quitar el párrafo explicativo de 3 frases
-      (`playbook-draft-editor.tsx:167-172`); los `title` ya lo dicen.
+- [x] `Validar` · `Guardar` · `Publicar` como primarias; `Descartar` y
+      `Eliminar draft` como secundarias, separadas por un divisor.
+- [x] Estados en una línea: `Cambios sin guardar` / `Guardado` / `Hay JSON que
+      no parsea`; `Validando…` / `Guardando…` / `Publicando…` en los botones.
+- [x] Quitado el párrafo explicativo de 3 frases; los `title` ya lo dicen.
+- [x] Action bar **sticky** al fondo del área de edición.
 
 ### 1.6 Layout
 
-- [ ] Desktop-first; en pantallas estrechas, editor arriba.
-- [ ] La columna de Prueba rápida **no** se crea en este corte (llega en el 2).
+- [x] Desktop-first; el editor ocupa el ancho completo y en pantalla estrecha
+      queda arriba. No se crea media columna vacía.
+- [x] La columna de Prueba rápida **no** se crea en este corte (llega en el 2).
 
 ### 1.7 Verificación del corte
 
-- [ ] `pnpm typecheck && pnpm lint && pnpm build && pnpm test`.
-- [ ] Unit tests de la action bar (1.1) y de no pérdida de estado (1.3).
-- [ ] E2E: extender el arnés con la **Sección 018** (ciclo completo en la UI
-      real + camino infeliz de JSON inválido + regla Publicar por estado).
-- [ ] Si se ejecuta: `pnpm test:e2e` con `WA_MOCK_ENABLED=true`. Si no:
-      dejarlo escrito aquí, sin declararlo.
-- [ ] `docs/playbook.md` y `docs/CURRENT_STATE.md` al día si cambió el
-      contrato observable.
-- [ ] Commit único + árbol limpio.
+- [x] `pnpm typecheck && pnpm lint && pnpm build && pnpm test` → **verde**
+      (ver evidencia).
+- [x] Unit tests de la action bar (1.1) y de no pérdida de estado (1.3).
+- [x] E2E: arnés extendido con la **Sección 018** (A ciclo completo en la app
+      real, B los dos documentos íntegros, C la regla Publicar-por-estado, D
+      caminos infelices, E aislamiento de org) + su dispatch en `main()`.
+- [ ] **`pnpm test:e2e` NO se ejecutó.** Este entorno no tiene app levantada
+      (`localhost:3000` sin conexión), ni Docker, ni `psql`. La Sección 018
+      parsea (`node --check`) pero **no se ha corrido**: no se declara verde.
+- [x] `docs/playbook.md` y `docs/CURRENT_STATE.md` actualizados (el contrato
+      observable de Publicar/`dirty` y el layout cambiaron).
+- [x] Commit único + árbol limpio.
+
+### Evidencia real (Corte 1)
+
+Fecha: 2026-10-03 · Base: `478a924` · Commit: `refactor(playbook): simplificar Comercial Jev`
+
+**1. El bug estaba rojo antes de tocarlo.** Con `draft-actions.ts` escrito
+*deliberadamente con la regla de hoy* (`publish: !(busy || !dirty)`):
+
+```
+Tests  19 failed | 10 passed
+× draftActions > dirty + JSON válido: se GUARDA, no se PUBLICA
+    → expected true to be false
+× PlaybookDraftEditor — los botones reales > con cambios sin guardar: Guardar ON y Publicar OFF
+× PlaybookDraftEditor — los botones reales > sin cambios: Publicar ON y Guardar OFF
+… (9 assertions sobre el componente renderizado)
+```
+
+Las 9 del componente son la prueba de que el test ata el **JSX real**
+(`renderToStaticMarkup` sobre `PlaybookDraftEditor`), no una copia de la regla.
+
+**2. Gate tras el fix** (orden del repo, sin saltos):
+
+```
+$ pnpm typecheck   → tsc --noEmit, sin salida
+$ pnpm lint        → 0 errors, 3 warnings (los 3 preexistentes: no-img-element
+                     y dos unused eslint-disable)
+$ pnpm build       → exit 0
+$ pnpm test        → Test Files 93 passed (93)
+                     Tests     897 passed (897)
+```
+
+**29 tests nuevos** en 2 archivos:
+`tests/unit/playbook-draft-editor-actions.test.ts` (18) y
+`tests/unit/playbook-draft-tabs.test.ts` (11). 897 − 868 = 29.
+
+**3. Cambio de infraestructura de tests, y por qué.** `vitest.config.ts` gana
+`esbuild: { jsx: "automatic" }`. El `tsconfig.json` declara `jsx: "preserve"`
+(lo transpila SWC de Next) y sin esto los tests de componente no renderizaban.
+No se añadió **ninguna dependencia**: `react-dom/server` ya estaba, y el
+entorno sigue siendo `node` (sin jsdom).
+
+**4. Lo que NO se tocó**, verificado: `src/app/api/**`, `src/lib/**`,
+`src/server/**`, schema de BD, `ConfigV1Schema`, option keys, contratos Jev,
+loader, writer, follow-ups, WhatsApp, webhook y CAPI. `git diff --stat` del
+commit: solo `src/components/agent/playbook/*`, `tests/unit/*`,
+`scripts/e2e-selftest.mjs`, `docs/*` y este archivo.
+
+**5. E2E: no ejecutado, y no se declara.** Comprobado en este entorno:
+
+```
+APP:    000 no-conn  (curl http://localhost:3000/api/health)
+DOCKER: docker-unavailable
+PSQL:   no-psql
+```
+
+La Sección 018 es código muerto en este entorno: sirve de arnés para cuando haya
+app + BD, y por eso **no cuenta como verificación de este corte**.
+
+**6. Simplificación sin pérdida de capacidades.** Se quitaron la segunda
+cabecera, `VersionState`, la card de la publicada, el CTA del Lab y el párrafo
+de tres frases. Se **conservaron** `JsonEditor`, `FormatButton`, `Modal`,
+`NoticeBanner`, `PlaybookVersionsList`, los callbacks `onValidate`/`onSave`/
+`onPublish`/`onDiscard`/`onDelete`, el `key={draft.id}` del editor, y `Refetch`
+se maintains como botón ghost: si al simplificar una acción no tenía sitio,
+se recoloca, no se elimina.
 
 ### Constancia de cambio de regla
 

@@ -1,35 +1,27 @@
 /**
- * Sales Playbook — Editor de CONFIGURACIÓN COMERCIAL en JSON
- * (Feature 009, Corte 1, T911).
+ * Sales Playbook — Editor del draft en JSON: tabs Config / Preguntas Jev y la
+ * action bar (Feature 010, Corte 1, C1-3 y C1-6).
  *
- * Sustituye a los ocho formularios por bloques del Corte 4 de la 008. El
- * documento que se edita es el `ConfigV1` **menos** `jev_questions`, que
- * vive en el editor 2. Al guardar, el padre reassembla
- * `{ ...configEdit, jev_questions: jevEdit }` y hace el
- * `PUT /api/playbook/draft` de siempre, igual que con los formularios.
+ * Un **solo** editor visible a la vez. El estado de los dos documentos vive en
+ * el padre (`playbook-client.tsx`), así que cambiar de tab no pierde lo
+ * escrito: aquí solo se monta el editor del tab activo, y su texto sigue
+ * viniendo del padre. El guardado reensambla el documento completo
+ * (`reassembleDocuments`, igual que en 009).
  *
  * **Este componente no valida la config.** Solo formatea, detecta errores de
- * sintaxis con línea/columna, y expone los `details[]` que el servidor
- * devolvió. `ConfigV1Schema` es la autoridad (DV-4).
+ * sintaxis con línea/columna y expone los `details[]` del servidor.
+ * `ConfigV1Schema` y los candados Jev son la autoridad (DV-4).
+ *
+ * La regla de qué botón está habilitado no se calcula aquí: viene de
+ * `draftActions()` (`draft-actions.ts`), que es pura y testeable sin navegador.
  */
 
 import * as React from "react";
 
 import { Button } from "@/components/ui/button";
 
+import { CONFIG_EDITABLE_KEYS, TABS, draftActions, type DraftTab } from "./draft-actions";
 import { FormatButton, JsonEditor, type JsonDocState, type JsonIssue } from "./json-editor";
-
-/** Claves de `ConfigV1` que edita este documento (contrato §1). */
-export const CONFIG_EDITABLE_KEYS = [
-  "product",
-  "offer",
-  "commercial_policy",
-  "priorities",
-  "writer",
-  "prohibitions",
-  "handoff",
-  "urgency_rules",
-] as const;
 
 export function PlaybookDraftEditor({
   state,
@@ -47,15 +39,12 @@ export function PlaybookDraftEditor({
   deleting,
   canDelete,
   dirty,
-  versionNumber,
-  schemaVersion,
-  notes,
 }: {
   /** Estado del documento 1 (Config sin `jev_questions`). */
   state: JsonDocState;
   /** Estado del documento 2 (`jev_questions`). */
   jevState: JsonDocState;
-  /** El editor 2 se renderiza dentro de esta tarjeta. */
+  /** El editor 2, que se monta solo cuando su tab está activo. */
   jevEditor: React.ReactNode;
   issues?: JsonIssue[];
   onSave: () => void;
@@ -70,61 +59,108 @@ export function PlaybookDraftEditor({
   canDelete: boolean;
   /** Hay cambios sin guardar respecto al draft cargado. */
   dirty: boolean;
-  versionNumber?: number;
-  schemaVersion?: string;
-  notes?: string | null;
 }) {
+  const [tab, setTab] = React.useState<DraftTab>(TABS[0]!.id);
+
   const anySyntaxError = !state.valid || !jevState.valid;
-  const busy = saving || validating || publishing || deleting;
+  const actions = draftActions({
+    busy: saving || validating || publishing || deleting,
+    dirty,
+    anySyntaxError,
+    canDelete,
+  });
 
   return (
-    <section className="flex flex-col gap-4">
-      <JsonEditor
-        id="pb-config"
-        label="1. Configuración comercial JSON"
-        description={
-          <>
-            Bloques{" "}
-            <code className="font-mono">{CONFIG_EDITABLE_KEYS.join(", ")}</code>
-            . Las <code className="font-mono">jev_questions</code> van en el
-            editor 2 y se reassembly al guardar.
-          </>
-        }
-        state={state}
-        issues={issues}
-        rows={34}
-        footer={<FormatButton state={state} />}
-      />
+    <section className="flex flex-col gap-3">
+      {/* Tabs: un editor a la vez. Montar y desmontar no pierde estado porque
+          el texto vive en el padre, no dentro del editor. */}
+      <div
+        role="tablist"
+        aria-label="Documentos del playbook"
+        className="flex flex-wrap gap-1 rounded-lg border bg-card p-1"
+      >
+        {TABS.map((t) => {
+          const active = t.id === tab;
+          // El punto de aviso: un tab con JSON roto se marca sin cambiar de
+          // tab (puede estar escondido, que es justo el caso que el aviso de
+          // la action bar cuenta).
+          const broken = t.id === TABS[0]!.id ? !state.valid : !jevState.valid;
+          return (
+            <button
+              key={t.id}
+              type="button"
+              role="tab"
+              id={`pb-tab-${t.id}`}
+              aria-selected={active}
+              aria-controls="pb-doc-panel"
+              onClick={() => setTab(t.id)}
+              className={`rounded-md px-3 py-1.5 text-sm font-medium transition-colors ${
+                active
+                  ? "bg-primary text-primary-foreground"
+                  : "text-muted-foreground hover:bg-secondary hover:text-foreground"
+              }`}
+            >
+              {t.label}
+              {broken ? (
+                <span className="ml-1.5 text-danger-text" aria-label="JSON inválido">
+                  ●
+                </span>
+              ) : null}
+            </button>
+          );
+        })}
+      </div>
 
-      {jevEditor}
+      {/* Línea de guardarraíles: informativa. La autoridad es el servidor
+          (`assertJevProtectedKeys` + `ConfigV1Schema`). */}
+      <p className="text-xs text-muted-foreground">
+        🔒 <code className="font-mono">next_action</code>,{" "}
+        <code className="font-mono">needs_human_call</code> y las option keys
+        contractuales están protegidas. El servidor lo valida.
+      </p>
 
-      {/* Barra de acciones del draft */}
-      <div className="flex flex-col gap-3 rounded-lg border bg-card p-4">
-        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
-          {versionNumber !== undefined ? <span>Draft V{versionNumber}</span> : null}
-          {schemaVersion ? <span>schema {schemaVersion}</span> : null}
-          {dirty ? (
-            <span className="font-medium text-foreground">
-              Cambios sin guardar
-            </span>
-          ) : (
-            <span>Sin cambios sin guardar</span>
-          )}
-          {notes ? <span>Nota: {notes}</span> : null}
-        </div>
+      {/* Un solo editor visible. */}
+      <div id="pb-doc-panel" role="tabpanel" aria-labelledby={`pb-tab-${tab}`}>
+        {tab === TABS[0]!.id ? (
+          <JsonEditor
+            id="pb-config"
+            label="Configuración comercial"
+            description={
+              <>
+                Bloques{" "}
+                <code className="font-mono">{CONFIG_EDITABLE_KEYS.join(", ")}</code>
+                . Las <code className="font-mono">jev_questions</code> van en el
+                tab de Preguntas Jev y se reensamblan al guardar.
+              </>
+            }
+            state={state}
+            issues={issues}
+            rows={34}
+            footer={<FormatButton state={state} />}
+          />
+        ) : (
+          jevEditor
+        )}
+      </div>
 
-        {anySyntaxError ? (
-          <p className="text-xs text-danger-text" role="status">
-            Hay JSON que no parsea: no se puede validar ni guardar. Corrige la
-            sintaxis (línea y columna indicadas arriba) o pulsa{" "}
-            <strong>Descartar cambios</strong> para volver al draft guardado.
-          </p>
-        ) : null}
+      {/* Action bar: tres primarias, dos secundarias, y el estado en una línea.
+          Sticky al fondo del área de edición. */}
+      <div className="sticky bottom-0 z-10 flex flex-col gap-2 rounded-lg border bg-card p-3">
+        <p
+          className={`text-xs ${anySyntaxError ? "text-danger-text" : "text-muted-foreground"}`}
+          role={anySyntaxError ? "alert" : "status"}
+        >
+          {anySyntaxError
+            ? "Hay JSON que no parsea: corrige la sintaxis o descarta los cambios."
+            : dirty
+              ? "Cambios sin guardar"
+              : "Guardado"}
+        </p>
 
-        <div className="flex flex-wrap gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           <Button
             onClick={onValidate}
-            disabled={busy || anySyntaxError}
+            disabled={!actions.validate}
             title={
               anySyntaxError
                 ? "Corrige la sintaxis JSON antes de validar"
@@ -136,24 +172,35 @@ export function PlaybookDraftEditor({
           <Button
             variant="secondary"
             onClick={onSave}
-            disabled={busy || anySyntaxError || !dirty}
+            disabled={!actions.save}
+            title="PUT /api/playbook/draft: persiste el documento completo"
           >
             {saving ? "Guardando…" : "Guardar"}
           </Button>
           <Button
-            variant="outline"
-            onClick={onDiscard}
-            disabled={busy || !dirty}
+            onClick={onPublish}
+            disabled={!actions.publish}
+            title={actions.publishTitle}
           >
-            Descartar cambios
-          </Button>
-          <Button onClick={onPublish} disabled={busy || !dirty}>
             {publishing ? "Publicando…" : "Publicar"}
+          </Button>
+
+          <span className="mx-1 h-6 w-px bg-border" aria-hidden="true" />
+
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={onDiscard}
+            disabled={!actions.discard}
+            title="Vuelve al draft guardado, descartando lo escrito"
+          >
+            Descartar
           </Button>
           <Button
             variant="ghost"
+            size="sm"
             onClick={onDelete}
-            disabled={busy || !canDelete}
+            disabled={!actions.remove}
             title={
               canDelete
                 ? "Elimina el draft abierto"
@@ -163,13 +210,6 @@ export function PlaybookDraftEditor({
             {deleting ? "Eliminando…" : "Eliminar draft"}
           </Button>
         </div>
-
-        <p className="text-xs text-muted-foreground">
-          <strong>Validar</strong> siempre pregunta al servidor; el cliente no
-          valida la config. <strong>Guardar</strong> persiste el draft.{" "}
-          <strong>Publicar</strong> exige comentario y lo valida el backend
-          otra vez.
-        </p>
       </div>
     </section>
   );
