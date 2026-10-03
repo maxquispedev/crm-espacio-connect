@@ -151,6 +151,23 @@ El comentario es **obligatorio y no es un adorno**: es tu registro de auditoría
 Cuando mires una conversación antigua, verás qué versión del playbook estaba en vigor
 y por qué se publicó.
 
+### ⚠️ Guarda siempre antes de publicar (bug de la UI, corrección en el spec 010)
+
+Este documento dice "con el borrador guardado, pulsa Publicar", y esa es la regla.
+**Pero el botón `Publicar` de la pantalla está hoy invertido**: se habilita
+justo cuando hay cambios **sin guardar**, y se deshabilita cuando ya guardaste
+(`src/components/agent/playbook/playbook-draft-editor.tsx:150`).
+
+Por qué importa y no es un detalle: `POST /api/playbook/publish` publica el
+borrador **guardado en la base**, no el texto que estás viendo en pantalla. Si
+publicas con cambios sin guardar, se publica la versión anterior de tu borrador
+y tu trabajo sigue sin guardarse.
+
+**Mientras tanto, la regla operativa es: pulsa `Guardar`, espera a que confirme,
+y solo entonces `Publicar`.** El spec
+`specs/010-playbook-playground-ux/` (corte 1) invierte esa condición y añade
+pruebas que la fijan, junto con la pantalla simplificada.
+
 ---
 
 ## ⚠️ Publica el baseline comercial antes de esperar tráfico real

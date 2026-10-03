@@ -1,6 +1,35 @@
 # CURRENT STATE — Espacio Connect
 
-**Actualizado: 2026-10-03 — Corte 3 del spec 009 (runtime publicado EN PRODUCCIÓN).**
+**Actualizado: 2026-10-03 — Bootstrap del spec 010 (Playbook Playground UX). SIN código tocado.**
+
+El spec `specs/010-playbook-playground-ux/` queda abierto y **ninguno de sus dos cortes ha
+empezado**. Este commit es **solo documental**: no cambia comportamiento observable, así que
+todo lo que describe el spec 009 más abajo sigue siendo la realidad del código.
+
+Objetivo de 010: que `Comercial / Jev` funcione como playground técnico
+(**pegar/editar → validar → guardar → publicar → probar**) en vez de como formulario. Dos
+cortes: (1) simplificar la pantalla y corregir la action bar, (2) una **Prueba rápida**
+embebida que ejecute un caso ad-hoc por el mismo pipeline sandbox del Laboratorio.
+
+Dos hallazgos de la fase de diseño que conviene tener presentes (evidencia en
+`specs/010-playbook-playground-ux/research.md`):
+
+- **Bug confirmado, sin corregir todavía**: `Publicar` se habilita con cambios sin guardar
+  (`src/components/agent/playbook/playbook-draft-editor.tsx:150` → `disabled={busy || !dirty}`).
+  Como `POST /api/playbook/publish` publica el draft **persistido**, ese botón ofrece
+  publicar algo que el admin no está viendo. El corte 1 lo cierra; **hasta entonces, la
+  regla segura es guardar antes de publicar**.
+- **La Prueba rápida necesita un endpoint nuevo**: `POST /api/lab/runs` solo acepta
+  `playbook_mode` y corre la cohorte de personas del servidor, así que no admite input
+  ad-hoc. El corte 2 lo resuelve **reutilizando `runSalesOrchestratorTurn`** —la misma
+  función que el Laboratorio— mediante un helper de sandbox extraído del runner. No habrá
+  segundo motor comercial.
+
+Runner: `scripts/ai/run-playbook-playground-ux.sh` (`START_CUT=1|2`).
+
+---
+
+**Anterior: 2026-10-03 — Corte 3 del spec 009 (runtime publicado EN PRODUCCIÓN).**
 **El runtime comercial ya NO está congelado.** `SALES_PLAYBOOK_RUNTIME_ENABLED = true`
 (`src/server/sales/build-state.ts:37`). Las conversaciones reales de una organización
 con Sales Orchestrator consumen la versión **Published** de SU playbook, sin cache: publicar
