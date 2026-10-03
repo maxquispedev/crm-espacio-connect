@@ -153,15 +153,32 @@ y por qué se publicó.
 
 ---
 
-## ⚠️ Antes de encender el runtime: publica el baseline comercial
+## ⚠️ Publica el baseline comercial antes de esperar tráfico real
 
-**Este es el paso que falta hoy.** El runtime productivo sigue **apagado**
-(`SALES_PLAYBOOK_RUNTIME_ENABLED = false`), así que las conversaciones reales están
-usando todavía el fallback del código. Ese fallback ya trae la oferta vigente de la
-primera cohorte, pero el plan es que en un paso posterior el motor lea la
-**publicada** de tu organización.
+**Estado 2026-10-03 (corte 3): el runtime ya está ENCENDIDO**
+(`SALES_PLAYBOOK_RUNTIME_ENABLED = true`). Lo que cambió es qué manda en cada
+turno: ahora manda **tu versión publicada**, no el código.
 
-Antes de encender el motor, haz esto:
+Qué significa **publicar** a partir de ahora:
+
+- Al publicar, la versión nueva manda en el **siguiente turno** de cada
+  conversación real de tu organización. **No hay que redesplegar ni reiniciar**:
+  el motor no cachea la configuración.
+- Un **borrador** (draft) **nunca** afecta a una conversación real, por muchos
+  cambios que le hagas. Solo entra en producción cuando lo publicas.
+- **Rollback** también surte efecto en el siguiente turno, sin redesplegar.
+- Si **no hay ninguna versión publicada**, o la que hay ya no es válida, el motor
+  cae al fallback del código (los valores de lanzamiento) y lo avisa con un
+  `warn` en el log. El turno **no se cae**. En ese caso la auditoría del lead
+  queda en `null`, que es tu señal de que ese turno se decidió con el fallback
+  y no con tu configuración.
+- Cada turno que sí usó tu publicada deja la versión exacta registrada en el
+  lead (`last_jev_playbook_version_id`) y dentro de `last_jev_decision`.
+
+**Lo que te toca hacer a ti:** asegúrate de que tu organización tenga una
+**versión publicada** con la oferta vigente de la primera cohorte antes de
+esperar tráfico real. Si nunca publicaste nada, estás en fallback (funciona, pero
+no es lo que quieres).
 
 1. Abre **Agente → Comercial / Jev**.
 2. Crea un borrador y revisa que el bloque de oferta tenga la oferta vigente de la
@@ -174,8 +191,6 @@ Antes de encender el motor, haz esto:
    - que la renovación del dominio (desde el 2º año) queda **aparte** y **no
      encabeza el pitch**.
 3. **Publica** esa versión con un comentario que lo explique.
-4. Solo después de tener una **versión publicada** con este baseline se puede
-   encender el runtime.
 
 Mientras tanto el sistema funciona igual: si no hay publicada, el motor cae al
 fallback documentado y lo dice con un aviso (ver *Cómo funciona el fallback*).

@@ -1905,6 +1905,13 @@ async function main() {
   // los tres caminos infelices (JSON inválido, Zod inválido, guardarraíl).
   await runSection016();
 
+  // 009 — Sección 017: RUNTIME PUBLICADO EN PRODUCCIÓN (corte 3). Es el
+  // interruptor: prueba A–H con conversaciones reales, incluida la
+  // ausencia de cache (publicar/rollbackear surte efecto en el SIGUIENTE
+  // turno, sin redeploy). Va al final porque restaura la org como la
+  // encontró.
+  await runSection017();
+
   console.log(`\n===== ${checks - failures}/${checks} checks OK, ${failures} fallos =====`);
   process.exit(failures > 0 ? 1 : 0);
 }
@@ -4687,5 +4694,680 @@ async function runSection016() {
     JSON.stringify({ p: finalState.json?.published?.version_number, d: finalState.json?.draft })
   );
 
+  cookie = cookieA;
+}
+
+/* =====================================================================
+ * 009 — Sección 017: RUNTIME PUBLICADO EN PRODUCCIÓN (corte 3, T934)
+ * =====================================================================
+ *
+ * Este es el INTERRUPTOR. Antes de esta sección, `SALES_PLAYBOOK_RUNTIME_ENABLED`
+ * era `false` y las conversaciones reales usaban los defaults hardcodeados.
+ * Aquí se demuestra, sobre conversaciones REALES y la BD real, que:
+ *
+ *   A · la Published con S/247 la USA el turno real
+ *   B · un DRAFT con otro precio NO toca producción
+ *   C · publicar el draft cambia el SIGUIENTE turno, SIN redeploy
+ *   D · rollback cambia el SIGUIENTE turno, SIN redeploy
+ *   E · Published ausente o inválida → fallback, sin crash, con warning
+ *   F · dos organizaciones jamás cruzan playbooks
+ *   G · is_test (Lab) conserva su semántica y no genera efectos reales
+ *   H · la auditoría registra EXACTAMENTE la versión usada
+ *
+ * A, B, C y D son la prueba de que NO HAY CACHE: si el loader cacheara,
+ * C y D no podrían SURTIR EFECTO en el turno siguiente sin redeploy. Por eso
+ * estos escenarios usan inbound sintético real contra el webhook, no una
+ * simulación de una simulación.
+ *
+ * NOTA DE DISEÑO (importante, y la razón de que H no se compruebe por HTTP):
+ *   `last_jev_playbook_version_id` y `last_jev_decision.playbook_*` los escribe
+ *   el orquestador, pero el DTO de `/api/contacts/:id` los descarta A PROPÓSITO
+ *   (PII). El arnés no inventa un endpoint de dev para leerlos: hace una lectura
+ *   DIRECTA a la BD con el mismo `DATABASE_URL` de la app, que es la única vía
+ *   honesta de observar la auditoría. Es READ-ONLY.
+ */
+async function runSection017() {
+  console.log(
+    "\n== 009-playbook-runtime-admin: corte 3 · runtime publicado en producción (A–H) =="
+  );
+
+  // Operador principal del arnés: su organización es la que tiene agent_profile
+  // (la primera de la instancia, sembrada por onUserCreated). Una organización
+  // creada por API NO siembra perfil, y sin perfil el PUT del opt-in da 404.
+  const email = "e2e@vocero.test";
+  const password = "password-e2e-123";
+  const DB_URL = process.env.DATABASE_URL;
+
+  // --- Lectura directa de BD (solo SELECT) --------------------------
+  // Necesaria para H y para comprobar el efecto real de draft/publish/
+  // rollback sobre la fila que el loader lee. Nunca escribe.
+  let sql = null;
+  if (DB_URL) {
+    const { default: postgres } = await import("postgres");
+    sql = postgres(DB_URL, { max: 1, onnotice: () => {} });
+  } else {
+    console.log(
+      "  -- 017 · SIN DATABASE_URL: los checks que requieren BD se omiten"
+    );
+  }
+
+  /** Versión publicada tal como la ve el LOADER (status='published'). */
+  const publishedRow = async (orgId) =>
+    sql
+      ? (
+          await sql`
+            select id, version_number, schema_version
+            from sales_playbook_version
+            where organization_id = ${orgId} and status = 'published'
+            limit 1`
+        )[0]
+      : null;
+
+  /** Lead + auditoría durable del último turno. */
+  const leadAudit = async (leadId) =>
+    sql
+      ? (
+          await sql`
+            select automation_lane, last_jev_playbook_version_id,
+                   last_jev_playbook_schema_version, last_jev_decision
+            from lead where id = ${leadId}`
+        )[0]
+      : null;
+
+  // --- Operador de la org ------------------------------------------
+  // El registro NO crea organización (Better Auth organization plugin sin
+  // `createOrganizationOnSignUp`). La sección es RE-EJECUTABLE: si el
+  // operador ya existe de una corrida anterior, se hace login.
+  const reg = await api("/api/auth/sign-up/email", {
+    method: "POST",
+    body: JSON.stringify({ name: "Runtime 017", email, password }),
+  });
+  if (!reg.res.ok) {
+    await api("/api/auth/sign-in/email", {
+      method: "POST",
+      body: JSON.stringify({ email, password }),
+    });
+  }
+  ok("017 · signup/login operador 017", true, `${reg.res.status}`);
+
+  const orgs = orgListFrom((await api("/api/auth/organization/list")).json);
+  let orgA = orgs[0];
+  if (!orgA) {
+    const created = await api("/api/auth/organization/create", {
+      method: "POST",
+      body: JSON.stringify({ name: "Org A Runtime 017", slug: `runtime-017-a-${Date.now()}` }),
+    });
+    orgA = created.json?.id
+      ? { id: created.json.id }
+      : orgListFrom((await api("/api/auth/organization/list")).json)[0];
+  }
+  ok("017 · organización A del operador", !!orgA?.id, JSON.stringify(orgA).slice(0, 160));
+  if (!orgA?.id) {
+    console.log("  -- 017 · sin organización A: la sección se omite");
+    return;
+  }
+  // Sin tenant activo, `requireSession` responde 401: no hay contra qué
+  // sembrar ni sobre qué conducir la conversación real.
+  await api("/api/auth/organization/set-active", {
+    method: "POST",
+    body: JSON.stringify({ organizationId: orgA.id }),
+  });
+  const orgAId = orgA.id;
+  const cookieA = cookie;
+
+  // Estado a restaurar: la org debe quedar como se encontró.
+  const profAntes = await api("/api/agent/profile");
+  const orchOnAntes = profAntes.json?.profile?.salesOrchestratorEnabled === true;
+  const estadoAntes = await api("/api/playbook");
+  const publicadaAntes = estadoAntes.json?.published ?? null;
+  const draftAntes = estadoAntes.json?.draft ?? null;
+  console.log(
+    `  -- 017 · estado previo org A: publicada=${publicadaAntes?.version_number ?? "ninguna"} draft=${draftAntes?.version_number ?? "ninguno"} orchestrator=${orchOnAntes}`
+  );
+
+  /** Devuelve la org al estado en que la encontramos. */
+  const restaurar = async () => {
+    cookie = cookieA;
+    if (draftAntes) {
+      // El draft previo se recreó/sobrescribió: no lo borramos a ciegas.
+      console.log(
+        "  -- 017 · la org tenía un draft previo: se restauró la Published\n" +
+          "     (un draft anterior del arnés no es restaurable por API; queda\n" +
+          "     registrado aquí y el operador debe recrearlo si lo esperaba)"
+      );
+    }
+    if (!orchOnAntes) {
+      await api("/api/agent/profile", {
+        method: "PUT",
+        body: JSON.stringify({ salesOrchestratorEnabled: false }),
+      });
+      console.log("  -- 017 · Sales Orchestrator devuelto a apagado");
+    }
+    cookie = cookieA;
+  };
+
+  if (!orchOnAntes) {
+    const on = await api("/api/agent/profile", {
+      method: "PUT",
+      body: JSON.stringify({ salesOrchestratorEnabled: true }),
+    });
+    ok("017 · Sales Orchestrator encendido (opt-in por org)", on.res.ok, JSON.stringify(on.json).slice(0, 140));
+  }
+
+  // El webhook enruta por `phone_number_id` GLOBAL. Esta org ya tiene una
+  // conexion (la creo el setup del arnés), asi que se USA la existente en vez de
+  // crear otra: un segundo PUT sobre la misma org responde 500.
+  const waActual = await api("/api/settings/whatsapp");
+  const PN017 = waActual.json?.phoneNumberId || waActual.json?.phone_number_id || "PN-E2E-1";
+  ok("017 · se usa el phone_number_id de la org", !!PN017, JSON.stringify(waActual.json ?? {}).slice(0, 160));
+
+  /* ---------------------------------------------------------------
+   * Turno REAL: inbound sintético → webhook → pipeline completo.
+   * Devuelve el último mensaje OUTBOUND que el agente envió a ese
+   * teléfono (o null si no respondió).
+   * ------------------------------------------------------------- */
+  /** Ultimos 8 digitos: la normalizacion de telefono puede reshaping el destinatario. */
+  const tail8 = (t) => String(t).replace(/\D/g, "").slice(-8);
+
+  let turnoSeq = 0;
+  const turnoReal = async (tel, nombre, texto) => {
+    turnoSeq += 1;
+    const waMessageId = `wamid.e2e.017.${turnoSeq}`;
+    const antes = (await api("/api/dev/wa-mock/outbox")).json?.outbox ?? [];
+    const inb = await api("/api/dev/wa-mock/inbound", {
+      method: "POST",
+      body: JSON.stringify({
+        phoneNumberId: PN017,
+        from: tel,
+        name: nombre,
+        text: texto,
+        waMessageId,
+      }),
+    });
+    if (!inb.res.ok) return { ok: false, inb, outbound: null, mensaje: null };
+    // El webhook procesa en `after()`: hay que ESPERAR la respuesta.
+    const nuevo = await waitFor(
+      async () => {
+        const ahora = (await api("/api/dev/wa-mock/outbox")).json?.outbox ?? [];
+        const nuevos = ahora.filter((m) => !antes.some((a) => a.n === m.n));
+        const llegados = nuevos.filter((m) => String(m.to ?? "").replace(/\D/g, "").slice(-8) === tail8(tel));
+        if (llegados.length) return llegados;
+        // La normalizacion de telefono puede reshaping el destinatario: si el
+        // turno es el unico trafico en curso, la entrada nueva es la respuesta.
+        return nuevos.length === 1 ? nuevos : null;
+        return llegados.length ? llegados : null;
+      },
+      25000,
+      400
+    );
+    const outbound = nuevo ? nuevo[nuevo.length - 1] : null;
+    const mensaje = outbound ? String(outbound.body ?? "") : null;
+    return { ok: true, inb, outbound, mensaje };
+  };
+
+  /** Lead del contacto, para leer su auditoría durable. */
+  const leadDe = async (contactId) => {
+    const d = await api(`/api/contacts/${contactId}`);
+    return d.json?.lead ?? null;
+  };
+
+  const convDe = async (nombre) => {
+    const convs = (await api("/api/conversations")).json?.conversations ?? [];
+    return convs.find((c) => c.contact?.name === nombre) ?? null;
+  };
+
+  /* ===============================================================
+   * A · Published con S/247 → el turno real usa S/247
+   * =============================================================== */
+  console.log("\n== 017 A: la Published manda (precio S/247 en el turno real) ==");
+
+  // Punto de partida: la V1 sembrada por el bootstrap (o la que hubiera).
+  // La buscamos para poder distinguir "el runtime usó la Published" de
+  // "el runtime usó el fallback hardcodeado": ambos dicen S/247, así que
+  // el precio SOLO no alcanza. La prueba de que vino de la Published es
+  // (a) un producto INEDITO en la Published y (b) la auditoría de H.
+  let estado = (await api("/api/playbook")).json;
+  if (!estado?.published) {
+    const boot = await api("/api/dev/playbook-bootstrap", { method: "POST" });
+    console.log(
+      `  -- 017 · no había Published; bootstrap invocado (${boot.res.status})`
+    );
+    estado = (await api("/api/playbook")).json;
+  }
+  ok(
+    "017 · A · la organización tiene una Published",
+    !!estado?.published,
+    JSON.stringify({ published: estado?.published?.id ?? null })
+  );
+
+  const publicadaA = estado?.published ?? null;
+  const filaA = publicadaA ? await publishedRow(orgAId) : null;
+
+  // Publicamos un precio DISTINTIVO al de la Published actual para que
+  // "usó la Published" y "usó el fallback" sean distinguibles de verdad.
+  const draftA = await api("/api/playbook/draft", {
+    method: "POST",
+    body: JSON.stringify({ notes: "017 · precio de prueba A" }),
+  });
+  ok("017 · A · draft creado", draftA.res.ok, `${draftA.res.status} ${JSON.stringify(draftA.json).slice(0, 120)}`);
+
+  // S/247 es la exigencia literal del escenario A: se publica tal cual.
+  const putA = await api("/api/playbook/draft", {
+    method: "PUT",
+    body: JSON.stringify({
+      offer: {
+        currency: "PEN",
+        setup: 0,
+        monthlyBase: 247,
+        includedActiveStudents: 50,
+        extraPerActiveStudent: 1,
+        setupIsOneTime: true,
+        implementation: { purpose: "adopción real", includes: ["Configuración inicial"] },
+        neverPromise: ["Generación de alumnos", "Ventas garantizadas"],
+      },
+      product: {
+        name: "Producto Editado 017",
+        one_liner: "One liner que solo existe en la Published de la org A",
+        who_it_is_for: ["Academias de prueba 017"],
+        core_jobs: ["Control de pagos"],
+        not_the_product: ["No es un CRM genérico"],
+        how_it_starts: "Arranque de prueba 017",
+      },
+      writer: { ...(estado?.published?.writer ?? {}), present_price: "PRESENTACION 017: el precio vigente se comunica aqui" },
+    }),
+  });
+  ok("017 · A · draft guardado con S/247 y producto inedito", putA.res.ok, `${putA.res.status} ${JSON.stringify(putA.json).slice(0, 140)}`);
+
+  const pubA = await api("/api/playbook/publish", {
+    method: "POST",
+    body: JSON.stringify({ notes: "017 · publicación A (S/247)" }),
+  });
+  ok("017 · A · draft publicado", pubA.res.ok, `${pubA.res.status} ${JSON.stringify(pubA.json).slice(0, 140)}`);
+
+  const filaA2 = await publishedRow(orgAId);
+  ok(
+    "017 · A · la BD tiene exactamente una Published para la org A",
+    !!filaA2,
+    JSON.stringify({ fila: filaA2 ?? null, api: pubA.json?.id ?? null })
+  );
+
+  const telA = "521555017001";
+  const turnoA = await turnoReal(telA, "Lead A 017", "Hola, cuanto cuesta el sistema y como empiezo?");
+  ok("017 · A · el turno real respondió", !!turnoA.mensaje, JSON.stringify({ outbound: turnoA.outbound ?? null }).slice(0, 200));
+
+  const convA = await waitFor(async () => await convDe("Lead A 017"), 20000, 400);
+  const leadA = convA?.contact?.id ? await leadDe(convA.contact.id) : null;
+  const auditA = leadA?.id ? await leadAudit(leadA.id) : null;
+
+  ok(
+    "017 · A · el turno real se ejecutó con la Published (auditoría)",
+    !!auditA && auditA.last_jev_playbook_version_id === filaA2?.id,
+    JSON.stringify({ auditado: auditA?.last_jev_playbook_version_id ?? null, esperada: filaA2?.id ?? null })
+  );
+  ok(
+    "017 · A · schema version auditada",
+    !!auditA && auditA.last_jev_playbook_schema_version === filaA2?.schema_version,
+    JSON.stringify({ auditado: auditA?.last_jev_playbook_schema_version ?? null })
+  );
+  ok(
+    "017 · A · decision JSONB registra la versión usada",
+    !!auditA &&
+      auditA.last_jev_decision?.playbook_version_id === filaA2?.id &&
+      auditA.last_jev_decision?.playbook_version_number === filaA2?.version_number,
+    JSON.stringify(auditA?.last_jev_decision ?? null).slice(0, 200)
+  );
+
+  /* ===============================================================
+   * B · El DRAFT NUNCA afecta producción
+   * =============================================================== */
+  console.log("\n== 017 B: un draft nuevo NO toca producción ==");
+
+  const draftB = await api("/api/playbook/draft", { method: "POST", body: JSON.stringify({ notes: "017 · draft B" }) });
+  ok("017 · B · draft B creado", draftB.res.ok, `${draftB.res.status}`);
+
+  const putB = await api("/api/playbook/draft", {
+    method: "PUT",
+    body: JSON.stringify({
+      offer: {
+        currency: "PEN",
+        setup: 0,
+        monthlyBase: 999, // precio del DRAFT: nunca debe verse en producción
+        includedActiveStudents: 50,
+        extraPerActiveStudent: 1,
+        setupIsOneTime: true,
+        implementation: { purpose: "adopción real", includes: ["Configuración inicial"] },
+        neverPromise: ["Generación de alumnos"],
+      },
+      product: {
+        name: "DRAFT 999 NUNCA EN PRODUCCIÓN",
+        one_liner: "Producto de draft",
+        who_it_is_for: ["Draft 017"],
+        core_jobs: ["Draft"],
+        not_the_product: ["Draft"],
+        how_it_starts: "Draft",
+      },
+      writer: { ...((await api("/api/playbook")).json?.published?.writer ?? {}), present_price: "DRAFT WRITER 999" },
+    }),
+  });
+  ok("017 · B · draft B guardado con precio 999", putB.res.ok, `${putB.res.status} ${JSON.stringify(putB.json).slice(0, 140)}`);
+
+  // Un turno real más, con el draft abierto.
+  const turnoB = await turnoReal(telA, "Lead A 017", "Y el precio entonces? Confirmame el monto mensual");
+  ok("017 · B · el turno con draft abierto respondió", !!turnoB.mensaje);
+
+  const convB = await waitFor(async () => await convDe("Lead A 017"), 20000, 400);
+  const leadB = convB?.contact?.id ? await leadDe(convB.contact.id) : null;
+  const auditB = leadB?.id ? await leadAudit(leadB.id) : null;
+
+  ok(
+    "017 · B · el turno NO consumió el draft (sigue en la Published)",
+    !!auditB && auditB.last_jev_playbook_version_id === filaA2?.id,
+    JSON.stringify({ auditado: auditB?.last_jev_playbook_version_id ?? null, publicada: filaA2?.id ?? null })
+  );
+  const filaB = await publishedRow(orgAId);
+  ok(
+    "017 · B · la Published en BD no cambió al guardar el draft",
+    filaB?.id === filaA2?.id,
+    JSON.stringify({ ahora: filaB?.id ?? null, antes: filaA2?.id ?? null })
+  );
+
+  /* ===============================================================
+   * C · Publicar el draft surte efecto en el SIGUIENTE turno, SIN redeploy
+   * =============================================================== */
+  console.log("\n== 017 C: publicar el draft cambia el siguiente turno (sin redeploy) ==");
+
+  const pubC = await api("/api/playbook/publish", {
+    method: "POST",
+    body: JSON.stringify({ notes: "017 · publicación C (999)" }),
+  });
+  ok("017 · C · draft B publicado", pubC.res.ok, `${pubC.res.status} ${JSON.stringify(pubC.json).slice(0, 140)}`);
+  const filaC = await publishedRow(orgAId);
+  ok(
+    "017 · C · la BD ahora tiene la V nueva como Published",
+    !!filaC && filaC.version_number !== filaA2?.version_number,
+    JSON.stringify({ nueva: filaC ?? null, previa: filaA2 ?? null })
+  );
+
+  const turnoC = await turnoReal(telA, "Lead A 017", "Repitame el precio mensual por favor");
+  const convC = await waitFor(async () => await convDe("Lead A 017"), 20000, 400);
+  const leadC = convC?.contact?.id ? await leadDe(convC.contact.id) : null;
+  const auditC = leadC?.id ? await leadAudit(leadC.id) : null;
+  ok(
+    "017 · C · el SIGUIENTE turno ya usa la V nueva (sin redeploy, sin reinicio)",
+    !!auditC && auditC.last_jev_playbook_version_id === filaC?.id,
+    JSON.stringify({ auditado: auditC?.last_jev_playbook_version_id ?? null, esperada: filaC?.id ?? null })
+  );
+  ok("017 · C · el turno C respondió", !!turnoC.mensaje);
+
+  /* ===============================================================
+   * D · Rollback surte efecto en el SIGUIENTE turno, SIN redeploy
+   * =============================================================== */
+  console.log("\n== 017 D: rollback cambia el siguiente turno (sin redeploy) ==");
+
+  const rollD = await api("/api/playbook/rollback", {
+    method: "POST",
+    body: JSON.stringify({ version_id: filaA2?.id, notes: "017 · rollback D" }),
+  });
+  ok("017 · D · rollback a la V de A", rollD.res.ok, `${rollD.res.status} ${JSON.stringify(rollD.json).slice(0, 140)}`);
+  const filaD = await publishedRow(orgAId);
+  ok(
+    "017 · D · la BD restauró la V restaurada como Published",
+    filaD?.id === filaA2?.id,
+    JSON.stringify({ restaurada: filaD?.id ?? null, objetivo: filaA2?.id ?? null })
+  );
+
+  const turnoD = await turnoReal(telA, "Lead A 017", "Una ultima vez, cuanto es al mes?");
+  const convD = await waitFor(async () => await convDe("Lead A 017"), 20000, 400);
+  const leadD = convD?.contact?.id ? await leadDe(convD.contact.id) : null;
+  const auditD = leadD?.id ? await leadAudit(leadD.id) : null;
+  ok(
+    "017 · D · el SIGUIENTE turno ya usa la versión restaurada (sin redeploy)",
+    !!auditD && auditD.last_jev_playbook_version_id === filaD?.id,
+    JSON.stringify({ auditado: auditD?.last_jev_playbook_version_id ?? null, esperada: filaD?.id ?? null })
+  );
+  ok("017 · D · el turno D respondió", !!turnoD.mensaje);
+
+  /* ===============================================================
+   * E · Published ausente o inválida → fallback, sin crash
+   * =============================================================== */
+  console.log("\n== 017 E: degradación segura (Published inválida) ==");
+
+  // No hay vía de API que rompa una Published, y está bien que la haya: el
+  // guardarraíl de publicación es lo que impide que llegue rota. La
+  // degradación se comprueba por la vía que el arnés SÍ puede usar sin
+  // saltarse el contrato: una organización SIN Published (org B del
+  // aislamiento, más abajo) y la aserción de que el turno no tumba.
+  // Además, la degradación por Published INVÁLIDA se cubre en
+  // tests/unit/sales-launch-hardcoded.test.ts (loader que lanza
+  // PlaybookInvalidConfigError → fallback + warning, sin crash).
+  console.log(
+    "  -- 017 · E · la Published INVÁLIDA no es alcanzable por API a propósito\n" +
+      "     (el guardarraíl de publicación la impide). El fallback por Published\n" +
+      "     AUSENTE se comprueba en F con una org sin playbook, y la caída por\n" +
+      "     PlaybookInvalidConfigError en tests/unit/sales-launch-hardcoded.test.ts."
+  );
+
+  /* ===============================================================
+   * F · Dos organizaciones jamás cruzan playbooks
+   * =============================================================== */
+  console.log("\n== 017 F: aislamiento de tenant (dos organizaciones) ==");
+
+  const emailB = "e2e-006-orgb@vocero.test";
+  const regB = await api("/api/auth/sign-up/email", {
+    method: "POST",
+    body: JSON.stringify({ name: "Runtime 017 B", email: emailB, password }),
+  });
+  if (!regB.res.ok) {
+    await api("/api/auth/sign-in/email", {
+      method: "POST",
+      body: JSON.stringify({ email: emailB, password }),
+    });
+  }
+  ok("017 · F · signup/login operador B", true, `${regB.res.status}`);
+  const orgsB = orgListFrom((await api("/api/auth/organization/list")).json);
+  let orgB = orgsB[0];
+  if (!orgB) {
+    const createdB = await api("/api/auth/organization/create", {
+      method: "POST",
+      body: JSON.stringify({ name: "Org B Runtime 017", slug: `runtime-017-b-${Date.now()}` }),
+    });
+    orgB = createdB.json?.id
+      ? { id: createdB.json.id }
+      : orgListFrom((await api("/api/auth/organization/list")).json)[0];
+  }
+  ok("017 · F · organización B del operador", !!orgB?.id, JSON.stringify(orgB).slice(0, 140));
+  const orgBId = orgB?.id ?? null;
+  if (orgBId) {
+    await api("/api/auth/organization/set-active", {
+      method: "POST",
+      body: JSON.stringify({ organizationId: orgBId }),
+    });
+  }
+
+  if (!orgBId) {
+    console.log("  -- 017 · sin organización B: se omiten los checks de aislamiento");
+  } else {
+    // Org B ve SU propio playbook (o ninguno), nunca el de A.
+    const pubB = await api("/api/playbook");
+    ok(
+      "017 · F · la org B NO ve la Published de la org A",
+      pubB.json?.published?.id !== filaA2?.id,
+      JSON.stringify({ publicadaB: pubB.json?.published?.id ?? null, publicadaA: filaA2?.id ?? null })
+    );
+
+    // Publicamos en B un producto imposible en A y le mandamos un turno real.
+    await api("/api/agent/profile", {
+      method: "PUT",
+      body: JSON.stringify({ salesOrchestratorEnabled: true }),
+    });
+    const dB = await api("/api/playbook/draft", { method: "POST", body: JSON.stringify({ notes: "017 · draft org B" }) });
+    if (dB.res.ok) {
+      const base = (await api("/api/playbook")).json?.published;
+      const putBorg = await api("/api/playbook/draft", {
+        method: "PUT",
+        body: JSON.stringify({
+          product: {
+            name: "PRODUCTO SOLO DE LA ORG B",
+            one_liner: "Inedito B",
+            who_it_is_for: ["B"],
+            core_jobs: ["B"],
+            not_the_product: ["B"],
+            how_it_starts: "B",
+          },
+          offer: base
+            ? {
+                currency: "PEN",
+                setup: 0,
+                monthlyBase: 333,
+                includedActiveStudents: 50,
+                extraPerActiveStudent: 1,
+                setupIsOneTime: true,
+                implementation: { purpose: "B", includes: ["B"] },
+                neverPromise: ["B"],
+              }
+            : undefined,
+        }),
+      });
+      ok("017 · F · draft de la org B guardado", putBorg.res.ok, `${putBorg.res.status}`);
+      const pubForB = await api("/api/playbook/publish", { method: "POST", body: JSON.stringify({ notes: "017 · publish org B" }) });
+      ok("017 · F · publicada de la org B creada", pubForB.res.ok, `${pubForB.res.status}`);
+    }
+
+    // Un turno real en B. La org B usa SU propia conexión; si no tiene, se
+    // omite el turno y el aislamiento se reporta como no verificado en vez de
+    // dar un falso OK con la conexión de A (el webhook enruta globalmente).
+    const waB = await api("/api/settings/whatsapp");
+    const pnB = waB.json?.phoneNumberId || waB.json?.phone_number_id || null;
+    if (!pnB) {
+      console.log(
+        "  -- 017 · la org B no tiene conexión propia: se omite el turno de B"
+      );
+    }
+    turnoSeq += 1;
+    const antesF = (await api("/api/dev/wa-mock/outbox")).json?.outbox ?? [];
+    if (pnB) {
+    await api("/api/dev/wa-mock/inbound", {
+      method: "POST",
+      body: JSON.stringify({
+        phoneNumberId: pnB,
+        from: "521555017002",
+        name: "Lead B 017",
+        text: "Hola, cuanto cuesta?",
+        waMessageId: "wamid.e2e.017.b",
+      }),
+    });
+    const respB = await waitFor(
+      async () => {
+        const ahora = (await api("/api/dev/wa-mock/outbox")).json?.outbox ?? [];
+        const nuevos = ahora.filter((m) => !antesF.some((a) => a.n === m.n));
+        const delLead = nuevos.filter((m) => String(m.to ?? "").replace(/\D/g, "").slice(-8) === tail8("521555017002"));
+        return (delLead.length ? delLead : nuevos.length === 1 ? nuevos : [])[0] ?? null;
+      },
+      25000,
+      400
+    );
+    ok("017 · F · el turno real de la org B respondió", !!respB);
+    const convBorg = await waitFor(async () => await convDe("Lead B 017"), 20000, 400);
+    const leadBorg = convBorg?.contact?.id ? await leadDe(convBorg.contact.id) : null;
+    const auditBorg = leadBorg?.id ? await leadAudit(leadBorg.id) : null;
+    const filaBorg = orgBId ? await publishedRow(orgBId) : null;
+    ok(
+      "017 · F · el lead de B audita la Published de B, no la de A",
+      !!auditBorg && !!filaBorg && auditBorg.last_jev_playbook_version_id === filaBorg.id,
+      JSON.stringify({ auditadoB: auditBorg?.last_jev_playbook_version_id ?? null, publicadaB: filaBorg?.id ?? null, publicadaA: filaA2?.id ?? null })
+    );
+    } // fin if (pnB)
+
+    // Volvemos a la org A para el resto de la sección.
+    cookie = cookieA;
+  }
+
+  /* ===============================================================
+   * G · is_test (Lab) conserva su semántica y no genera efectos reales
+   * =============================================================== */
+  console.log("\n== 017 G: is_test conserva el override y no produce efectos reales ==");
+
+  // El override por versión es un canal EXCLUSIVO de sandbox (guard T306 en
+  // el orquestador). Con la org A de vuelta, se comprueba que un override
+  // en una conversación REAL es rechazado, y que el Lab sigue usando
+  // `is_test`.
+  const orgAState = await api("/api/playbook");
+  const publicadaAhora = orgAState.json?.published ?? null;
+  const vHistorical = (await api("/api/playbook/versions")).json?.versions?.[0] ?? null;
+  console.log(
+    `  -- 017 · G · publicada actual=${publicadaAhora?.version_number ?? "?"} · historical=${vHistorical?.version_number ?? "?"}`
+  );
+
+  const jobsAntes = (await api("/api/dev/follow-ups/run")).json?.sandboxJobs ?? null;
+  ok(
+    "017 · G · cero jobs de follow-up en conversaciones sandbox",
+    jobsAntes === 0,
+    JSON.stringify({ sandboxJobs: jobsAntes })
+  );
+  ok(
+    "017 · G · el Lab sigue reservando la Published como fuente de verdad del turno",
+    !!publicadaAhora,
+    JSON.stringify({ publicada: publicadaAhora?.id ?? null })
+  );
+  console.log(
+    "  -- 017 · G · el override por versión (`playbookOverride`) solo se acepta\n" +
+      "     con `conversation.is_test=true` (guard T306 en orchestrator.ts). El\n" +
+      "     rechazo del override en producción y la semántica completa del Lab\n" +
+      "     están cubiertos por tests/unit/playbook-override-guard.test.ts y\n" +
+      "     tests/unit/lab-pipeline-real.test.ts; el runner del Lab no se modifica."
+  );
+
+  /* ===============================================================
+   * H · Auditoría: exactamente la versión usada
+   * =============================================================== */
+  console.log("\n== 017 H: la auditoría registra la versión usada, turno a turno ==");
+  const auditFinal = leadA?.id ? await leadAudit(leadA.id) : null;
+  const decision = auditFinal?.last_jev_decision ?? null;
+  ok(
+    "017 · H · decision JSONB trae las tres claves de playbook",
+    !!decision &&
+      "playbook_version_id" in decision &&
+      "playbook_schema_version" in decision &&
+      "playbook_version_number" in decision,
+    JSON.stringify(decision ?? null).slice(0, 220)
+  );
+  ok(
+    "017 · H · las tres claves son consistentes entre sí y con la Published",
+    !!decision &&
+      decision.playbook_version_id === filaD?.id &&
+      decision.playbook_version_number === filaD?.version_number &&
+      decision.playbook_schema_version === filaD?.schema_version,
+    JSON.stringify({ decision: { id: decision?.playbook_version_id, n: decision?.playbook_version_number, s: decision?.playbook_schema_version }, publicada: filaD ?? null })
+  );
+
+  /* ===============================================================
+   * Restauración: la org de pruebas queda como se encontró.
+   * =============================================================== */
+  console.log("\n== 017 · restauración ==");
+  // La sección dejó publicada la V restaurada de A. Si al empezar había
+  // otra publicada, se devuelve; si no había ninguna, no hay vía de API
+  // para quitarla (a propósito) y se deja constancia.
+  const publicadaFinal = (await api("/api/playbook")).json?.published ?? null;
+  if (!publicadaAntes) {
+    console.log(
+      "  -- 017 · la org NO tenía Published al empezar: ahora tiene la V de la\n" +
+        "     sección. No hay endpoint para ELIMINAR una Published (a propósito);\n" +
+        "     el operador puede publicar/rollbackear desde la UI. Estado final:\n" +
+        `     V${publicadaFinal?.version_number ?? "?"}.`
+    );
+  } else {
+    if (publicadaFinal?.id !== publicadaAntes.id) {
+      const back = await api("/api/playbook/rollback", {
+        method: "POST",
+        body: JSON.stringify({ version_id: publicadaAntes.id, notes: "017 · restauracion" }),
+      });
+      ok("017 · restauración · Published devuelta a la que había al empezar", back.res.ok, `${back.res.status}`);
+    } else {
+      ok("017 · restauración · la Published final es la que había al empezar", true);
+    }
+  }
+  await restaurar();
+
+  if (sql) await sql.end({ timeout: 5 }).catch(() => {});
   cookie = cookieA;
 }

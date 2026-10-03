@@ -1,14 +1,52 @@
 # Sales Orchestrator — contrato operativo
 
-**Contrato vigente de lanzamiento (2026-10-01):** Feature 008 congelada para V2.
-Con `SALES_PLAYBOOK_RUNTIME_ENABLED=false`, las conversaciones reales no leen ni
-aplican `sales_playbook_version`: el builder usa VENDE_VELOZ_PRODUCT y
-VENDE_VELOZ_COMMERCIAL_POLICY; Jev recibe JEV_SALES_QUESTIONS_V2; el writer usa
-VENDE_VELOZ_OFFER e instrucciones internas. FK/snapshot de versión quedan null.
-Agent Profile, resolver, lanes, handoff, follow-ups, Meta Ads y efectos CRM mantienen
-su implementación. Sandbox/configuración/API/UI/datos se preservan. Reactivar la
-constante restaura la lectura publicada en V2. Este contrato prevalece sobre las
-notas históricas de runtime dinámico abajo.
+**Contrato vigente (2026-10-03, corte 3 del spec 009):** el runtime
+**PUBLICADO está ENCENDIDO en producción**.
+`SALES_PLAYBOOK_RUNTIME_ENABLED = true` (`src/server/sales/build-state.ts:37`).
+
+Qué significa eso en un turno real:
+
+- El builder (`buildJevSalesState`) consulta la versión **Published** de la
+  organización en cada turno, **sin cache** (ni TTL ni memoización: ver
+  `src/lib/sales/playbook/loader.ts`). Publicar o rollbackear surte efecto en el
+  **siguiente turno, sin redeploy**.
+- La Published alimenta de verdad el pipeline: `product` y `commercial_policy`
+  van al state que evalúa Jev; `offer` y `writer` van al writer; `jev_questions`
+  es el set de preguntas que se le manda a Jev.
+- El mapeo es **explícito**, no un spread: `ConfigV1.product` y
+  `ConfigV1.commercial_policy` se convierten a la forma snake_case que consume
+  Jev (`toStateProduct` / `toStatePolicy`). Esto se corrigió en el corte 3
+  porque el spread anterior perdía 6 de las 9 claves de política en silencio y
+  arrastraba los bloques `implementation`/`subscription` hardcodeados de Vende
+  Veloz hacia organizaciones con playbook de otro negocio.
+- **Un draft NUNCA afecta producción**: el loader del turno solo pide
+  `status='published'`. `getDraftConfigForOrg` se usa únicamente en el
+  Laboratorio.
+- **Auditoría**: cuando el turno usa la Published, el lead guarda
+  `last_jev_playbook_version_id`, `last_jev_playbook_schema_version`, y dentro
+  de `last_jev_decision` las claves `playbook_version_id`,
+  `playbook_schema_version` y `playbook_version_number`.
+- **Degradación**: sin Published, o con una Published que ya no cumple
+  `ConfigV1`, el turno cae al baseline hardcodeado (`VENDE_VELOZ_*`,
+  `JEV_SALES_QUESTIONS_V2`), emite un `console.warn` observable una vez por
+  proceso y por organización, y **no tumba**. En ese caso la auditoría queda en
+  `null`, que es la señal de "este turno se decidió con el fallback".
+- El **override por versión** (`playbookOverride`) sigue siendo exclusivo de
+  sandbox: solo se acepta con `conversation.is_test = true` (guard T306 en
+  `src/server/sales/orchestrator.ts`); fuera de `is_test` lanza
+  `playbook_override_forbidden_in_production`.
+- Todo es **tenant-safe**: cada lectura del playbook pasa por `scoped()` con el
+  `organizationId` de la conversación, incluido `getConfigByVersionId`.
+
+**Reversibilidad**: volver la constante a `false` devuelve el producto, la
+política, las preguntas, la oferta y el writer a los defaults hardcodeados, que
+quedan como **fallback**. Es un cambio de una línea; no hay que tocar nada más.
+Lo que el administrador publique sigue siendo la fuente de verdad del turno.
+
+**Precondición operativa**: con el motor encendido, la organización debe tener
+una **Published** con el baseline comercial vigente; si no, todo cae al
+fallback (seguro, pero no lo que se quiere). El paso de publicarla desde la UI
+está en `docs/playbook.md`.
 
 Fuente durable de contexto para los siguientes commits.
 No es spec de implementación: congela decisiones. El código funcional aún no cambia.

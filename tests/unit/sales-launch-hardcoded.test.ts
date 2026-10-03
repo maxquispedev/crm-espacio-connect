@@ -25,10 +25,10 @@ vi.mock("@/lib/db/tenant", async (importOriginal) => {
     return real.scoped(...args);
   } };
 });
-vi.mock("@/lib/sales/playbook/loader", () => ({
-  getPublishedConfigForOrg,
-  getConfigByVersionId: vi.fn().mockResolvedValue(null),
-}));
+vi.mock("@/lib/sales/playbook/loader", async (importOriginal) => {
+  const real = await importOriginal<typeof import("@/lib/sales/playbook/loader")>();
+  return { ...real, getPublishedConfigForOrg };
+});
 
 const selectQueue: unknown[][] = [];
 const leadPatches: Array<Record<string, unknown>> = [];
@@ -137,13 +137,36 @@ function queueTurn(orgId: string, conversationId: string) {
   return conv;
 }
 
+/**
+ * Versión publicada REALISTA: el loader siempre entrega un `ConfigV1`
+ * completo y validado por `parseConfigV1` (`src/lib/sales/playbook/loader.ts`),
+ * así que la fixture cubre los 6 campos de `product` y los 9 de
+ * `commercial_policy` (camelCase, el contrato durable).
+ */
 function published(version: number) {
   return {
     id: `spv_${version}`, schema_version: "1.0.0", version_number: version,
     status: "published",
     config: {
-      product: { name: `Producto publicado ${version}` },
-      commercial_policy: { goal: "POLICY CUSTOM" },
+      product: {
+        name: `Producto publicado ${version}`,
+        one_liner: `One liner publicado ${version}`,
+        who_it_is_for: [`Audience ${version}`],
+        core_jobs: [`Job ${version}`],
+        not_the_product: [`No es X ${version}`],
+        how_it_starts: `Arranque publicado ${version}`,
+      },
+      commercial_policy: {
+        defaultChannel: "WhatsApp",
+        goal: "POLICY CUSTOM",
+        automationFirst: `AUTOMATION ${version}`,
+        autoClose: `AUTOCLOSE ${version}`,
+        humanHandoff: `HANDOFF ${version}`,
+        futureInterest: `FUTURE ${version}`,
+        noResponse: `NORES ${version}`,
+        disqualification: "DISQUAL CUSTOM",
+        evidenceRule: `EVIDENCE ${version}`,
+      },
       offer: { setup: 9999 },
       writer: { present_price: "WRITER CUSTOM" },
       jev_questions: { custom_question: { type: "score", instructions: "CUSTOM" } },
@@ -215,7 +238,7 @@ describe("lanzamiento: builder + orquestador + resolver reales", () => {
     }
   });
 
-  it("Published V1 y publicación posterior no cambian defaults; conserva Meta, perfil, lane, CRM y follow-ups por tenant", async () => {
+  it("la Published de la org ALIMENTA el turno real y su versión se audita", async () => {
     evaluateJev.mockResolvedValue({ ok: true, decision: makeDecision({ nextAction: "present_price" }), snapshot: {} });
     writeSalesReply.mockResolvedValue({ ok: true, text: "Oferta conocida" });
     deliverReply.mockResolvedValue(true);
@@ -225,33 +248,117 @@ describe("lanzamiento: builder + orquestador + resolver reales", () => {
       const conv = queueTurn(orgId, conversationId);
       await runSalesOrchestratorTurn({ organizationId: orgId, conversationId, conversation: conv as never });
       expect(selectQueue).toHaveLength(0);
-      expect(evaluateJev).toHaveBeenLastCalledWith({
-        state: expect.objectContaining({
-          product: VENDE_VELOZ_PRODUCT, commercial_policy: VENDE_VELOZ_COMMERCIAL_POLICY,
-          source: "Meta Ads", ad_context: { source_type: "ad", headline: "Ordena tu academia", body: "Control de pagos" },
-        }), questions: JEV_SALES_QUESTIONS_V2,
-      });
+
+      // T933 (invertido): la Published SE USA. El loader se invoca una
+      // vez por turno, con la org de la conversación.
+      expect(getPublishedConfigForOrg).toHaveBeenCalledWith(orgId);
+
+      // El state ya no es el default: product y commercial_policy
+      // vienen del playbook publicado.
       const input = evaluateJev.mock.calls.at(-1)![0];
-      for (const key of ["product_fit", "motivation_to_change", "purchase_intent"]) {
-        expect(Array.isArray(input.questions[key].criteria)).toBe(true);
-      }
+      expect(input.state.product).toMatchObject({ name: `Producto publicado ${version}` });
+      expect(input.state.commercial_policy).toMatchObject({ goal: "POLICY CUSTOM" });
+      // El resto de la política publicada llega mapeado a snake_case
+      // (T932): el spread shallow la habría perdido en silencio.
+      expect(input.state.commercial_policy).toMatchObject({
+        default_channel: "WhatsApp",
+        goal: "POLICY CUSTOM",
+        automation_first: `AUTOMATION ${version}`,
+        auto_close: `AUTOCLOSE ${version}`,
+        human_handoff: `HANDOFF ${version}`,
+        future_interest: `FUTURE ${version}`,
+        no_response: `NORES ${version}`,
+        disqualification: "DISQUAL CUSTOM",
+        evidence_rule: `EVIDENCE ${version}`,
+      });
+      // Y el state NO arrastra `implementation`/`subscription`
+      // hardcodeados de Vende Veloz (T932).
+      expect(input.state.product.implementation).toBeUndefined();
+      expect(input.state.product.subscription).toBeUndefined();
+      // El contexto NO playbook se conserva intacto.
+      expect(input.state.source).toBe("Meta Ads");
+      expect(input.state.ad_context).toEqual({ source_type: "ad", headline: "Ordena tu academia", body: "Control de pagos" });
+
+      // offer y writer instrucciones también vienen del playbook.
       expect(writeSalesReply).toHaveBeenLastCalledWith(expect.objectContaining({
-        product: VENDE_VELOZ_PRODUCT, policy: VENDE_VELOZ_COMMERCIAL_POLICY,
-        offer: VENDE_VELOZ_OFFER, writerInstructions: undefined,
+        product: expect.objectContaining({ name: `Producto publicado ${version}` }),
+        offer: expect.objectContaining({ setup: 9999 }),
+        writerInstructions: expect.objectContaining({ present_price: "WRITER CUSTOM" }),
         plan: expect.objectContaining({ lane: "auto_close", nextAction: "present_price" }),
         agentProfile: { tone: "cercano", instructions: "Sé breve", escalationRules: "Pedido humano" },
       }));
+      // Las preguntas Jev salen del playbook publicado.
+      expect(Object.keys(input.questions)).toContain("custom_question");
+      expect(input.questions.custom_question).toMatchObject({ type: "score", instructions: "CUSTOM" });
+
       expect(deliverReply).toHaveBeenLastCalledWith(conv, "Oferta conocida");
       expect(scheduleNextFollowUp).toHaveBeenLastCalledWith(expect.objectContaining({ organizationId: orgId, conversationId, leadId: "ld_1" }));
+
+      // T933 (invertido): la versión usada SE AUDITA en lead y decision.
       const patch = leadPatches.at(-2);
-      expect(patch).toMatchObject({ automationLane: "auto_close", lastJevPlaybookVersionId: null, lastJevPlaybookSchemaVersion: null,
-        lastJevDecision: expect.objectContaining({ playbook_version_id: null, playbook_schema_version: null, playbook_version_number: null }) });
+      expect(patch).toMatchObject({
+        automationLane: "auto_close",
+        lastJevPlaybookVersionId: `spv_${version}`,
+        lastJevPlaybookSchemaVersion: "1.0.0",
+        lastJevDecision: expect.objectContaining({
+          playbook_version_id: `spv_${version}`,
+          playbook_schema_version: "1.0.0",
+          playbook_version_number: version,
+        }),
+      });
       expect(leadPatches.at(-1)?.pricePresentedAt).toBeInstanceOf(Date);
+      // Tenant-safe: toda query del turno cerró por su propia org.
       expect(scopedSpy.mock.calls.every((args) => args[1] === orgId)).toBe(true);
       scopedSpy.mockClear();
     }
-    expect(getPublishedConfigForOrg).not.toHaveBeenCalled();
+    expect(getPublishedConfigForOrg).toHaveBeenCalledTimes(3);
     expect(applyHandoff).not.toHaveBeenCalled();
+  });
+
+  it("sin Published degradable: fallback hardcodeado, sin crash y SIN auditar versión", async () => {
+    evaluateJev.mockResolvedValue({ ok: true, decision: makeDecision({ nextAction: "present_price" }), snapshot: {} });
+    writeSalesReply.mockResolvedValue({ ok: true, text: "Oferta conocida" });
+    deliverReply.mockResolvedValue(true);
+    // Published ausente.
+    getPublishedConfigForOrg.mockResolvedValue(null);
+    const conv = queueTurn("org_1", "cv_sin_playbook");
+    await expect(runSalesOrchestratorTurn({
+      organizationId: "org_1", conversationId: conv.id, conversation: conv as never,
+    })).resolves.toBeUndefined();
+
+    // Cae al baseline hardcodeado…
+    expect(evaluateJev).toHaveBeenLastCalledWith({
+      state: expect.objectContaining({
+        product: VENDE_VELOZ_PRODUCT, commercial_policy: VENDE_VELOZ_COMMERCIAL_POLICY,
+      }),
+      questions: JEV_SALES_QUESTIONS_V2,
+    });
+    // …y no inventa una versión auditada.
+    const patch = leadPatches.find((p) => "lastJevPlaybookVersionId" in p);
+    expect(patch).toMatchObject({
+      lastJevPlaybookVersionId: null,
+      lastJevPlaybookSchemaVersion: null,
+      lastJevDecision: expect.objectContaining({ playbook_version_id: null, playbook_schema_version: null, playbook_version_number: null }),
+    });
+    expect(deliverReply).toHaveBeenCalledOnce();
+
+    // Published INVÁLIDA (falla ConfigV1 en el loader): degrada igual.
+    const { __resetWarnedNoPlaybookOrgs } = await import("@/server/sales/build-state");
+    const { PlaybookInvalidConfigError } = await import("@/lib/sales/playbook/loader");
+    __resetWarnedNoPlaybookOrgs();
+    evaluateJev.mockClear();
+    writeSalesReply.mockClear();
+    getPublishedConfigForOrg.mockRejectedValue(new PlaybookInvalidConfigError("rota"));
+    const conv2 = queueTurn("org_1", "cv_playbook_roto");
+    await expect(runSalesOrchestratorTurn({
+      organizationId: "org_1", conversationId: conv2.id, conversation: conv2 as never,
+    })).resolves.toBeUndefined();
+    expect(evaluateJev).toHaveBeenCalledOnce();
+    const input = evaluateJev.mock.calls.at(-1)![0];
+    expect(input.state.product).toEqual(VENDE_VELOZ_PRODUCT);
+    expect(input.state.commercial_policy).toEqual(VENDE_VELOZ_COMMERCIAL_POLICY);
+    expect(input.questions).toEqual(JEV_SALES_QUESTIONS_V2);
+    __resetWarnedNoPlaybookOrgs();
   });
 
   it("tenant sin conversación accesible retorna not_found sin Jev, writer ni efectos", async () => {
@@ -259,6 +366,7 @@ describe("lanzamiento: builder + orquestador + resolver reales", () => {
     const result = await buildJevSalesState({ organizationId: "org_other", conversationId: "cv_1" });
     expect(result).toMatchObject({ ok: false, error: "not_found" });
     expect(scopedSpy).toHaveBeenCalledWith(expect.anything(), "org_other", expect.anything());
+    // No se consulta la Published de ninguna org si no hay conversación.
     expect(getPublishedConfigForOrg).not.toHaveBeenCalled();
     expect(evaluateJev).not.toHaveBeenCalled();
     expect(writeSalesReply).not.toHaveBeenCalled();
@@ -267,19 +375,22 @@ describe("lanzamiento: builder + orquestador + resolver reales", () => {
 });
 
 /**
- * T925 (corte 2, spec 009) — regresión de freeze.
+ * T933 (corte 3, spec 009) — inversión de la regresión de congelamiento.
  *
- * El corte 2 sincroniza el baseline comercial y el bootstrap, pero
- * **no enciende nada**: el runtime productivo sigue en `false` y las
- * conversaciones reales siguen usando los defaults como fallback.
- * Encenderlo es el corte 3, y este test es lo que lo hace explícito.
+ * El corte 2 dejó el runtime en `false` y este archivo lo fijaba. El
+ * corte 3 ENCIENDE `SALES_PLAYBOOK_RUNTIME_ENABLED`, así que la
+ * aserción se invierte: el loader publicado **sí** se invoca en
+ * conversaciones reales y la versión usada **sí** se audita.
+ *
+ * `hardcoded` deja de ser la única fuente: pasa a ser el **fallback**
+ * cuando no hay Published o la Published es inválida.
  */
-describe("freeze de producción — el corte 2 NO enciende el runtime", () => {
-  it("SALES_PLAYBOOK_RUNTIME_ENABLED sigue en false", () => {
-    expect(SALES_PLAYBOOK_RUNTIME_ENABLED).toBe(false);
+describe("runtime publicado en producción — el corte 3 ENCIENDE el runtime", () => {
+  it("SALES_PLAYBOOK_RUNTIME_ENABLED está en true (reversible en una línea)", () => {
+    expect(SALES_PLAYBOOK_RUNTIME_ENABLED).toBe(true);
   });
 
-  it("el baseline comercial quedó sincronizado aunque el runtime siga apagado", () => {
+  it("el baseline comercial sigue intacto como fallback", () => {
     expect(VENDE_VELOZ_OFFER.setup).toBe(0);
     expect(VENDE_VELOZ_OFFER.monthlyBase).toBe(247);
     expect(VENDE_VELOZ_OFFER.includedActiveStudents).toBe(50);

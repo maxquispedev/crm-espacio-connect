@@ -1,6 +1,43 @@
 # CURRENT STATE — Espacio Connect
 
-**Actualizado: 2026-10-03 — Corte 2 del spec 009 (baseline comercial Vende Veloz).**
+**Actualizado: 2026-10-03 — Corte 3 del spec 009 (runtime publicado EN PRODUCCIÓN).**
+**El runtime comercial ya NO está congelado.** `SALES_PLAYBOOK_RUNTIME_ENABLED = true`
+(`src/server/sales/build-state.ts:37`). Las conversaciones reales de una organización
+con Sales Orchestrator consumen la versión **Published** de SU playbook, sin cache: publicar
+o rollbackear surte efecto en el **siguiente turno, sin redeploy**. Los defaults
+hardcodeados (`VENDE_VELOZ_*`, `JEV_SALES_QUESTIONS_V2`) quedan como **fallback**, ya no
+como fuente única.
+
+Qué cambió en el código (más allá de la constante):
+
+- **T932 — dos defectos de merge corregidos (eran bloqueantes para encender).** Una revisión
+  de toda la cadena que toca el flag encontró que el spread shallow
+  `{...VENDE_VELOZ_PRODUCT, ...playbook.config.product}` era incorrecto en dos sentidos:
+  (1) `ConfigV1.commercial_policy` es **camelCase** (`automationFirst`, `humanHandoff`, …)
+  y el state de Jev es **snake_case**: el spread solo solapaba `goal` y `disqualification`,
+  así que **6 de las 9 claves de política publicadas se perdían en silencio** y entraban al
+  state como claves que Jev nunca leía. (2) `ConfigV1.product` no declara
+  `implementation`/`subscription`, así que el spread **arrastraba los bloques hardcodeados
+  de Vende Veloz** al state de cualquier organización con playbook de otro negocio (otro
+  negocio habría recibido "S/247 al mes" hacia Jev y el writer). Ahora el mapeo es
+  **explícito** (`toStateProduct` / `toStatePolicy`) y el playbook gana por completo.
+  No se tocó `offer`, `writer` ni `jev_questions`: esos ya reemplazaban bien los defaults.
+- **T933 — regresión de congelamiento invertida** (no borrada) en
+  `tests/unit/sales-launch-hardcoded.test.ts`: el loader publicado **sí** se invoca en
+  producción, la versión usada **sí** se audita, y se añadió el caso de degradación
+  (Published ausente y Published inválida → fallback sin crash y sin inventar versión).
+- Fixtures de `tests/unit/lab-pipeline-real.test.ts` corregidas: usaban `config: {}`, algo
+  que el loader real nunca devuelve (siempre valida con `parseConfigV1`).
+
+Gates: `pnpm typecheck` verde, `pnpm lint` verde (0 errores, 3 warnings preexistentes),
+`pnpm build` verde, **868/868 tests en 91 archivos** verdes.
+
+**👉 Precondición operativa antes de esperar tráfico real:** debe existir una **Published**
+con el baseline comercial del corte 2. Si no existe, el motor cae al fallback (seguro, con
+`console.warn` observable y auditoría en `null`), pero no es lo que se quiere. El paso es que
+el administrador la publique desde la UI (ver `docs/playbook.md`).
+
+**Corte 2 del spec 009 (baseline comercial Vende Veloz).**
 El **fallback técnico** y el **bootstrap del playbook** quedaron sincronizados con la
 decisión comercial vigente de la primera cohorte: **setup 0** (implementación asistida
 incluida, sin costo de setup), **S/247/mes**, **50** alumnos activos incluidos y
@@ -9,10 +46,6 @@ dominio `.com` del primer año cuando la academia lo necesita (si ya tiene uno, 
 conecta el existente) y **renovación del dominio desde el 2º año cobrada aparte y sin
 encabezar el pitch**. El objetivo comercial del bootstrap pasa a ser **aprendizaje**
 (compra/adopción/uso/retención), no maximizar margen.
-
-**El runtime productivo sigue APAGADO.** `SALES_PLAYBOOK_RUNTIME_ENABLED` continúa en
-`false` (`src/server/sales/build-state.ts:37`) y ahora lo verifica una regresión
-explícita. Este corte **no** enciende nada; encenderlo es el corte 3.
 
 Cambios de código:
 

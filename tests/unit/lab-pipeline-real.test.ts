@@ -380,15 +380,54 @@ function seedProfile(salesEnabled: boolean): void {
   });
 }
 
+/**
+ * `ConfigV1` mínimo pero REALISTA.
+ *
+ * Antes estas fixtures usaban `config: {}`, algo que el loader real nunca
+ * devuelve: `rowToConfig` valida la fila con `parseConfigV1` y solo emite
+ * un `ConfigV1` completo. Desde el corte 3 el builder mapea
+ * `config.product` y `config.commercial_policy` de forma explícita, así que
+ * la fixture debe traer los 6 campos de producto y los 9 de política.
+ */
+const LAB_CONFIG = {
+  schema_version: "1.0",
+  product: {
+    name: "Producto de laboratorio",
+    one_liner: "One liner del laboratorio",
+    who_it_is_for: ["Audience del laboratorio"],
+    core_jobs: ["Job del laboratorio"],
+    not_the_product: ["No es el producto del laboratorio"],
+    how_it_starts: "Arranque del laboratorio",
+  },
+  commercial_policy: {
+    defaultChannel: "WhatsApp",
+    goal: "Objetivo del laboratorio",
+    automationFirst: "Automatización del laboratorio",
+    autoClose: "Cierre automático del laboratorio",
+    humanHandoff: "Escalamiento del laboratorio",
+    futureInterest: "Interés futuro del laboratorio",
+    noResponse: "Sin respuesta del laboratorio",
+    disqualification: "Descalificación del laboratorio",
+    evidenceRule: "Evidencia del laboratorio",
+  },
+  offer: { setup: 0, monthlyBase: 247 },
+  writer: {},
+  jev_questions: {},
+  priorities: { primary: [], secondary: [], tertiary: [] },
+  prohibitions: [],
+  handoff: {},
+  urgency_rules: null,
+};
+
 function seedPublished(id: string | null): void {
   getPublishedConfigForOrg.mockResolvedValue(
-    id ? { id, schema_version: "1.0", version_number: 1, status: "published", config: {} } : null
+    id ? { id, schema_version: "1.0", version_number: 1, status: "published", config: LAB_CONFIG } : null
   );
 }
 
 function seedDraft(id: string | null): void {
   getDraftConfigForOrg.mockResolvedValue(
-    id ? { id, schema_version: "1.0", version_number: 2, status: "draft", config: {} } : null
+    id ? { id, schema_version: "1.0", version_number: 2, status: "draft", config: LAB_CONFIG } : null
   );
 }
 
@@ -434,7 +473,7 @@ beforeEach(() => {
     { id: "chat", organizationId: ORG, kind: "open", position: 1, name: "En conversación" },
     { id: "new", organizationId: ORG, kind: "open", position: 0, name: "Nuevo" },
   );
-  getConfigByVersionId.mockImplementation(async (_org, id) => ({ id, config: {}, schema_version: "1.0", version_number: 1 }));
+  getConfigByVersionId.mockImplementation(async (_org, id) => ({ id, config: LAB_CONFIG, schema_version: "1.0", version_number: 1 }));
 });
 
 /* ------------------------------------------------------------------ */
@@ -527,7 +566,7 @@ describe("Laboratorio comercial — pipeline real (T607)", () => {
       schema_version: "1.0",
       version_number: 1,
       status: "archived",
-      config: {},
+      config: LAB_CONFIG,
     });
 
     const runId = await startRun(ORG, "archived:spv_vieja");

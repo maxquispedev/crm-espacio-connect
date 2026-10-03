@@ -5,6 +5,7 @@ import {
   getPublishedConfigForOrg,
   type LoadedPlaybookVersion,
 } from "@/lib/sales/playbook/loader";
+import type { ConfigV1 } from "@/lib/sales/playbook/schema";
 import type {
   JevAdContext,
   JevConversationTurn,
@@ -30,11 +31,24 @@ import {
  */
 const warnedNoPlaybookOrgs = new Set<string>();
 
-/** Lanzamiento V1: estrategia conocida en conversaciones reales.
- * Feature 008 se preserva para V2: reactivar esta constante restaura
- * la lectura publicada. Laboratorio conserva su runtime configurable.
+/**
+ * Interruptor de producción (spec 009, corte 3).
+ *
+ * `true` = las conversaciones REALES cargan la versión **Published** de su
+ * organización. El runtime ya existía (Feature 008) y estaba congelado para
+ * el lanzamiento; este corte lo reactiva sin reescribir el motor.
+ *
+ * Reversible en una línea: volver a `false` devuelve el producto, la
+ * política, las preguntas, la oferta y el writer a los defaults
+ * hardcodeados (`VENDE_VELOZ_*`, `JEV_SALES_QUESTIONS_V2`), que quedan como
+ * **fallback** cuando no hay publicada o la publicada es inválida.
+ *
+ * NO es un feature flag: no se lee de env, no se combina con otras
+ * condiciones y no invalida cache alguno (el loader no cachea; ver
+ * `src/lib/sales/playbook/loader.ts`). El override por versión sigue
+ * existiendo solo para `is_test` (guard T306 en el orquestador).
  */
-export const SALES_PLAYBOOK_RUNTIME_ENABLED = false;
+export const SALES_PLAYBOOK_RUNTIME_ENABLED = true;
 
 /**
  * Solo para tests: limpia el set de orgs ya avisadas para que el
@@ -245,10 +259,10 @@ export async function buildJevSalesState(
   }
 
   const productFromPlaybook: VendeVelozProduct = playbook
-    ? ({ ...VENDE_VELOZ_PRODUCT, ...playbook.config.product } as unknown as VendeVelozProduct)
+    ? toStateProduct(playbook.config.product)
     : ({ ...VENDE_VELOZ_PRODUCT } as VendeVelozProduct);
   const policyFromPlaybook: VendeVelozCommercialPolicy = playbook
-    ? ({ ...VENDE_VELOZ_COMMERCIAL_POLICY, ...playbook.config.commercial_policy } as unknown as VendeVelozCommercialPolicy)
+    ? toStatePolicy(playbook.config.commercial_policy)
     : ({ ...VENDE_VELOZ_COMMERCIAL_POLICY } as VendeVelozCommercialPolicy);
 
   const state: JevSalesState = {
@@ -275,6 +289,61 @@ export async function buildJevSalesState(
     },
     playbook,
   };
+}
+
+/**
+ * `ConfigV1.product` (contrato durable, `src/lib/sales/playbook/schema.ts`)
+ * a `JevSalesState.product` (contrato de Jev, snake_case + bloques
+ * `implementation`/`subscription`).
+ *
+ * Corte 3 — el spread `{...VENDE_VELOZ_PRODUCT, ...product}` era
+ * INCORRECTO: `ConfigV1.product` no declara `implementation` ni
+ * `subscription`, asi que el spread arrastraba los bloques hardcodeados
+ * de Vende Veloz al state de CUALQUIER organizacion con playbook
+ * publicado (otro negocio heredaba "S/247 al mes" hacia Jev y el
+ * writer). Aqui el playbook manda: se mapean sus 6 claves y, si el
+ * autor no describe esos dos bloques, se omiten en vez de inventarlos.
+ */
+function toStateProduct(product: ConfigV1["product"]): VendeVelozProduct {
+  return {
+    name: product.name,
+    one_liner: product.one_liner,
+    who_it_is_for: [...product.who_it_is_for],
+    core_jobs: [...product.core_jobs],
+    not_the_product: [...product.not_the_product],
+    how_it_starts: product.how_it_starts,
+    // `VendeVelozProduct` es el tipo literal de `as const`: exige
+    // `implementation`/`subscription` y fija los textos. El contrato
+    // durable no los tiene (van en `offer`), asi que el doble cast es
+    // deliberado: el statePublished gana y el precio viaja por `offer`.
+  } as unknown as VendeVelozProduct;
+}
+
+/**
+ * `ConfigV1.commercial_policy` es camelCase (`automationFirst`,
+ * `humanHandoff`, ...) porque es el contrato durable que edita el
+ * administrador; el state que consume Jev es snake_case.
+ *
+ * Corte 3 — el spread solo solapaba `goal` y `disqualification`: las
+ * otras 6 claves publicadas se perdian en silencio y entraban al state
+ * como camelCase que Jev nunca leyo. Aqui el mapeo es explicito y
+ * completo, sin defaults: lo que el administrador publico es
+ * exactamente lo que Jev evalua.
+ */
+function toStatePolicy(
+  policy: ConfigV1["commercial_policy"]
+): VendeVelozCommercialPolicy {
+  return {
+    default_channel: policy.defaultChannel,
+    goal: policy.goal,
+    automation_first: policy.automationFirst,
+    auto_close: policy.autoClose,
+    human_handoff: policy.humanHandoff,
+    future_interest: policy.futureInterest,
+    no_response: policy.noResponse,
+    disqualification: policy.disqualification,
+    evidence_rule: policy.evidenceRule,
+  } as VendeVelozCommercialPolicy;
 }
 
 function toCrmState(

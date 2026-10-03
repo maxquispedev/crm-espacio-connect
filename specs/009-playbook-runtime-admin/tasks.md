@@ -292,25 +292,114 @@ sigue apagado, y las 3 iteraciones de gate no hicieron falta.
 **Objetivo**: que las conversaciones reales consuman la versión **Published**
 de su organización, sin redeploy. **Este es el interruptor de producción.**
 
-- [ ] **T931** — Reactivar `SALES_PLAYBOOK_RUNTIME_ENABLED` en
+- [x] **T931** — Reactivar `SALES_PLAYBOOK_RUNTIME_ENABLED` en
   `src/server/sales/build-state.ts`. Sin flags nuevos, sin reescribir el motor.
-- [ ] **T932** — Verificar (y solo adaptar si fuera imprescindible) la cadena
+  **Evidencia**: la constante pasa a `true` con el bloque de comentario que
+  documenta la reversibilidad (volver a `false` devuelve el producto, la
+  política, las preguntas, la oferta y el writer a los defaults). No se creó
+  ningún flag nuevo, ni se añadió dependencia, ni se tocó sender/webhook/CAPI/
+  follow-ups. Sigue siendo una línea y es el único interruptor.
+
+- [x] **T932** — Verificar (y solo adaptar si fuera imprescindible) la cadena
   real: loader publicado → `product`/`policy`/`offer`/`writer`/`questions` en el
   pipeline. Sender, webhook, CAPI y follow-ups **no se tocan**.
   `**/src/server/sales/**`
-- [ ] **T933** — Invertir la regresión de congelamiento:
+  **Evidencia (revisión de código previa, obligatoria)**: se auditó toda la
+  cadena que toca el flag. El loader **no tiene cache** (ni TTL, ni
+  memoización, ni estado a nivel de módulo), `getDraftConfigForOrg` solo se
+  llama desde el Lab, `getConfigByVersionId` es org-scoped, y el guard T306
+  mantiene el override en `is_test`. **Todo eso se confirmó sin cambios.**
+  `offer`, `writer` y `jev_questions` ya llegaban bien al pipeline: no se tocaron.
+  **Sí hubo que adaptar `product` y `commercial_policy` (imprescindible)**, porque
+  el spread shallow que usaban era incorrecto en dos sentidos y habría
+  corrompido turnos reales al encender:
+  1. `ConfigV1.commercial_policy` es **camelCase** y el state de Jev es
+     **snake_case**: el spread solo solapaba `goal` y `disqualification`, así que
+     **6 de las 9 claves publicadas se perdían en silencio**.
+  2. `ConfigV1.product` no declara `implementation`/`subscription`, así que el
+     spread **filtraba los bloques hardcodeados de Vende Veloz** hacia
+     organizaciones con playbook de otro negocio.
+  Se sustituyó por un mapeo **explícito** (`toStateProduct` / `toStatePolicy`) en
+  `build-state.ts`, sin tocar el motor ni los contratos. `VendeVelozProduct` es un
+  tipo literal de `as const`, así que el return usa doble cast deliberado
+  (documentado en el código).
+
+- [x] **T933** — Invertir la regresión de congelamiento:
   `sales-launch-hardcoded.test.ts` pasa a afirmar que el loader **sí** se invoca
   en producción y que la versión **sí** se audita. Reescribir, no borrar.
-- [ ] **T934** — Evidencia A–H (`spec.md` §4) en el arnés E2E: A precio S/247,
-  B draft no afecta producción, C publish sin redeploy, D rollback sin
-  redeploy, E Published inválida → fallback, F dos orgs sin cruce, G `is_test`
-  sin efectos reales, H auditoría de la versión usada.
-  `**/scripts/e2e-selftest.mjs**`, `**/tests/**`
-- [ ] **T935** — Gates completos + E2E comercial. Actualizar `CURRENT_STATE.md`,
-  `playbook.md` y `SALES_ORCHESTRATOR.md` con el estado real.
-  Commit: `feat(playbook): activar runtime publicado en producción`
+  **Evidencia**: el describe pasó de *"freeze de producción — el corte 2 NO
+  enciende el runtime"* a *"runtime publicado en producción — el corte 3 ENCIENDE
+  el runtime"*, con la aserción del flag invertida y el baseline atado como
+  **fallback** (ya no como única fuente). El caso central
+  *"Published V1 y publicación posterior no cambian defaults"* se **reescribió**
+  (no se borró) para afirmar lo contrario: el loader se invoca una vez por turno
+  con la org de la conversación, `product`/`commercial_policy`/`offer`/
+  `writer`/`questions` vienen del playbook, y `lastJevPlaybookVersionId`,
+  `lastJevPlaybookSchemaVersion` y las tres claves de `last_jev_decision`
+  registran la versión usada. Se añadió un caso nuevo de degradación (Published
+  ausente **y** Published inválida → fallback sin crash y sin inventar versión).
+  También se corrigieron las fixtures de `lab-pipeline-real.test.ts`, que usaban
+  `config: {}` (el loader real siempre devuelve un `ConfigV1` validado).
+  `**/tests/**`
 
 ---
+
+- [ ] **T934** — Evidencia A–H (`spec.md` §4) en el arnés E2E. **QUEDA ABIERTO:
+  NO se declara cumplido.** La sección 017 está **escrita** (`scripts/e2e-selftest.mjs`:
+  A–H con inbound sintético real contra el webhook y lectura directa de BD para la
+  auditoría, porque el DTO de `/api/contacts/:id` descarta los campos de versión a
+  propósito) y **ejecutada en vivo** contra la app real y PostgreSQL real.
+  Resultado: **21 checks verdes, 12 en rojo.**
+
+  **Sí quedó demostrado en vivo** (org real, app real, BD real):
+  - draft → guardar → **publicar**: la fila `status='published'` de la org cambia de
+    V2 a V3 sin redeploy ni reinicio (A y C a nivel de fuente de verdad);
+  - **B**: guardar un draft con otro precio **no cambia** la Published en BD;
+  - **D**: el **rollback** deja como `published` exactamente la versión restaurada
+    (comprobado leyendo la fila), sin redeploy;
+  - **F (parcial)**: la org B **no ve** la Published de la org A por API;
+  - **G**: cero jobs de follow-up en conversaciones sandbox;
+  - la **restauración** deja la Published como estaba al empezar.
+
+  **NO quedó demostrado**: todo lo que exige que el **turno conversacional real**
+  produzca respuesta y lead. Los 12 checks rojos son `el turno real respondió` /
+  `auditoría = null`. El inbound **sí llega al webhook** (`POST /api/webhooks/wa/...
+  200` repetido en el log de la app) y el Sales Orchestrator **sí** queda encendido,
+  pero en esta organización de prueba el turno no cerró con un outbound observable ni
+  con un lead auditable dentro de la ventana de espera del arnés. Sin ese turno no hay
+  forma honesta de afirmar A (el precio en la respuesta), la parte de C/D a nivel de
+  turno, ni H (columnas de auditoría en un lead real). **No se maquilla el resultado.**
+  Diagnóstico pendiente: por qué el pipeline no cierra el turno en esta org de prueba
+  (sospecha: opt-in del orquestador y/o perfil de agente no efectivos en una org creada
+  por API, que no siembra `agent_profile`).
+
+  **E** tampoco se pudo ejercitar en vivo: no hay vía de API que deje una Published
+  rota (el guardarraíl de publicación lo impide, a propósito). La degradación por
+  Published **inválida** sí está en verde por unit tests
+  (`sales-launch-hardcoded.test.ts`: `PlaybookInvalidConfigError` → fallback a los
+  defaults, sin crash y sin inventar versión auditada).
+
+  **Cobertura equivalente a nivel de pipeline** (unit, con builder + orquestador +
+  resolver REALES y el loader mockeado solo en la frontera de BD): la regresión
+  invertida de T933 demuestra que el loader **se invoca** en producción, que la
+  Published alimenta `product`/`policy`/`offer`/`writer`/`questions`, y que
+  `lastJevPlaybookVersionId`, `lastJevPlaybookSchemaVersion` y las tres claves de
+  `last_jev_decision` registran la versión usada; y que ausente/inválida degradan.
+  Eso cubre la **cadena**, no el **turno por WhatsApp**.
+
+  Para cerrar T934: lograr que el turno conversacional real cierre en la org de prueba
+  y reejecutar la 017 hasta dejarla verde.
+
+- [x] **T935** — Gates completos + E2E comercial. Actualizar `CURRENT_STATE.md`,
+  `playbook.md` y `SALES_ORCHESTRATOR.md` con el estado real.
+  Commit: `feat(playbook): activar runtime publicado en producción`
+  **Evidencia**: `pnpm typecheck` verde · `pnpm lint` verde (0 errores, 3 warnings
+  preexistentes) · `pnpm build` verde · **868/868 tests en 91 archivos** verdes.
+  E2E: la sección 017 se ejecutó en vivo contra la app real y **PostgreSQL 16 real**
+  (Postgres efímero en `:55439`, migraciones aplicadas, mocks wa/ai encendidos, app en
+  `localhost:3021` con un `.env.e2e` ignorado por git). Resultado **21/33**, con el
+  desglose honesto en T934. Docs actualizados con el estado real: runtime encendido,
+  qué significa ahora publicar, auditoría y degradación.
 
 ## Dependencias
 
@@ -325,9 +414,13 @@ T900 (bootstrap)  →  T911..T916  →  T921..T927  →  T931..T935
 
 ## Criterio de "feature lista"
 
-- [ ] Los tres cortes cerrados con un commit cada uno y árbol limpio.
-- [ ] `pnpm typecheck && pnpm lint && pnpm build && pnpm test` verde.
-- [ ] **Evidencia E2E de A–H.** Sin ella, la feature NO se declara lista.
+- [x] Los tres cortes cerrados con un commit cada uno y árbol limpio.
+- [x] `pnpm typecheck && pnpm lint && pnpm build && pnpm test` verde (868/868).
+- [ ] **Evidencia E2E de A–H.** Sin ella, la feature **NO** se declara lista.
+  **Corte 3: PENDIENTE.** Publicar/rollback sin redeploy, aislamiento de draft y
+  aislamiento de org por API quedaron verdes en vivo; falta que el turno
+  conversacional real cierre para poder afirmar A, C/D a nivel de turno y H.
+  Ver T934. La feature **no** se declara lista todavía.
 
 ## NO HACER
 
@@ -335,7 +428,6 @@ T900 (bootstrap)  →  T911..T916  →  T921..T927  →  T931..T935
 - Un segundo sistema de configuración o un segundo modelo durable para las
   preguntas Jev.
 - Un segundo Laboratorio o un duplicado del runner del Lab.
-- Activar `SALES_PLAYBOOK_RUNTIME_ENABLED` antes del corte 3.
 - Ampliar `ConfigV1Schema` sin una necesidad ejecutable, documentada y con tests.
 - Tocar `questions.ts` o sus `criteria` sin un motivo fuerte y explícito.
 - Tocar sender, webhook, CAPI o el motor de follow-ups.
