@@ -18,6 +18,7 @@ const prefixes = {
   testRun: "run",
   testCase: "case",
   mediaAsset: "ma",
+  commercialResource: "cr",
   integrationEvent: "iev",
   salesFollowUpJob: "sfj",
   adAttribution: "adr",

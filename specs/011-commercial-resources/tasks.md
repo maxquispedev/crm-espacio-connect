@@ -1,6 +1,7 @@
 # Tasks — 011 Commercial Resources
 
-**Estado:** bootstrap SDD preparado; NINGÚN corte implementado.
+**Estado:** C1 implementado con gates técnicos verdes; BD real y E2E PENDIENTES.
+C2–C4 sin iniciar.
 Dependency order: bootstrap → C1 → C2 → C3 → pausa operativa → C4.
 Un corte = sesión nueva de codex exec = objetivo único = commit atómico único.
 Prompts ejecutables autocontenidos: .ai/tasks/commercial-resources/01–04.
@@ -23,21 +24,73 @@ productivo. La comprobación del runner será estática; NO ejecutar pipeline.
 
 ## Corte 1 — Fundación y persistencia
 
-**Estado:** PENDIENTE. **Commit previsto:** `feat(commercial): persistir recursos comerciales`.
+**Estado:** IMPLEMENTADO; gate técnico VERDE. BD real / E2E PENDIENTES.
+**Commit de este bloque:** `feat(commercial): persistir recursos comerciales`.
 
-- [ ] T1111 Modelo/slots/org+media y payload de cobro validado.
-- [ ] T1112 Store scoped y referencia media mismo tenant.
-- [ ] T1113 Migración aditiva re-ejecutable y tests de persistencia/aislamiento.
-- [ ] T1114 Gates completos; evidencia BD real o pendiente explícito.
-- [ ] T1115 Actualizar tasks/CURRENT_STATE/docs relevantes, revisar diff, UN commit y árbol limpio.
+- [x] T1111 Modelo/slots/org+media y payload de cobro validado.
+- [x] T1112 Store scoped y referencia media mismo tenant.
+- [x] T1113 Migración aditiva re-ejecutable y tests de persistencia/aislamiento.
+  Aplicación real de migración y constraints PostgreSQL PENDIENTES (4 tests omitidos).
+- [x] T1114 Gates completos; evidencia BD real o pendiente explícito.
+- [x] T1115 Actualizar tasks/CURRENT_STATE/contrato, revisar diff; cierre en UN commit.
 
-### Evidencia durable del corte
+### Evidencia durable del corte — 2026-10-03
 
-- HEAD inicial / commit final: pendiente.
-- Archivos y decisiones técnicas: pendiente.
-- Comandos/tests/gates y resultados: no ejecutados.
-- E2E happy/unhappy: no ejecutado; registrar causa si no disponible.
-- Pendientes y siguiente paso exacto: ejecutar solo este corte con su task.
+- HEAD inicial: `129ff5d11982f84aedeee170c0e2dec0684099ab` (árbol limpio).
+  No commit previo del corte en git log. Commit final identificado por el subject
+  anterior; su hash se obtiene con `git log -1` al cerrar, sin hash autorreferente.
+- Modelo: `src/lib/db/schema.ts`, `ids.ts`; store/validación:
+  `src/lib/commercial/{resources,store}.ts`; migración:
+  `drizzle/0009_commercial_resources.sql`, journal idx 11. Contrato detallado:
+  `contracts/resources.md` (API del store, normalización y límites físicos).
+- Decisión técnica: FK compuesta org/media + UNIQUE media(org,id), ON DELETE
+  NO ACTION para impedir borrado directo y permitir cascade de organización;
+  índices org-first; CHECK slot/shape básico; detalle de cobro por Zod estricto.
+  Upsert conserva id/createdAt; no seeds. Disco y metadata verificados tanto
+  al guardar como al leer; demo perdida devuelve null, sin modificar fila.
+- Constitution Check reevaluado: I/III aislamiento en store y FK; II disco/BD
+  propios sin nuevos servicios; IV upsert/migración idempotentes; VI spec previo;
+  VII límites documentados; VIII recursos para conversación actual. V gate verde;
+  IX sin nueva superficie observable en C1, E2E histórico pendiente. Sin ambigüedad
+  comercial nueva. Sin cambio de negocio que sincronizar en Obsidian.
+- Tests nuevos: `commercial-resources.test.ts` (51),
+  `commercial-resource-store.test.ts` (18),
+  `commercial-resource-postgres.test.ts` (4 opt-in, **omitidos**).
+  Los unitarios usan schema/ORM/scoped reales y ejecutor BD en memoria;
+  filesystem temporal real. No equivalen a PostgreSQL.
+- `pnpm --pm-on-fail=ignore exec vitest run tests/unit/commercial-*.test.ts`:
+  **69 pass, 4 skipped** (en la ejecución inicial se listaron los tres archivos).
+- Regresión seleccionada (media-send, send-media-kind-override, sales-orchestrator,
+  sales-writer, sales-resolve-plan, sales-questions-freeze, playbook-*,
+  lab-pipeline-real, lab-preview-*): **282/282**, 25 archivos.
+- Gate completo ejecutado en orden:
+  `pnpm --pm-on-fail=ignore typecheck && pnpm --pm-on-fail=ignore lint && pnpm --pm-on-fail=ignore build && pnpm --pm-on-fail=ignore test`:
+  **exit 0**, 1006 pass / 4 skipped, 98 archivos verdes / 1 omitido.
+  Lint: 0 errores, 3 warnings preexistentes (anuncio-origen y build-state).
+  pnpm sin esa opción falla antes de correr scripts con `unable to open database file`;
+  se usó la opción ya documentada en checkpoints previos, sin tocar package/lock.
+  Gate con permiso de sockets locales para las pruebas HTTP existentes.
+- Logs temporales: `/tmp/commercial-c1-{typecheck,lint,build,test,regression,e2e}.log`.
+- `node --check scripts/e2e-selftest.mjs`: **exit 0**.
+- Self-test E2E intentado: `pnpm --pm-on-fail=ignore test:e2e`, con overrides
+  `APP_BASE_URL=http://127.0.0.1:3000`, `BOT_API_KEY=e2e-local-placeholder`,
+  `WA_MOCK_ENABLED=true`, `META_GRAPH_BASE_URL=http://127.0.0.1:3000/api/dev/wa-mock`,
+  `OPENROUTER_BASE_URL=http://127.0.0.1:3000/api/dev/ai-mock`,
+  `TYPESAFE_JEV_ENDPOINT=http://127.0.0.1:3000/api/dev/jev-mock`.
+  **exit 1 antes del setup, ECONNREFUSED** (primer intento sandbox EPERM;
+  reintento con sockets autorizados confirmó ausencia de app). Health local 000;
+  postgres/psql/pg_isready/docker no disponibles. No WhatsApp ni destinatarios reales.
+- **E2E happy/unhappy PENDIENTE**, sin escenarios ejecutados. C1 no crea UI,
+  endpoint ni integración runtime; no se amplió el arnés con endpoints de prueba
+  fuera de alcance. El self-test de C2 validará la primera superficie observable.
+- **BD PENDIENTE**: aplicar/reaplicar migración, FK/UNIQUE/CHECK físicos, borrado
+  directo y cascade. La suite opt-in exige host local + BD dedicada
+  `commercial_resources_test[_sufijo]`; nunca usa DATABASE_URL productivo.
+  Ejecutar con `COMMERCIAL_RESOURCES_TEST_DATABASE_URL` y
+  `pnpm --pm-on-fail=ignore exec vitest run tests/unit/commercial-resource-postgres.test.ts`.
+- No READY punta a punta. No UI/HTTP/uploads/runtime/prompts/pago Jev ni MP4 reales.
+  Siguiente paso exacto: con BD local dedicada, ejecutar la suite opt-in; después,
+  en sesión independiente, reconstruir contexto y ejecutar **solo C2**.
 
 ## Corte 2 — UI Comercial / Jev → Recursos comerciales
 

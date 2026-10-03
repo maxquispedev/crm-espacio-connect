@@ -1,5 +1,7 @@
 import {
   boolean,
+  check,
+  foreignKey,
   index,
   integer,
   jsonb,
@@ -9,6 +11,7 @@ import {
   uniqueIndex,
 } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
+import { COMMERCIAL_RESOURCE_SLOTS, type PaymentInstructions } from "@/lib/commercial/resources";
 
 /* ============================================================
  * Auth (Better Auth + plugin organization)
@@ -337,7 +340,46 @@ export const mediaAsset = pgTable(
   },
   (t) => [
     index("media_asset_org_idx").on(t.organizationId, t.createdAt),
+    uniqueIndex("media_asset_org_id_uq").on(t.organizationId, t.id),
     index("media_asset_wa_media_idx").on(t.waMediaId),
+  ]
+);
+
+/** 011 C1 — recursos independientes de KB y versiones de playbook. */
+export const commercialResource = pgTable(
+  "commercial_resource",
+  {
+    id: text("id").primaryKey(),
+    organizationId: text("organization_id").notNull()
+      .references(() => organization.id, { onDelete: "cascade" }),
+    slot: text("slot", { enum: COMMERCIAL_RESOURCE_SLOTS }).notNull(),
+    mediaAssetId: text("media_asset_id"),
+    payload: jsonb("payload").$type<PaymentInstructions>(),
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+    updatedAt: timestamp("updated_at").notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex("commercial_resource_org_slot_uq").on(t.organizationId, t.slot),
+    index("commercial_resource_org_media_idx").on(t.organizationId, t.mediaAssetId),
+    foreignKey({
+      name: "commercial_resource_org_media_fk",
+      columns: [t.organizationId, t.mediaAssetId],
+      foreignColumns: [mediaAsset.organizationId, mediaAsset.id],
+    }).onDelete("no action"),
+    check("commercial_resource_slot_check", sql`${t.slot} IN (
+      'demo_enrollment_panel', 'demo_payments_balances', 'demo_online_enrollment', 'payment_instructions'
+    )`),
+    check("commercial_resource_shape_check", sql`coalesce((
+      (${t.slot} <> 'payment_instructions' AND ${t.mediaAssetId} IS NOT NULL AND ${t.payload} IS NULL)
+      OR (${t.slot} = 'payment_instructions' AND ${t.mediaAssetId} IS NULL AND ${t.payload} IS NOT NULL
+        AND jsonb_typeof(${t.payload}) = 'object'
+        AND ${t.payload} ?& ARRAY['transfers', 'yape', 'paymentLink']
+        AND jsonb_typeof(${t.payload}->'transfers') = 'array'
+        AND CASE WHEN jsonb_typeof(${t.payload}->'transfers') = 'array'
+          THEN jsonb_array_length(${t.payload}->'transfers') <= 5 ELSE false END
+        AND jsonb_typeof(${t.payload}->'yape') IN ('object', 'null')
+        AND jsonb_typeof(${t.payload}->'paymentLink') IN ('string', 'null'))
+    ), false)`),
   ]
 );
 

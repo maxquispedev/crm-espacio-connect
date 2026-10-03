@@ -1,5 +1,63 @@
 # CURRENT STATE — Espacio Connect
 
+**Actualizado: 2026-10-03 — Spec 011, C1: fundación y persistencia implementadas.**
+
+Objetivo único: recursos comerciales tenant-safe, sin superficie UI/HTTP ni
+cambios del runtime Jev. Commit de este checkpoint:
+`feat(commercial): persistir recursos comerciales`, base
+`129ff5d11982f84aedeee170c0e2dec0684099ab`; un commit atómico, sin deploy/push.
+
+Modelo `commercial_resource` con los tres slots demo y payment_instructions,
+IDs `cr_*`, org NOT NULL y org/slot UNIQUE. Store `scoped()` valida MP4 local
+propio disponible y bloque completo de transferencias/Yape/link, acepta vacío
+sin defaults y conserva id/createdAt al reemplazar. Lectura ausente o demo
+perdida devuelve null; fallos BD no se ocultan. Contrato:
+`specs/011-commercial-resources/contracts/resources.md`.
+
+Decisión técnica: migración manual **0009_commercial_resources.sql**, journal
+idx **11**, según patrón Drizzle reejecutable vigente. FK compuesta org/media
+respaldada por UNIQUE media(org,id); ON DELETE NO ACTION impide borrado directo
+referenciado y permite cascade al eliminar organización. SQL limita slots/shape
+básico; Zod valida detalle de cobro. Ningún recurso sembrado. Firma/codec MP4
+pertenecen a upload/verificación de C2, no se prometen aquí.
+
+**Evidencia:** gate completo typecheck → lint → build → test **exit 0**;
+**1006 tests pass / 4 PostgreSQL skipped**, 98 archivos verdes / 1 omitido.
+69 tests nuevos verdes y regresión seleccionada **282/282** (sales/playbook/media
++ Lab/preview). Lint: 0 errores, tres warnings preexistentes. Se usó pnpm
+`--pm-on-fail=ignore` (sin esa opción el gestor falla antes del script con
+`unable to open database file`), sin cambiar dependencias. Pruebas HTTP del gate
+con sockets locales autorizados. Arnés E2E existente parsea (`node --check`).
+
+**BD real PENDIENTE:** sin postgres/psql/docker disponibles. Unit tests usan
+ORM/schema/scoped y filesystem reales, ejecutor BD en memoria; no prueban
+FK/UNIQUE/CHECK físicos ni migración repetida. Suite opt-in preparada:
+`tests/unit/commercial-resource-postgres.test.ts`, solo host local y BD dedicada
+`commercial_resources_test[_sufijo]`, nunca DATABASE_URL como fallback.
+
+**E2E happy/unhappy PENDIENTE:** `pnpm --pm-on-fail=ignore test:e2e` intentado
+con APP_BASE_URL y todos los proveedores hacia localhost/mocks; exit 1 antes
+del setup, **ECONNREFUSED 127.0.0.1:3000**, health 000. Primer intento sandbox
+EPERM, reintento con socket autorizado confirmó falta de app. No llamadas
+WhatsApp reales ni destinatarios productivos. C1 no tiene nueva UI/API observable;
+no crea endpoints para probar su store. C2 debe ampliar y ejecutar el arnés de
+su primera superficie. **No READY punta a punta**; C2–C4 sin iniciar.
+
+Archivos clave: `src/lib/commercial/{resources,store}.ts`,
+`src/lib/db/{schema,ids}.ts`, migración/journal, tres suites commercial-resource,
+contrato y `specs/011-commercial-resources/tasks.md` con comandos/resultados.
+Logs temporales `/tmp/commercial-c1-{typecheck,lint,build,test,regression,e2e}.log`.
+Constitution Check reevaluado sin excepción; sin decisión comercial nueva para
+Obsidian. Sender, sandbox, Published/V2 y contratos de acciones intactos.
+
+**Siguiente paso exacto:** disponer de PostgreSQL local dedicado y ejecutar
+`COMMERCIAL_RESOURCES_TEST_DATABASE_URL` +
+`pnpm --pm-on-fail=ignore exec vitest run tests/unit/commercial-resource-postgres.test.ts`;
+después comenzar **solo C2** en sesión independiente reconstruyendo el contexto.
+Esta sesión termina tras el único commit de C1 y verificación de árbol limpio.
+
+---
+
 **Actualizado: 2026-10-03 — Bootstrap SDD del spec 011 (Recursos comerciales de Jev).**
 
 Preparados `specs/011-commercial-resources/` (spec, plan, tasks, research,
