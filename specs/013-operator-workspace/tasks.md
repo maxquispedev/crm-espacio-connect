@@ -51,16 +51,16 @@ Cortes 6–8 (rebrand + rediseño) viven en `specs/014-espacio-connect-rebrand/t
 
 ## CUT 2 — Bandeja "Por atender"
 
-- [ ] T201 `ConversationDto` + `attention` aditivo; LEFT JOIN scropeado en
+- [x] T201 `ConversationDto` + `attention` aditivo; LEFT JOIN scropeado en
       `listConversations` (patrón `adAttribution`), sin N+1
-- [ ] T202 `needsAttentionNow` derivado en un único lugar
-- [ ] T203 Chip "Por atender (N)" con conteo correcto, antes de `Todas`
-- [ ] T204 Inclusión: handoff nuevo, inbound durante HUMAN, recordatorio vencido
-- [ ] T205 Exclusión: recordatorio futuro, `waiting_client`, sin estado
-- [ ] T206 `Todas` / `No leídas` / `Anuncios` / filtro de etapa intactos
-- [ ] T207 Tests del filtro y del conteo
-- [ ] T208 Gate + E2E de UI (o PENDIENTE con causa)
-- [ ] T209 Evidencia, un commit, árbol limpio
+- [x] T202 `needsAttentionNow` derivado en un único lugar
+- [x] T203 Chip "Por atender (N)" con conteo correcto, antes de `Todas`
+- [x] T204 Inclusión: handoff nuevo, inbound durante HUMAN, recordatorio vencido
+- [x] T205 Exclusión: recordatorio futuro, `waiting_client`, sin estado
+- [x] T206 `Todas` / `No leídas` / `Anuncios` / filtro de etapa intactos
+- [x] T207 Tests del filtro y del conteo
+- [x] T208 Gate + E2E de UI **EJECUTADO y VERDE** (35/35, ver evidencia)
+- [x] T209 Evidencia, un commit, árbol limpio
 
 ## CUT 3 — Agenda y programación humana
 
@@ -115,20 +115,136 @@ Cortes 6–8 (rebrand + rediseño) viven en `specs/014-espacio-connect-rebrand/t
 
 | Caso | CUT | E2E | Unitario |
 |---|---|---|---|
-| handoff → Por atender | 2 | pendiente | **verde** (`attention-hooks`) |
-| abrir no equivale a resolver | 1/2 | pendiente | **verde** (`attention-state`, `attention-hooks`) |
-| reply manual → estado coherente | 1 | pendiente | **verde** (`attention-hooks`: echo + outbound) |
-| recordatorio futuro → Agenda, fuera de Por atender | 3 | pendiente | pendiente |
-| inbound antes de vencimiento → Por atender | 3 | pendiente | pendiente |
-| recordatorio vencido → Por atender | 3 | pendiente | pendiente |
+| handoff → Por atender | 2 | **verde** (023) | **verde** (`attention-hooks`, `attention-queue`) |
+| abrir no equivale a resolver | 1/2 | **verde** (023: `markRead` no cambia la cola) | **verde** (`attention-state`, `attention-hooks`) |
+| reply manual → estado coherente | 1 | pendiente (CUT 5) | **verde** (`attention-hooks`: echo + outbound) |
+| recordatorio futuro → Agenda, fuera de Por atender | 3 | fuera de Por atender **verde** (023); Agenda pendiente | **verde** (`attention-queue`) |
+| inbound antes de vencimiento → Por atender | 3 | pendiente (CUT 5) | **verde** (`attention-queue`, `attention-hooks`) |
+| recordatorio vencido → Por atender | 3/2 | **verde** (023) | **verde** (`attention-queue`) |
 | programar otro recordatorio | 3 | pendiente | pendiente |
-| reactivar IA | 1/4 | pendiente | **verde** (`attention-hooks`) |
-| Cliente / Perdido | 1 | pendiente | **verde** (`attention-hooks`) |
-| aislamiento tenant | 1 | pendiente | **verde** (`attention-state`, `attention-hooks`) |
-| cero Graph en recordatorio humano | 1 | pendiente | **verde** (`attention-no-send`) |
-| follow-ups automáticos sin regresión | 1/5 | pendiente | **verde** (100 tests, sin tocar expectativas) |
+| reactivar IA | 1/4 | pendiente (CUT 5) | **verde** (`attention-hooks`) |
+| Cliente / Perdido | 1 | pendiente (CUT 5) | **verde** (`attention-hooks`) |
+| aislamiento tenant | 1/2 | **verde** (023: dos orgs, API y UI) | **verde** (`attention-state`, `attention-hooks`, `attention-queue`) |
+| cero Graph en recordatorio humano | 1 | pendiente (CUT 5) | **verde** (`attention-no-send`) |
+| follow-ups automáticos sin regresión | 1/5 | pendiente (CUT 5) | **verde** (sin tocar expectativas) |
 
 ## Evidencia
+
+### PENDIENTE que este corte envía a un corte posterior
+
+1. **FK compuesta ausente en `conversation_attention`** (heredado de CUT 1,
+   descubierto al poder ejecutar la suite opt-in por fin contra PostgreSQL real).
+   `drizzle/0010_conversation_attention.sql` declara **dos** FK de una columna:
+   `conversation_id → conversation.id` y `organization_id → organization.id`.
+   Con eso, una fila puede decir `organization_id = A` apuntando a una
+   conversación de B. La suite opt-in de CUT 1 asumía la FK compuesta
+   (`INSERT (orgA, cv_b)` → 23503) y por eso falla en 2 checks. **No se arregla
+   aquí**: es un cambio de schema (FK compuesta + `UNIQUE (organization_id, id)`
+   en `conversation`) que exige migración propia y no pertenece a la cola.
+   Impacto en este corte: **ninguno** — la lista, el LEFT JOIN y `getAttention`
+   filtran por `organization_id`, y la fila solo se alcanza a través de una
+   conversación de su propia organización, así que no hay fuga. Debe cerrarse en
+   CUT 5 o en un corte de migración.
+2. Suite opt-in `attention-migration.test.ts`: se arregló su fixture (omitía
+   `contact.name`, NOT NULL desde 010) para que **pudiera** correr. Siguen
+   fallando 2 checks por el punto 1; 9 verdes.
+
+### CUT 2 — 2026-10-04 · commit `feat(inbox): añadir cola por atender`
+
+Base: `771f3b3` (árbol limpio al empezar; corte 1 cerrado).
+
+**Qué entró**
+
+- `src/lib/types.ts`: `AttentionDto` (los 4 campos de `plan.md` §4.1) y
+  `ConversationDto.attention` **opcional** — los consumidores que no lo conocen
+  siguen compilando y no cambian de comportamiento.
+- `src/server/inbox/attention.ts`: `resumenAtencion()` proyecta `AttentionView` →
+  `AttentionDto`. La derivación **no** se toca ni se duplica: sigue viviendo en
+  `deriveAttention`, y el DTO llega con `needsAttentionNow` ya calculado.
+- `src/server/inbox/queries.ts`: un `leftJoin` a `conversation_attention` en la
+  MISMA función y con el MISMO patrón que `adAttribution` — `organization_id`
+  DENTRO del `ON`, no solo en el `WHERE`. Un solo `SELECT`, cero N+1, y el
+  `UNIQUE (org, conversation)` del corte 1 garantiza ≤1 fila por conversación.
+  `now` se toma **una vez** para toda la lista: con un reloj por fila, dos
+  conversaciones que vencen en el mismo segundo caerían en listas distintas y el
+  chip podría no cuadrar con el listado. `serializeConversation` suma un
+  parámetro **con valor por defecto** → la firma anterior sigue siendo válida.
+- `src/app/api/conversations/[id]/route.ts`: el DTO que se publica en
+  `conversation.updated` lleva la atención ya derivada (una lectura extra, solo
+  en esa acción explícita del operador). Sin esto, el evento anunciaría "sin
+  estado humano" justo después de un `aiEnabled: false`, que es lo que crea el
+  `pending`.
+- `src/components/inbox/bandeja-filtros.ts` (nuevo, puro): `resumirBandeja`
+  calcula **una vez** `cola`, `sinLeer` y `deAnuncio` sobre la vista
+  (búsqueda + etapa) y el chip usa `.length` de ese mismo array. Contar y
+  listar no pueden discrepar **por construcción**, no por disciplina.
+  `necesitaAtencionAhora()` solo lee el flag derivado: no reimplementa nada.
+- `src/components/inbox/conversation-list.tsx`: chip "Por atender" **primero**,
+  con icono y `aria-pressed`; `Todas` / `No leídas` / `Anuncios` / etapa conservan
+  su definición. Se añade `data-testid="conversation-item"` a la fila para que el
+  E2E pueda contar filas de verdad.
+- `tests/fixtures/mem-db.ts`: soporte de proyección por tabla y de
+  `innerJoin`/`leftJoin` con evaluación del `ON` (incluida la comparación ENTRE
+  TABLAS que emite Drizzle: `"attention"."conversation_id" = "conversation"."id"`,
+  sin parámetros). `sortRows` ya no revienta con un ORDER BY que no sabe imitar
+  (`desc(coalesce(...))`): lo ignora y conserva el orden. Las proyecciones de
+  COLUMNA suelta (`select({ id: conversation.id })`) se resuelven contra la fila
+  de su tabla — sin eso, `clearAttentionForContact` de CUT 1 dejó de borrar.
+- `tests/unit/attention-queue.test.ts` (nuevo, 28 tests) y
+  `scripts/e2e-operator-queue.mjs` + sección `E2E_SECTION=023`.
+
+**Comandos y resultados**
+
+| Comando | Resultado |
+|---|---|
+| `pnpm typecheck` | verde |
+| `pnpm lint` | verde (0 errores; 3 warnings preexistentes de `build-state.ts` / `anuncio-origen.tsx`) |
+| `pnpm build` | verde |
+| `pnpm test` | verde: **108 ficheros, 1221 tests** en verde, 9 skipped |
+| `pnpm vitest run tests/unit/attention-queue.test.ts` | **28 verdes** |
+| `E2E_SECTION=023 node scripts/e2e-selftest.mjs` | **35/35 checks OK, 0 fallos** |
+
+**E2E de comportamiento: EJECUTADO Y VERDE con UI real (Playwright).**
+Este corte sí tiene superficie observable, así que no valía la vía del corte 1.
+Se levantó PostgreSQL real en `:55432` (binarios de `embedded-postgres` en
+`/tmp`, `initdb` + `pg_ctl` como usuario normal, sin root) y la app en `:3100`
+con los mocks; fixture por SQL directo sobre la BD dedicada
+`operator_workspace_test` (el estado "vencido" exige esperar; sembrarlo es lo
+que hace el escenario determinista).
+
+Camino feliz, en pantalla y no por API: el chip "Por atender" existe, es la
+primera opción de la fila, marca **3**; al pulsarlo la lista tiene **3** filas
+—handoff, inbound y vencido— y excluye futuro, esperando al cliente, solo IA y
+anuncio. Los otros tres filtros conservan su semántica ("Todas" 7, "No leídas"
+las 2 conversaciones con no leídas, "Anuncios" 1) y la etapa "Interesado"
+deja la cola en 1 y la recupera al volver a "Toda etapa". Aislamiento: la sesión
+de la organización B ve su propia cola (1), ninguna de A.
+
+Camino infeliz: sin sesión, `/api/conversations` → **401**; PATCH sobre
+conversación de otra organización → **404** (y `GET` a ese recurso → 405, no
+expone datos); PATCH sobre conversación inexistente → **404**; `/inbox` sin
+sesión redirige a `/login` y la API responde 401 desde el navegador.
+
+**Decisiones que se apartan de una lectura literal (quedan trazadas aquí)**
+
+1. **Filtro cliente, no endpoint.** `plan.md` §4.1 lo dice y es lo correcto: un
+   `/api/conversations?attention=now` sería sobrearquitectura para una lista que
+   ya viaja entera al cliente, y rompería la reactividad SSE (el refetch
+   completo no traería el filtro). El chip y su lista salen del mismo array.
+2. **`GET /api/conversations/[id]` no existe** (solo hay `PATCH`), así que el
+   caso "conversación no encontrada" se comprueba por `PATCH`: es la ruta real
+   que resuelve conversación→organización. Se documenta 405 explícitamente.
+3. **Sembrar el E2E por SQL y no por la API.** Los tres estados que hay que ver
+   en pantalla incluyen el "vencido", y `POST /api/reminders` es del corte 3 (no
+   existe todavía). Con SQL el escenario es determinista y no depende del worker
+   de recordatorios, que este corte no toca.
+
+**Lo que este corte NO abre**
+
+`docs/SALES_FOLLOW_UPS.md` **no se tocó**: `src/server/sales/follow-ups/**`,
+`automationLane` y el handoff quedan intactos. No se añadió endpoint, tabla,
+estado de atención, etapa del pipeline, plantilla de WhatsApp ni dependencia
+externa. La Agenda (corte 3) y el flujo operativo (corte 4) siguen sin empezar.
 
 ### CUT 1 — 2026-10-04 · commit `feat(inbox): persistir atención y recordatorios humanos`
 

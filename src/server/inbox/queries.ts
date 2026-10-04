@@ -1,13 +1,15 @@
 import { and, desc, eq, gt, sql } from "drizzle-orm";
 import { getDb, schema } from "@/lib/db";
 import { scoped } from "@/lib/db/tenant";
-import type { AnuncioListaDto, ConversationDto } from "@/lib/types";
+import type { AnuncioListaDto, AttentionDto, ConversationDto } from "@/lib/types";
 import { isWindowOpen, windowRemainingMs } from "@/server/inbox/window";
 import { listaDesdeRow } from "@/lib/anuncios";
 import {
   bestEffortAttention,
   clearAttention,
+  deriveAttention,
   markAttentionPending,
+  resumenAtencion,
 } from "@/server/inbox/attention";
 
 export type { ConversationDto };
@@ -30,6 +32,11 @@ export async function listConversations(
     where l.contact_id = ${schema.contact.id}
     limit 1
   )`;
+  // Un SOLO reloj para toda la lista: el vencimiento se compara una vez y todas
+  // las conversaciones se derivan contra el mismo instante. Con un `now()` por
+  // fila, dos conversaciones que vencen en el mismo segundo caerían en listas
+  // distintas y el conteo del chip podría no cuadrar con el listado.
+  const now = new Date();
 
   const rows = await db
     .select({
@@ -38,6 +45,8 @@ export async function listConversations(
       preview: previewSql,
       stageName: stageSql,
       ad: schema.adAttribution,
+      // 013 C2 — Atención humana en el MISMO SELECT que la lista (plan §4.1).
+      attention: schema.conversationAttention,
     })
     .from(schema.conversation)
     .innerJoin(
@@ -52,6 +61,21 @@ export async function listConversations(
       and(
         eq(schema.adAttribution.conversationId, schema.conversation.id),
         eq(schema.adAttribution.organizationId, organizationId)
+      )
+    )
+    // 013 C2 — Mismo patrón que `adAttribution` y por la misma razón: el
+    // `organization_id` va DENTRO del ON, no solo en el WHERE. Así una fila de
+    // atención de otra organización no puede quedarse pegada a una conversación
+    // de esta (Constitución III), y sigue siendo UN SELECT: cero N+1. El UNIQUE
+    // (org, conversation) garantiza como mucho una fila por conversación.
+    .leftJoin(
+      schema.conversationAttention,
+      and(
+        eq(
+          schema.conversationAttention.conversationId,
+          schema.conversation.id
+        ),
+        eq(schema.conversationAttention.organizationId, organizationId)
       )
     )
     .where(
@@ -70,7 +94,10 @@ export async function listConversations(
       r.contact,
       r.preview,
       r.stageName,
-      listaDesdeRow(r.ad ?? null)
+      listaDesdeRow(r.ad ?? null),
+      resumenAtencion(
+        r.attention ? deriveAttention(r.attention, now) : null
+      )
     )
   );
 }
@@ -144,7 +171,11 @@ export function serializeConversation(
   contact: typeof schema.contact.$inferSelect,
   preview: string | null = null,
   stageName: string | null = null,
-  anuncio: AnuncioListaDto | null = null
+  anuncio: AnuncioListaDto | null = null,
+  // 013 C2 — Parámetro ADITIVO con valor por defecto: la firma anterior sigue
+  // siendo válida, así que un llamador que no sepa de atención no cambia. Llega
+  // YA derivado (`resumenAtencion`); aquí no se recalcula nada.
+  attention: AttentionDto | null = null
 ): ConversationDto {
   return {
     id: c.id,
@@ -160,6 +191,7 @@ export function serializeConversation(
     windowRemainingMs: windowRemainingMs(c.lastInboundAt),
     preview,
     anuncio,
+    attention,
   };
 }
 

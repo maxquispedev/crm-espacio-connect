@@ -1,17 +1,26 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { Megaphone, Search, Sparkles, UserRound, X } from "lucide-react";
+import {
+  AlertCircle,
+  Megaphone,
+  Search,
+  Sparkles,
+  UserRound,
+  X,
+} from "lucide-react";
 import type { ConversationDto } from "@/lib/types";
-import { matchesQuery } from "@/lib/search";
 import { cn } from "@/lib/utils";
 import { ContactAvatar } from "@/components/avatar";
 import { Button } from "@/components/ui/button";
 import {
-  cuentaComoAnuncio,
   etiquetaDeOrigen,
   titularDeOrigen,
 } from "@/lib/anuncios";
+import {
+  type FiltroBandeja,
+  resumirBandeja,
+} from "./bandeja-filtros";
 import { formatTime, previewText } from "./helpers";
 
 const STAGE_DOT: Record<string, string> = {
@@ -70,7 +79,7 @@ export function ConversationList({
   onSeeded: () => void;
 }) {
   const [query, setQuery] = useState("");
-  const [filter, setFilter] = useState<"all" | "unread" | "ads">("all");
+  const [filter, setFilter] = useState<FiltroBandeja>("all");
   const [stage, setStage] = useState<string>("all");
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -88,29 +97,15 @@ export function ConversationList({
 
   const loading = conversationsProp === null;
   const conversations = conversationsProp ?? [];
-  // Solo NOMBRE y TELÉFONO, como cualquier filtro de contactos. Antes también
-  // miraba el preview, y como el agente nombra al dueño en sus propios
-  // mensajes, buscar ese nombre devolvía media bandeja. Encima era una
-  // búsqueda de mensajes a medias: solo el último de cada hilo, no el historial.
-  const searched = conversations.filter(
-    (c) =>
-      matchesQuery(query, {
-        text: [c.contact.name],
-        phone: c.contact.phone,
-      }) && (stage === "all" || c.stageName === stage)
+  // 013 C2 — Toda la lógica de la fila de filtros vive en un módulo puro: el
+  // conteo de "Por atender" y su listado salen de la MISMA operación, así que
+  // no pueden discrepar. "Por atender" va primero porque es la pregunta con la
+  // que arranca el día; "Todas", "No leídas", "Anuncios" y la etapa conservan
+  // exactamente su definición de siempre (FR-2.6).
+  const { visibles, porAtender, noLeidas, anuncios, total } = resumirBandeja(
+    conversations,
+    { query, stage, filter }
   );
-  const unreadCount = searched.filter((c) => c.unreadCount > 0).length;
-  const adsCount = searched.filter((c) => cuentaComoAnuncio(c.anuncio)).length;
-  // El chip "Anuncios" solo aparece si hay al menos una conversación de
-  // anuncio en la bandeja actual (post-filtro de búsqueda + etapa). El
-  // contador es SIEMPRE sobre `searched` (post-búsqueda y post-etapa) para
-  // que sea coherente con lo que el usuario ya está mirando.
-  const visible =
-    filter === "unread"
-      ? searched.filter((c) => c.unreadCount > 0)
-      : filter === "ads"
-        ? searched.filter((c) => cuentaComoAnuncio(c.anuncio))
-        : searched;
 
   // Etapas presentes en la bandeja, en el orden en que llegan del pipeline.
   const stages: string[] = [];
@@ -156,13 +151,15 @@ export function ConversationList({
       <div className="flex items-center gap-1.5 border-b px-4 py-2.5">
         {(
           [
-            { id: "all", label: "Todas", count: searched.length },
-            { id: "unread", label: "No leídas", count: unreadCount },
+            { id: "por_atender", label: "Por atender", count: porAtender },
+            { id: "all", label: "Todas", count: total },
+            { id: "unread", label: "No leídas", count: noLeidas },
           ] as const
         ).map((f) => (
           <button
             key={f.id}
             onClick={() => setFilter(f.id)}
+            aria-pressed={filter === f.id}
             className={cn(
               "flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full border px-2.5 py-[5px] text-[12.5px] font-medium transition-colors",
               filter === f.id
@@ -170,6 +167,9 @@ export function ConversationList({
                 : "bg-background text-text-2 hover:bg-accent"
             )}
           >
+            {f.id === "por_atender" && (
+              <AlertCircle className="h-3.5 w-3.5" strokeWidth={1.7} />
+            )}
             {f.label}
             <span
               className={cn(
@@ -182,7 +182,7 @@ export function ConversationList({
           </button>
         ))}
 
-        {adsCount > 0 && (
+        {anuncios > 0 && (
           <button
             onClick={() => setFilter(filter === "ads" ? "all" : "ads")}
             aria-label="Filtrar por anuncios"
@@ -202,7 +202,7 @@ export function ConversationList({
                 filter === "ads" ? "bg-white/20" : "bg-secondary text-text-3"
               )}
             >
-              {adsCount}
+              {anuncios}
             </span>
           </button>
         )}
@@ -234,13 +234,15 @@ export function ConversationList({
           <p className="p-6 text-center text-xs text-text-3">Cargando…</p>
         ) : conversations.length === 0 ? (
           <EmptyState onSeeded={onSeeded} />
-        ) : visible.length === 0 ? (
+        ) : visibles.length === 0 ? (
           <p className="p-6 text-center text-xs text-text-3">
-            Sin resultados para este filtro.
+            {filter === "por_atender"
+              ? "Nada pendiente de tu lado ahora mismo."
+              : "Sin resultados para este filtro."}
           </p>
         ) : (
           <ul>
-            {visible.map((c) => {
+            {visibles.map((c) => {
               const unread = c.unreadCount > 0;
               const active = selectedId === c.id;
               return (
@@ -250,6 +252,8 @@ export function ConversationList({
                   )}
                   <button
                     onClick={() => onSelect(c.id)}
+                    data-testid="conversation-item"
+                    aria-label={`Abrir conversación con ${c.contact.name}`}
                     className={cn(
                       "flex w-full items-start gap-[11px] px-4 py-[var(--row-py)] text-left transition-colors",
                       active ? "bg-[var(--bg-active)]" : "hover:bg-subtle"

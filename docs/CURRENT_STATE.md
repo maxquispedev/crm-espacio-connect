@@ -1,3 +1,105 @@
+# Checkpoint 2026-10-04 — Spec 013, CUT 2: la Bandeja como cola "Por atender"
+
+**IMPLEMENTADO, GATES TÉCNICOS VERDES Y E2E DE UI REAL EJECUTADO EN VERDE
+(35/35). Primer corte de 013 con superficie observable verificada en pantalla.**
+Commit único: `feat(inbox): añadir cola por atender`. Base limpia `771f3b3`.
+
+**Objetivo.** Que la Bandeja responda primero a "¿qué hago ahora?" y no solo a
+"¿qué no he leído?". La columna vertebral es que **el chip y su lista no pueden
+discrepar**: salen de la misma operación (`resumirBandeja`), no de dos cálculos
+que alguien tendría que mantener sincronizados.
+
+**Cambios.**
+- `ConversationDto.attention` **aditivo y opcional** (`AttentionDto`: `state`,
+  `dueAt`, `note`, `needsAttentionNow`): los consumidores que no lo conocen
+  siguen compilando sin cambios.
+- `listConversations` resuelve la atención con un `leftJoin` a
+  `conversation_attention` en la **misma función y con el mismo patrón que
+  `adAttribution`**: `organization_id` DENTRO del `ON`, no solo en el `WHERE`.
+  Un solo `SELECT`, cero N+1; el `UNIQUE (org, conversation)` del corte 1
+  garantiza ≤1 fila por conversación. Un único `now` para toda la lista, para
+  que el vencimiento no dependa del reloj de cada fila.
+- **`needsAttentionNow` se calcula en un solo sitio**: sigue en
+  `deriveAttention` (`src/server/inbox/attention.ts`); `resumenAtencion()` solo
+  proyecta. El cliente **nunca** lo recalcula — si lo hiciera, dos relojes
+  distintos podrían separar el conteo del listado.
+- `src/components/inbox/bandeja-filtros.ts` (nuevo, puro): calcula `cola`,
+  `sinLeer` y `deAnuncio` **una vez** sobre la vista (búsqueda + etapa) y el
+  chip usa `.length` de ese mismo array.
+- `conversation-list.tsx`: chip **"Por atender (N)" primero**, con icono y
+  `aria-pressed`; `data-testid="conversation-item"` en la fila para el E2E.
+  `Todas` / `No leídas` / `Anuncios` / filtro de etapa **intactos** (FR-2.6).
+- `PATCH /api/conversations/[id]` publica el DTO con la atención ya derivada: si
+  no, el evento anunciaría "sin estado humano" justo tras un `aiEnabled:false`,
+  que es lo que crea el `pending`.
+- `tests/fixtures/mem-db.ts`: el doble ahora entiende proyección por tabla,
+  `innerJoin`/`leftJoin` con evaluación del `ON` (incluida la comparación ENTRE
+  TABLAS que Drizzle emite sin parámetros) y proyección de columnas sueltas.
+  Sigue **sin** comprobar constraints de PostgreSQL — para eso está la opt-in.
+
+**Decisiones (trazadas en `tasks.md`).** (1) El filtro es **cliente**, como
+`all/unread/ads`: un endpoint para "Por atender" sería sobrearquitectura y
+rompería la reactividad SSE. (2) `GET /api/conversations/[id]` no existe (solo
+`PATCH`), así que el caso "no encontrada" se comprueba por `PATCH`. (3) El
+fixture E2E se siembra por SQL: el estado "vencido" exige esperar y
+`POST /api/reminders` es del corte 3.
+
+**Evidencia.** `pnpm typecheck`, `pnpm lint` (0 errores; 3 warnings
+preexistentes), `pnpm build` y `pnpm test` en verde: **108 ficheros, 1221 tests**,
+9 skipped. `tests/unit/attention-queue.test.ts`: **28 verdes** (derivación de los
+3 estados y el vencimiento; inclusión/exclusión; conteo == longitud; `unreadCount`
+que NO define la cola; tenant A/B en lista y conteo; firma aditiva de
+`serializeConversation`; chip renderizado). **E2E `E2E_SECTION=023`: 35/35 con
+Chromium real** — ver abajo.
+
+**E2E: EJECUTADO Y VERDE (a diferencia de todos los cortes previos).** Se levantó
+PostgreSQL real en `:55432` (binarios de `embedded-postgres` en `/tmp`, `initdb` +
+`pg_ctl` como usuario normal, sin root) y la app en `:3100` con los mocks; fixture
+por SQL sobre la BD dedicada `operator_workspace_test`. Chromium necesitaba
+`libnspr4/libnss3/libasound2`, que se resolvieron extrayendo los `.deb` en `/tmp` y
+apuntando `LD_LIBRARY_PATH` (sin root). Camino feliz en pantalla: el chip existe,
+es la primera opción, marca 3; al pulsarlo salen 3 filas (handoff, inbound,
+vencido) y quedan fuera futuro, esperando al cliente, solo IA y anuncio; los otros
+tres filtros conservan su semántica y la etapa recorta la cola a 1 y la devuelve a
+3. Camino infeliz: sin sesión `GET /api/conversations` → 401, PATCH a conversación
+de otra organización → 404, PATCH inexistente → 404, `/inbox` sin sesión → login.
+La sesión de la organización B ve su propia cola (1), ninguna de A.
+
+**HALLAZGO para un corte posterior (no arreglado aquí).** La migración `0010`
+declara **dos FK de una columna** y ninguna **compuesta**, así que una fila de
+`conversation_attention` puede decir `organization_id = A` apuntando a una
+conversación de B. La suite opt-in de corte 1 lo asumía compuesto y por eso tiene
+2 checks en rojo (9 verdes). Se arregló su fixture (omitía `contact.name`, NOT
+NULL desde 010) para que **pudiera** ejecutarse: ya corre contra PostgreSQL real.
+**Impacto en este corte: ninguno** — lista, LEFT JOIN y `getAttention` filtran por
+`organization_id`. El arreglo exige migración propia (FK compuesta + `UNIQUE
+(organization_id, id)` en `conversation`): corresponde a CUT 5 o a un corte de
+migración. Registro en `specs/013-operator-workspace/tasks.md`.
+
+**Lo que NO se tocó.** `src/server/sales/follow-ups/**`, `automationLane` y el
+handoff intactos; `docs/SALES_FOLLOW_UPS.md` sin modificar porque su contrato no
+cambia. Sin endpoint, tabla, estado de atención, etapa del pipeline, plantilla de
+WhatsApp ni dependencia externa nueva. Agenda (corte 3) y flujo operativo (corte
+4) sin empezar.
+
+**Siguiente paso exacto: CUT 3 (Agenda de recordatorios humanos), commit
+`feat(inbox): añadir agenda de recordatorios humanos`.** T301 store con buckets
+`overdue/today/tomorrow/week/later`; T302 `GET /api/reminders` con organización de
+SESIÓN (nunca del body); T303 `POST /api/reminders` con Zod y `dueAt` **futura**;
+T304 `DELETE /api/reminders/[conversationId]`; T305 acción "Recordarme" en la
+conversación en HUMAN; T306..T308 vista y efecto sobre "Por atender"; T309 cero
+envíos (reusar `attention-no-send`); T310 bucketing UTC/local + fecha límite +
+tenant; T311 gate + E2E — y aquí **sí** hay PostgreSQL disponible, así que la vía
+es la de este corte (sección `E2E_SECTION=023` como base, sección propia para la
+Agenda). Reutilizar el PG de `:55432` y el patrón de libs de `/tmp/pwlibs`.
+
+**Decisión de producto para sincronizar en Obsidian:** "Por atender" es una cola
+de **acción humana ahora**, deliberadamente distinta de "No leídas". Leer no es
+atender: una conversación con 20 no leídas que ya esperas al cliente no sale, y
+una vencida con cero no leídas sí. Esa distinción es la que hace útil la cola.
+
+---
+
 # Checkpoint 2026-10-04 — Spec 013, CUT 1: estado durable de atención humana
 
 **IMPLEMENTADO / GATES TÉCNICOS VERDES; E2E NO EJECUTADO (sin PostgreSQL en la

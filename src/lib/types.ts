@@ -40,6 +40,26 @@ export type HandoffReason =
   | "manual_reply"
   | "commercial";
 
+/**
+ * 013 C2 — Estado operativo de la atención humana, YA DERIVADO en lectura
+ * (spec §3.1, plan §3.3/§4.1).
+ *
+ * `needsAttentionNow` es lo ÚNICO que decide la cola "Por atender", y llega
+ * calculado por el servidor en `deriveAttention` (`src/server/inbox/attention.ts`):
+ * `pending` O (`deferred` con `due_at` ya vencido). El cliente NO lo recalcula —
+ * si lo hiciera, el conteo del chip y el listado podrían discrepar por clocks
+ * distintos.
+ */
+export type AttentionDto = {
+  state: "pending" | "waiting_client" | "deferred";
+  /** ISO-8601; solo presente en `deferred` (CHECK de coherencia en BD). */
+  dueAt: string | null;
+  /** Razón del compromiso ("jueves 10:00"), visible en la Agenda (corte 3). */
+  note: string | null;
+  /** Requiere acción humana AHORA: es la definición de la cola, no un extra. */
+  needsAttentionNow: boolean;
+};
+
 export type ConversationDto = {
   id: string;
   contact: { id: string; name: string; phone: string | null };
@@ -58,6 +78,13 @@ export type ConversationDto = {
    * Subset reducido para la lista: solo lo que el badge necesita.
    */
   anuncio: AnuncioListaDto | null;
+  /**
+   * 013 C2 — Atención humana de la conversación. ADITIVO y OPCIONAL: los
+   * consumidores que no lo conocen siguen compilando y no cambian de
+   * comportamiento. `null` (o ausente) significa que no hay estado humano: la IA
+   * es la dueña, nunca hubo handoff, o el estado se resolvió.
+   */
+  attention?: AttentionDto | null;
 };
 
 /**

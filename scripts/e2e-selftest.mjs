@@ -162,11 +162,16 @@ async function runSection021() {
 }
 
 async function main() {
-  // Cortes 011 aislados: UI, demos y pago con proveedores locales.
-  if (["020", "021", "022"].includes(process.env.E2E_SECTION)) {
+  // Cortes aislados: UI, demos, pago y la cola "Por atender" de 013.
+  if (["020", "021", "022", "023"].includes(process.env.E2E_SECTION)) {
     if (process.env.E2E_SECTION === "022") {
       const { runCommercialPaymentSelftest } = await import("./e2e-commercial-payment.mjs");
       await runCommercialPaymentSelftest({ BASE, api, ok, waitFor, getCookie: () => cookie });
+    } else if (process.env.E2E_SECTION === "023") {
+      // 013 C2 — Bandeja "Por atender". Aísla su BD y su app: si esta sección
+      // corre, la cola se verificó en pantalla con la app real.
+      const { runOperatorQueueSelftest } = await import("./e2e-operator-queue.mjs");
+      await runOperatorQueueSelftest({ BASE, api, ok, waitFor, getCookie: () => cookie });
     } else if (process.env.E2E_SECTION === "021") await runSection021();
     else await runSection020();
     console.log(`\n===== ${checks - failures}/${checks} checks OK, ${failures} fallos =====`);

@@ -2,6 +2,7 @@ import { desc, eq, inArray, type SQL } from "drizzle-orm";
 import { getDb, schema } from "@/lib/db";
 import { newId } from "@/lib/db/ids";
 import { scoped } from "@/lib/db/tenant";
+import type { AttentionDto } from "@/lib/types";
 
 /**
  * 013 Corte 1 - Estado operativo de la atención humana.
@@ -116,6 +117,25 @@ export function deriveAttention(
     waitingClient: row.state === "waiting_client",
     scheduled: row.state === "deferred" && !overdue,
     overdue,
+  };
+}
+
+/**
+ * Proyección al DTO de la lista (plan §4.1): solo los cuatro campos que la
+ * Bandeja necesita, y con `needsAttentionNow` YA derivado por `deriveAttention`.
+ *
+ * Existe para que el vencimiento se calcule en UN solo sitio (este módulo) y el
+ * cliente solo lo lea. Si el cliente reinterpretara `state`/`dueAt` por su cuenta,
+ * el conteo del chip y el listado dejarían de garantizar la misma definición
+ * (FR-2.7).
+ */
+export function resumenAtencion(view: AttentionView | null): AttentionDto | null {
+  if (!view) return null;
+  return {
+    state: view.state,
+    dueAt: view.dueAt,
+    note: view.note,
+    needsAttentionNow: view.needsAttentionNow,
   };
 }
 

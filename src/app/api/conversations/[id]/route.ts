@@ -2,6 +2,7 @@ import { z } from "zod";
 import { apiError, parseBody, withAuth } from "@/lib/api";
 import { publish } from "@/server/events/bus";
 import { serializeConversation, getConversation, updateConversation } from "@/server/inbox/queries";
+import { getAttention, resumenAtencion } from "@/server/inbox/attention";
 
 export const dynamic = "force-dynamic";
 
@@ -23,12 +24,21 @@ export const PATCH = withAuth(async (session, req: Request, ctx: Params) => {
 
   const row = await getConversation(session.organizationId, id);
   if (row) {
+    // 013 C2 — El DTO que se publica lleva la atención YA derivada. Sin esta
+    // lectura, el evento anunciaría "sin estado humano" justo después de un
+    // `aiEnabled: false`, que es precisamente lo que crea el `pending`. Una
+    // lectura extra SOLO en esta acción explícita del operador: la lista de la
+    // Bandeja lo resuelve con su propio LEFT JOIN (cero N+1).
+    const attention = resumenAtencion(
+      await getAttention(session.organizationId, id)
+    );
     const dto = serializeConversation(
       row.conversation,
       row.contact,
       null,
       null,
-      row.anuncio
+      row.anuncio,
+      attention
     );
     publish(session.organizationId, {
       type: "conversation.updated",

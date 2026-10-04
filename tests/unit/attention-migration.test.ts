@@ -95,7 +95,10 @@ const orgB = `org_test_${randomUUID()}`;
 vi.mock("@/lib/db", async () => ({ schema: await import("@/lib/db/schema"), getDb: () => db }));
 
 async function seedConversation(organizationId: string, id: string, contactId: string) {
-  await client`INSERT INTO contact (id, organization_id, wa_identity) VALUES (${contactId}, ${organizationId}, ${`52${contactId}`})`;
+  // `contact.name` es NOT NULL desde 010-quick-lead-name. El fixture lo omitía, y
+  // como esta suite opt-in se escribió sin poder ejecutarse nunca contra una BD
+  // real, reventaba con "null value in column name" antes de comprobar nada.
+  await client`INSERT INTO contact (id, organization_id, wa_identity, name) VALUES (${contactId}, ${organizationId}, ${`52${contactId}`}, ${`Lead ${contactId}`})`;
   await client`INSERT INTO conversation (id, organization_id, contact_id) VALUES (${id}, ${organizationId}, ${contactId})`;
 }
 
@@ -160,6 +163,17 @@ describe.skipIf(!testUrl)("013 C1 — conversation_attention en PostgreSQL real"
   });
 
   it("organization_id NOT NULL, FK y aislamiento A/B", async () => {
+    // PENDIENTE conocido (no regresión): estos 2 checks fallan porque
+    // `drizzle/0010_conversation_attention.sql` declara DOS FK de una columna
+    // (`conversation_id` y `organization_id`) y no una FK COMPUESTA, así que
+    // `INSERT (orgA, cv_b)` se acepta: nada impide que la fila diga "org A"
+    // apuntando a una conversación de B. El UNIQUE (org, conversation) sí
+    // existe y pasa.
+    //
+    // Lo que SÍ se comprueba aquí —y lo que protege la lectura de la cola— es que
+    // las lecturas van scropeadas: `getAttention(ORG_A, cv_b)` no ve la fila
+    // aunque exista. Arreglar la FK exige migración propia (FK compuesta +
+    // UNIQUE (organization_id, id) en conversation) y sale de este spec.
     await expect(
       client`INSERT INTO conversation_attention (id, organization_id, conversation_id, state) VALUES ('ca_noorg', NULL, 'cv_b', 'pending')`
     ).rejects.toMatchObject({ code: "23502" });
