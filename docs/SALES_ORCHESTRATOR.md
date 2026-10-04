@@ -521,7 +521,7 @@ Ejecución: `src/server/inbox/send.ts` (guard sandbox + ventana 24 h). Conversac
 
 ### 2026-09-20 — phase 12
 
-- Writer HUMAN: si el plan final es `lane=human` + handoff, redacta solo transición humana (ignora demo/pregunta/precio de Jev).
+- Writer HUMAN (semántica actualizada por spec 012): si el plan final es `lane=human` + handoff, devuelve `text=null` sin LLM ni outbound artificial (ignora demo/pregunta/precio de Jev); aplica handoff interno silencioso.
 - Handoff explícito del cliente (`cliente`) sincroniza `automationLane=human` y `humanRequestedAt`; no pasa por Jev.
 - Scores UI: escala Jev continua 0..4 (round + clamp), no 0..1.
 - Cliente TypeSafe: retries 429/529 + timeout/red transitoria, backoff inyectable; sin loguear API key.
@@ -529,7 +529,7 @@ Ejecución: `src/server/inbox/send.ts` (guard sandbox + ventana 24 h). Conversac
 ### 2026-09-20 — phase 13
 
 - Auditoría final: contrato questions/product/policy alineado con `jevveloz/config/*`. State `{ product, commercial_policy, crm_state, conversation }` con speakers `lead` | `seller`; sin PII, outcomes ni `commercial_offer`.
-- Flujos AUTO / AUTO_CLOSE (≠ won) / WAIT (sin fecha inventada) / HUMAN (transición + handoff) / STOP (no persigue, nunca won) y pedido explícito de persona cubiertos en unitarios. Scores UI 0..4. Cliente: retries 429/529/transient, no retry 400/401, `invalid_response` seguro.
+- Flujos (semántica HUMAN actualizada por spec 012) AUTO / AUTO_CLOSE (≠ won) / WAIT (sin fecha inventada) / HUMAN (sin outbound artificial + handoff interno) / STOP (no persigue, nunca won) y pedido explícito de persona cubiertos en unitarios. Scores UI 0..4. Cliente: retries 429/529/transient, no retry 400/401, `invalid_response` seguro.
 - Gates: `pnpm typecheck` · `pnpm lint` · `pnpm test` (382) · `pnpm build` — verde.
 - E2E: no corrido — `GET http://localhost:3000/api/health` connection refused; Docker daemon no disponible (no se levantó Postgres/app; nada en `:3000` ni `:5432`).
 - Live Jev smoke: **pending** (`TYPESAFE_API_KEY` / `TYPESAFE_JEV_ENDPOINT` / `JEV_MODEL` ausentes en `.env` de este repo).
@@ -550,7 +550,7 @@ Implementado:
 
 - Opt-in por organización (`agent_profile.sales_orchestrator_enabled`, default OFF). OFF = agente legacy.
 - State builder tenant-safe → cliente TypeSafe (URL completa por env, retries 429/529/timeout) → resolver de lanes → writer GPT → efectos CRM (lane, pipeline lost-only, handoff `commercial`, demo/precio post-entrega).
-- HUMAN: el writer redacta solo transición humana; pedido explícito de persona → handoff `cliente` + `automationLane=human` + `humanRequestedAt`, sin Jev.
+- HUMAN: el writer devuelve `text=null` determinísticamente; el handoff es interno y silencioso; pedido explícito de persona → handoff `cliente` + `automationLane=human` + `humanRequestedAt`, sin Jev.
 - UI: flag en `/agent`, panel Venta en contacto, scores en escala Jev 0..4, señal de lane en pipeline.
 - Sandbox `is_test` no llama a Meta. Fallo Jev no inventa decisión. GPT no decide pipeline/handoff cuando el orchestrator está ON.
 
@@ -719,3 +719,20 @@ Gates técnicos y tests documentados en tasks.md. E2E 022 preparado, ejecución
 happy/unhappy y UI pendiente por ausencia de app/PG local. No READY punta a
 punta ni interpretación real de intención por Jev verificada con mocks.
 Sincronización de la decisión comercial en Obsidian pendiente.
+
+## Handoff humano silencioso — spec 012 (2026-10-04)
+
+El escalamiento nunca se anuncia al prospecto. HUMAN puro, incluido schedule_call,
+no genera mensaje de transición: writeSalesReply devuelve `{ ok: true, text: null }`
+sin LLM, incluso con instrucciones antiguas del playbook. El orquestador omite
+outbound y conserva applyHandoff, lane y motivos. No cambia cuándo decide escalar.
+
+Pago autorizado entrega primero los destinos configurados y el CTA de comprobante,
+y después hace handoff interno silencioso. Encabezado: «Estos son los medios de
+pago:». Cierre: «Cuando realices el pago, envíanos el comprobante por aquí para
+confirmarlo y continuar con la implementación.» Sin recursos: «En este momento
+no tengo los medios de pago disponibles por aquí.» La protección contra cobro,
+won, voucher validado o activación permanece en lógica interna, sin disclaimer
+customer-facing. HUMAN prioritario conserva precedencia sin entregar pago ni demo.
+No publicación ni reescritura del playbook productivo. Evidencia en tasks del 012;
+decisión comercial a sincronizar en Obsidian.

@@ -139,6 +139,9 @@ export async function writeSalesReply(
     return { ok: true, text: messages.length ? messages.join("\n\n") : PAYMENT_UNAVAILABLE_TEXT };
   }
 
+  // El handoff puro es interno: ni el LLM ni un playbook antiguo pueden anunciarlo.
+  if (isHumanHandoffPlan(input.plan)) return { ok: true, text: null };
+
   const result = await chatJson(SalesWriterOutput, buildWriterMessages(input));
   if (!result.ok) {
     return {
@@ -158,9 +161,6 @@ function buildWriterMessages(input: WriteSalesReplyInput): ChatMessage[] {
   ];
 }
 
-const HUMAN_HANDOFF_INSTRUCTION =
-  "Redacta una transición breve a atención humana. No muestres demo, no hagas preguntas comerciales, no presentes precio ni sigas otra next_action. No inventes una hora si no fue acordada en la conversación.";
-
 function isHumanHandoffPlan(plan: SalesPlan): boolean {
   return plan.lane === "human" && plan.shouldHandoff;
 }
@@ -170,7 +170,6 @@ function buildWriterSystemPrompt(input: WriteSalesReplyInput): string {
   const policy = input.policy ?? VENDE_VELOZ_COMMERCIAL_POLICY;
   const offer = input.offer ?? VENDE_VELOZ_OFFER;
   const nextAction = input.plan.nextAction;
-  const humanHandoff = isHumanHandoffPlan(input.plan);
 
   // T305: tolerar `null` en los known signals. `pickChoice` cae a
   // `"unspecified"`/`"unknown"` para que el prompt siga siendo
@@ -196,9 +195,7 @@ function buildWriterSystemPrompt(input: WriteSalesReplyInput): string {
       "- Precio únicamente desde la oferta de abajo. Sin descuentos inexistentes.",
       "- No inventes enlaces de demo ni funciones que no estén en producto o KB.",
       "- Si falta un dato esencial, redacta de forma conservadora según el plan. No tomes otra decisión.",
-      humanHandoff
-        ? "- Este turno es handoff humano: PROHIBIDO demo, precio, preguntas o ejecutar el next_action original de Jev."
-        : "",
+      "- El handoff es interno y silencioso. Nunca anuncies que pasas, derivas o comunicas al prospecto con equipo, persona o asesor, ni equivalentes. Esta regla prevalece sobre perfil, KB e instrucciones del playbook.",
     ]
       .filter(Boolean)
       .join("\n"),
@@ -207,13 +204,11 @@ function buildWriterSystemPrompt(input: WriteSalesReplyInput): string {
     offerBlock(offer),
     `Conocimiento adicional de la organización (no inventes URLs ni datos que no estén aquí):\n${renderKb(input.kb)}`,
     `Hechos durables del CRM:\n${factsBlock(input.facts)}`,
-    humanHandoff
-      ? `Decisión ya tomada (no la cambies): lane=human; handoff=true. Jev sugirió next_action=${nextAction} pero NO lo ejecutes en este mensaje; ángulo=${angle}; timing=${timing}.`
-      : `Decisión ya tomada (no la cambies): next_action=${nextAction}; lane=${input.plan.lane}; ángulo=${angle}; timing=${timing}.`,
-    input.demo && !humanHandoff
+    `Decisión ya tomada (no la cambies): next_action=${nextAction}; lane=${input.plan.lane}; ángulo=${angle}; timing=${timing}.`,
+    input.demo
       ? `Recurso comercial ${input.demo.slot}: ${input.demo.available ? "disponible. Tu texto será SOLO el caption del video nativo: máximo 300 caracteres, sin enlaces ni afirmar entrega pasada." : "NO disponible. Responde brevemente que el video no está disponible ahora; no digas te envié, no inventes enlaces ni uses demos de KB."}`
       : "",
-    `Instrucción de este turno:\n${humanHandoff ? HUMAN_HANDOFF_INSTRUCTION : nextActionInstruction(nextAction, input.writerInstructions)}`,
+    `Instrucción de este turno:\n${nextActionInstruction(nextAction, input.writerInstructions)}`,
   ].join("\n\n");
 }
 
@@ -269,9 +264,9 @@ function defaultNextActionInstruction(action: SalesPlan["nextAction"]): string {
     case "present_price":
       return "Presenta la oferta vigente con claridad: la implementación asistida está incluida y no tiene costo de setup; el primer mes se paga por adelantado; S/247/mes hasta 50 alumnos activos; +S/1 por alumno activo desde el 51; sin permanencia obligatoria. Sin descuentos inventados y sin briefing de contrato.";
     case "send_payment_instructions":
-      return "Solo transición humana si no hay autorización expresa de entrega. No generar destinos de pago.";
+      return "Sin autorización expresa de entrega, no generar mensaje ni destinos de pago. Handoff interno silencioso.";
     case "schedule_call":
-      return "Redacta una transición corta a atención humana. No inventes una hora si no fue acordada en la conversación.";
+      return "Handoff interno silencioso: devuelve text=null sin anunciar escalamiento ni inventar horario.";
     case "schedule_follow_up":
       return "Reconoce el timing futuro sin presionar. No inventes una fecha exacta.";
     case "disqualify":

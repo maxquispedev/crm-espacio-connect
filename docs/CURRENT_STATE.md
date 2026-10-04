@@ -1,3 +1,31 @@
+# Checkpoint 2026-10-04 — Spec 012: handoff humano silencioso
+
+**IMPLEMENTADO / GATES TÉCNICOS VERDES; E2E PENDIENTE. No READY punta a punta.**
+Commit único `fix(sales): hacer silencioso el handoff humano`; hash con `git log -1`.
+Base limpia `9a218b1ad4c866cff0e8224791b7fde4a621b04c`.
+
+HUMAN puro y schedule_call devuelven text=null determinísticamente, sin LLM ni
+outbound artificial; applyHandoff, lanes, motivos y decisiones Jev intactos.
+Pago autorizado entrega recursos exactos + CTA de comprobante y luego handoff
+silencioso; vacío responde naturalmente sin anunciar escalamiento. Protecciones
+contra cobro/won/activación permanecen internas. Prueba rápida acepta null para
+handoff aplicado y muestra ausencia de mensaje; vacíos inesperados siguen fallando.
+No publicación ni modificación de playbook productivo; cero WhatsApp real.
+
+Regresión comercial **438/438**; preview **27/27**. Gate completo final **exit 0**:
+typecheck/lint/build/test, **1129 pass / 4 PostgreSQL skipped**, 103 archivos verdes
+/ 1 omitido; lint 0 errores y 3 warnings preexistentes. Evidencia y comandos en
+`specs/012-silent-human-handoff/tasks.md`; log `/tmp/silent-handoff-gates.log`.
+E2E 022 actualizado e intentado: **ECONNREFUSED 127.0.0.1:3000**, sin app ni
+postgres/psql/pg_ctl/docker disponibles. Ningún escenario E2E ejecutado;
+Constitución IX y pendientes históricos 020/021/022/PG siguen abiertos.
+
+Siguiente paso exacto fuera de esta sesión: preparar app/PG dedicada/mocks/Chromium
+según quickstart 011, ejecutar E2E_SECTION=022 feliz/infeliz y Prueba rápida HUMAN
+silenciosa en UI. Sincronizar decisión comercial en Obsidian. STOP tras commit limpio.
+
+---
+
 # CURRENT STATE — Espacio Connect
 
 **Actualizado: 2026-10-04 — Spec 011, C4 IMPLEMENTADO / GATES VERDES;

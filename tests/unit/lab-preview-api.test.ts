@@ -686,14 +686,10 @@ describe("Prueba rápida — POST /api/lab/preview", () => {
       async (input: { organizationId: string; conversationId: string }) => {
         const lead = tables.lead![0]!;
         lead.lastJevDecision = jevSnapshot("pbv_pub_a", 1);
-        tables.message!.push({
-          id: "msg_out",
-          organizationId: input.organizationId,
-          conversationId: input.conversationId,
-          direction: "out",
-          text: "Te paso con un asesor.",
-          createdAt: new Date(),
-        });
+        (lead.lastJevDecision as ReturnType<typeof jevSnapshot>).plan = {
+          lane: "human", nextAction: "schedule_call", shouldHandoff: true,
+        };
+        lead.automationLane = "human";
         const conv = tables.conversation!.find((c) => c.id === input.conversationId)!;
         conv.handoffAt = new Date();
       }
@@ -701,7 +697,9 @@ describe("Prueba rápida — POST /api/lab/preview", () => {
     const res = await preview(
       post({ conversation: [SCRIPT[0]!, SCRIPT[0]!, SCRIPT[0]!] })
     );
-    const body = (await res.json()) as { turns: number };
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { turns: number; writer: { text: string | null } };
+    expect(body.writer.text).toBeNull();
     expect(body.turns).toBe(1);
     expect(runSalesOrchestratorTurn).toHaveBeenCalledTimes(1);
   });

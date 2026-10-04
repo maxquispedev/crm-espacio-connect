@@ -78,6 +78,9 @@ describe("pago opt-in 1.1", () => {
   it("renderer conserva cuentas/ceros/CCI/moneda/Yape/link y orden; omite ausentes", () => {
     const text = renderPaymentInstructions(payment).join("\n\n");
     for (const exact of ["000-123", "000 456", "000789", "PEN", "USD", payment.yape.phone, payment.paymentLink]) expect(text).toContain(exact);
+    expect(text).toMatch(/^Estos son los medios de pago:/);
+    expect(text).toMatch(/Cuando realices el pago, envíanos el comprobante por aquí para confirmarlo y continuar con la implementación\.$/);
+    expect(text).not.toMatch(/configurados|equipo|persona|asesor|handoff|confirmación de activación|Este mensaje no confirma/i);
     expect(text.indexOf("Transferencia")).toBeLessThan(text.indexOf("Yape"));
     expect(text.indexOf("Yape")).toBeLessThan(text.indexOf("Link de pago"));
     expect(renderPaymentInstructions({ transfers: [], yape: null, paymentLink: null })).toEqual([]);

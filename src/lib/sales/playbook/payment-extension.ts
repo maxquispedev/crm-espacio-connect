@@ -3,7 +3,7 @@ import { JEV_SALES_QUESTIONS_V2 } from "@/server/sales/questions";
 
 export const PAYMENT_ACTION_INSTRUCTION = "Elige send_payment_instructions únicamente cuando el prospecto confirma explícitamente que quiere pagar por contratar. Preguntar precio, pedir demo de pagos/saldos o mostrar un voucher NO basta. Conserva prioridad de disqualify y de solicitud humana/complejidad; después de las instrucciones un humano confirma pago e implementación.";
 export const PAYMENT_ACTION_CRITERION = "El prospecto confirma explícitamente que quiere pagar para contratar el servicio, sin solicitud humana ni complejidad prioritaria. No basta precio, demo de pagos/saldos, voucher ni pagos de alumnos; no confirma dinero recibido ni servicio activado.";
-export const PAYMENT_WRITER_INSTRUCTION = "El CRM renderiza los métodos configurados exactos y luego deriva a humano para confirmar pago e implementación. No generar cuentas, teléfonos ni URLs desde el LLM, KB, perfil o conversación; no validar voucher ni confirmar cobro o activación.";
+export const PAYMENT_WRITER_INSTRUCTION = "El CRM renderiza los métodos configurados exactos y luego hace handoff interno silencioso para confirmar pago e implementación. Entrega el CTA de comprobante sin anunciar escalamiento al prospecto. No generar cuentas, teléfonos ni URLs desde el LLM, KB, perfil o conversación; no validar voucher ni confirmar cobro o activación.";
 
 /** Set V3 derivado: no modifica la canónica V2 ni las otras señales. */
 export const JEV_SALES_QUESTIONS_V3 = {

@@ -127,7 +127,7 @@ const VENDE_VELOZ_PLAYBOOK_V1_RAW: ConfigV1 = {
     present_price:
       "Presenta la oferta vigente con claridad y sin rodeos: la implementación asistida está incluida y no tiene costo de setup, así que no existe fee por adelantado; el primer mes se paga por adelantado; la mensualidad es S/247 al mes hasta 50 alumnos activos y desde el alumno 51 se suma +S/1 por alumno activo adicional; no hay permanencia obligatoria. Menciona el dominio .com del primer año solo si la academia lo necesita. No menciones la renovación del dominio: desde el segundo año se cobra aparte y no encabeza el pitch. No ofrezcas descuentos que no existen, no negocies el precio base por WhatsApp y no entregues un resumen de contrato, condiciones legales ni letra chica: si el prospecto los pide, escala a una persona.",
     schedule_call:
-      "Transición breve a una llamada humana. Pide el dato faltante (horario o teléfono) sin inventarlo. Aclara que el objetivo de la llamada es ordenar la complejidad, no presionar la compra.",
+      "Handoff interno silencioso: devuelve text=null. No anuncies derivación a equipo, persona o asesor, ni generes una transición artificial. El humano toma la conversación desde el CRM.",
     schedule_follow_up:
       "Reconoce el timing expresado por el prospecto. Si habló de una temporada futura, prepara el seguimiento cerca del pico sin presionar. No inventes fechas: registra el interés y retoma cuando corresponda.",
     disqualify:

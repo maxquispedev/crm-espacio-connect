@@ -603,12 +603,30 @@ HUMAN prioritario conserva precedencia. Las instrucciones autorizadas usan
 exclusivamente el cobro validado de la organización: todas las transferencias,
 Yape y link, en ese orden. El CRM controla el texto completo y los destinos;
 el LLM y KB no aportan cuentas ni URLs. Bloques grandes se separan entre
-métodos sin truncar destinos. Después deriva a humano para confirmar pago e
-implementación; no confirma dinero recibido, voucher válido ni activación.
+métodos sin truncar destinos. Entrega el CTA para enviar el comprobante por aquí
+y después aplica handoff interno silencioso para confirmar pago e implementación.
+Las protecciones contra marcar dinero recibido, voucher válido o activación
+permanecen en lógica interna y no se anuncian al prospecto.
 
-Sin métodos responde honestamente y deriva. Un envío fallido o incompleto
+Sin métodos responde «En este momento no tengo los medios de pago disponibles
+por aquí.» y aplica handoff interno silencioso. Un envío fallido o incompleto
 no marca `paymentInstructionsSentAt`, tampoco reintenta automáticamente.
 El fact solo se registra tras completar todos los mensajes aceptados y
 persistidos (o simulados localmente en sandbox). Prueba rápida/Lab no envían
 WhatsApp. E2E 022 preparado e intentado, **PENDIENTE** por app/PG local ausentes;
 no READY punta a punta. La decisión comercial debe sincronizarse en Obsidian.
+
+### Handoff silencioso (spec 012)
+
+HUMAN y schedule_call son operaciones internas. El writer retorna text=null sin
+LLM ni transición artificial; applyHandoff sigue funcionando. Nunca se anuncia
+«te paso con el equipo», «te derivo con un asesor» ni equivalentes. La regla
+runtime prevalece sobre instrucciones antiguas y no modifica automáticamente la
+Published. Las respuestas funcionales autorizadas, como los medios de pago y su
+CTA de comprobante, se entregan antes del handoff. Para pago: «Estos son los
+medios de pago:» y «Cuando realices el pago, envíanos el comprobante por aquí para
+confirmarlo y continuar con la implementación.» Sin copy de escalamiento.
+
+Prueba rápida devuelve `writer.text=null` cuando HUMAN puro ya aplicó el handoff;
+la UI muestra que no hubo mensaje automático. Una respuesta vacía inesperada o
+un pago autorizado sin entrega sigue siendo `no_writer_output`, no éxito silencioso.

@@ -51,7 +51,7 @@ export type PreviewResponse = {
     stage_id: string | null;
     stage_name: string | null;
   };
-  writer: { text: string };
+  writer: { text: string | null };
   turns: number;
 };
 
@@ -313,7 +313,7 @@ export function PlaybookQuickPreview({
           <div className="flex flex-col gap-1">
             <p className="text-xs font-medium text-muted-foreground">Respuesta</p>
             <p className="whitespace-pre-wrap rounded-md bg-muted px-2 py-1.5 text-xs">
-              {result.writer.text}
+              {result.writer.text ?? "Handoff interno aplicado; sin mensaje automático."}
             </p>
           </div>
 

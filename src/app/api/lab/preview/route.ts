@@ -90,7 +90,7 @@ export type PreviewResult = {
   };
   jev: Record<string, unknown>;
   plan: Record<string, unknown>;
-  writer: { text: string };
+  writer: { text: string | null };
   turns: number;
 };
 
@@ -172,6 +172,7 @@ export const POST = withAuth(async (session, req: Request) => {
           : {};
 
       let turns = 0;
+      let handoffApplied = false;
       for (const line of conversation) {
         const now = new Date();
         await db().insert(schema.message).values({
@@ -229,7 +230,7 @@ export const POST = withAuth(async (session, req: Request) => {
             )
           )
           .limit(1);
-        if (rows[0]?.handoffAt) break;
+        if (rows[0]?.handoffAt) { handoffApplied = true; break; }
       }
 
       // --- Leer ANTES del cleanup (plan §3.3). ------------------------------
@@ -266,7 +267,10 @@ export const POST = withAuth(async (session, req: Request) => {
         .filter((m) => m.direction === "out")
         .map((m) => m.text)
         .filter((t): t is string => typeof t === "string" && t.trim().length > 0);
-      if (outMessages.length === 0) {
+      const handoffPlan = (snapshot.decision as { plan?: { lane?: unknown; shouldHandoff?: unknown; paymentDeliveryAuthorized?: unknown } }).plan;
+      const silentHandoff = handoffApplied && handoffPlan?.lane === "human" &&
+        handoffPlan.shouldHandoff === true && handoffPlan.paymentDeliveryAuthorized !== true;
+      if (outMessages.length === 0 && !silentHandoff) {
         throw new PreviewError(
           502,
           "no_writer_output",
@@ -303,7 +307,7 @@ export const POST = withAuth(async (session, req: Request) => {
           stage_id: snapshot.stageId,
           stage_name: stage,
         },
-        writer: { text: outMessages[outMessages.length - 1]! },
+        writer: { text: silentHandoff ? null : outMessages[outMessages.length - 1]! },
         turns,
       };
       return Response.json(result);

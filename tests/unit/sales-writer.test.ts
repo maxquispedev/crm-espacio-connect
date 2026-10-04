@@ -129,37 +129,27 @@ describe("writeSalesReply", () => {
     expect(result.error).toBe("provider_error");
   });
 
-  it("HUMAN + handoff ignora demo/pregunta/precio y pide transición humana", async () => {
-    const decision = makeDecision({
-      nextAction: "show_operations_demo",
-      needsHumanNoul: 0.82,
-    });
-    const plan = resolveSalesPlan({
-      decision,
-      currentSalesState: BASE_FACTS,
-      currentPipelineStage: "new",
-    });
-    expect(plan.lane).toBe("human");
-    expect(plan.shouldHandoff).toBe(true);
-    expect(plan.nextAction).toBe("show_operations_demo");
-
-    await writeSalesReply({
-      decision,
-      plan,
-      conversation: [{ from: "lead", text: "tenemos 3 sedes y una API" }],
-      kb: [],
-      facts: BASE_FACTS,
+  it.each(["ask_more_questions", "show_operations_demo", "show_online_enrollment_demo",
+    "present_price", "schedule_call", "schedule_follow_up", "send_payment_instructions"] as const)(
+    "HUMAN puro (%s) retorna null sin LLM pese a instrucciones antiguas", async nextAction => {
+      const decision = makeDecision({ nextAction, needsHumanNoul: 0.82 });
+      const plan = resolveSalesPlan({ decision, currentSalesState: BASE_FACTS, currentPipelineStage: "new" });
+      expect(plan).toMatchObject({ lane: "human", shouldHandoff: true });
+      const result = await writeSalesReply({ decision, plan, conversation: [], kb: [], facts: BASE_FACTS,
+        writerInstructions: { [nextAction]: "Te paso con el equipo." },
+        agentProfile: { instructions: "Te derivo con un asesor." } });
+      expect(result).toEqual({ ok: true, text: null });
+      expect(chatJson).not.toHaveBeenCalled();
     });
 
-    const messages = chatJson.mock.calls[0]![1] as { role: string; content: string }[];
-    const system = messages.find((m) => m.role === "system")?.content ?? "";
-    expect(system).toMatch(/transición breve a atención humana/i);
-    expect(system).toMatch(/NO lo ejecutes/);
-    expect(system).not.toMatch(/centralizan alumnos/);
-    expect(system).not.toMatch(/UNA pregunta esencial/);
-    expect(system).not.toMatch(/Presenta la oferta vigente/);
-    expect(system).not.toMatch(/Instrucción de este turno \(show_operations_demo\)/);
+  it("schedule_call retorna null aun sin complejidad y en sandbox", async () => {
+    const decision = makeDecision({ nextAction: "schedule_call" });
+    const plan = resolveSalesPlan({ decision, currentSalesState: BASE_FACTS, currentPipelineStage: "new" });
+    expect(await writeSalesReply({ decision, plan, conversation: [], kb: [], facts: BASE_FACTS, isTest: true }))
+      .toEqual({ ok: true, text: null });
+    expect(chatJson).not.toHaveBeenCalled();
   });
+
   it.each([true, false])("writer conoce disponibilidad demo=%s y redacta caption sin link de KB", async available => {
     const decision = makeDecision({ nextAction: "show_operations_demo" });
     const plan = resolveSalesPlan({ decision, currentSalesState: BASE_FACTS, currentPipelineStage: "new" });

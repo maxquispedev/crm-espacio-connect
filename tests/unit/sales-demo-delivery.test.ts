@@ -154,7 +154,9 @@ describe("pipeline demo nativa", () => {
   });
   it("HUMAN tiene precedencia: no lee ni entrega demo", async () => {
     await seed("demo_enrollment_panel"); mocks.jev.mockResolvedValue({ ok: true, decision: makeDecision({ nextAction: "show_operations_demo", needsHumanNoul: 0.9 }), snapshot: {} });
-    await turn(); expect(fact()).toBeNull(); expect(mocks.upload).not.toHaveBeenCalled(); expect(out()[0]?.type).toBe("text");
+    mocks.writer.mockImplementation(async input => (await vi.importActual<typeof import("@/server/sales/writer")>("@/server/sales/writer")).writeSalesReply(input));
+    await turn(); expect(fact()).toBeNull(); expect(mocks.upload).not.toHaveBeenCalled(); expect(out()).toEqual([]);
+    expect(mocks.graph).not.toHaveBeenCalled(); expect(tables.conversation![0]!.handoffReason).toBe("commercial");
   });
   it("sandbox: media+caption reales locales, fact tras persistencia, cero sender/upload/Graph", async () => {
     await seed("demo_enrollment_panel"); tables.conversation![0]!.isTest = true;
@@ -186,6 +188,22 @@ describe("pipeline demo nativa", () => {
   });
 });
 
+describe("handoff puro silencioso", () => {
+  it.each([false, true])("schedule_call isTest=%s: writer real null, sin outbound, handoff aplicado", async isTest => {
+    tables.conversation![0]!.isTest = isTest;
+    mocks.jev.mockResolvedValue({ ok: true, decision: makeDecision({ nextAction: "schedule_call" }), snapshot: {} });
+    mocks.writer.mockImplementation(async input => (await vi.importActual<typeof import("@/server/sales/writer")>("@/server/sales/writer")).writeSalesReply(input));
+    const textSpy = vi.spyOn(sender, "sendText");
+    await turn();
+    expect(await mocks.writer.mock.results[0]!.value).toEqual({ ok: true, text: null });
+    expect(out()).toEqual([]);
+    expect(tables.lead![0]!.automationLane).toBe("human");
+    expect(tables.conversation![0]).toMatchObject({ handoffReason: "commercial" });
+    expect(tables.conversation![0]!.handoffAt).toBeInstanceOf(Date);
+    for (const check of [textSpy, mocks.graph, mocks.upload, mocks.follow]) expect(check).not.toHaveBeenCalled();
+  });
+});
+
 describe("pipeline instrucciones de pago", () => {
   const payload = { transfers: [{ bank: "Banco fixture", holder: "Titular", currency: "PEN", accountNumber: "000-123", cci: "000456" }],
     yape: { phone: "999000001", holder: "Titular Yape" }, paymentLink: "https://pay.example.test/001" };
@@ -205,6 +223,9 @@ describe("pipeline instrucciones de pago", () => {
     await turn();
     expect(out()).toHaveLength(1);
     for (const value of ["000-123", "000456", "999000001", payload.paymentLink]) expect(out()[0]!.text).toContain(value);
+    expect(out()[0]!.text).toMatch(/^Estos son los medios de pago:/);
+    expect(out()[0]!.text).toContain("Cuando realices el pago, envíanos el comprobante por aquí para confirmarlo y continuar con la implementación.");
+    expect(out()[0]!.text).not.toMatch(/equipo|persona|asesor|handoff|confirmación de activación|Este mensaje no confirma/i);
     expect(out()[0]).toMatchObject({ origin: "ai", aiGenerated: true });
     expect(paymentFact()).toBeInstanceOf(Date);
     expect(tables.conversation![0]!.handoffReason).toBe("commercial");
@@ -216,7 +237,7 @@ describe("pipeline instrucciones de pago", () => {
     if (mode === "foreign") seedPayment("org_b");
     if (mode === "empty") seedPayment("org_a", { transfers: [], yape: null, paymentLink: null });
     if (mode === "corrupt") seedPayment("org_a", { ...payload, paymentLink: "http://invalid.test" });
-    await turn(); expect(paymentFact()).toBeNull(); expect(out()[0]!.text).toContain("No tengo métodos");
+    await turn(); expect(paymentFact()).toBeNull(); expect(out()[0]!.text).toBe("En este momento no tengo los medios de pago disponibles por aquí.");
     expect(out()[0]!.text).not.toContain(payload.paymentLink); expect(tables.conversation![0]!.handoffReason).toBe("commercial");
     expect(mocks.follow).not.toHaveBeenCalled();
   });
@@ -231,7 +252,7 @@ describe("pipeline instrucciones de pago", () => {
   });
   it("segunda parte fallida no marca fact ni reintenta; conserva handoff", async () => {
     paymentTurn();
-    seedPayment("org_a", { transfers: Array.from({ length: 5 }, () => ({ bank: "b".repeat(120), holder: "h".repeat(120), currency: "PEN", accountNumber: "0".repeat(40), cci: "1".repeat(40) })), yape: null, paymentLink: "https://pay.example.test/" + "a".repeat(2000) });
+    seedPayment("org_a", { transfers: Array.from({ length: 5 }, () => ({ bank: "b".repeat(120), holder: "h".repeat(120), currency: "PEN", accountNumber: "0".repeat(40), cci: "1".repeat(40) })), yape: { phone: "999000001", holder: "y".repeat(120) }, paymentLink: "https://pay.example.test/" + "a".repeat(2000) });
     mocks.graph.mockResolvedValueOnce({ messages: [{ id: "wamid.first" }] }).mockRejectedValueOnce(new Error("second failed"));
     await turn();
     expect(mocks.graph).toHaveBeenCalledTimes(2);
@@ -243,7 +264,8 @@ describe("pipeline instrucciones de pago", () => {
   });
   it("HUMAN prioritario no entrega destinos ni fact", async () => {
     seedPayment(); mocks.jev.mockResolvedValue({ ok: true, decision: makeDecision({ nextAction: "send_payment_instructions", needsHumanNoul: 0.9 }), snapshot: {} });
-    await turn(); expect(paymentFact()).toBeNull(); expect(out()[0]?.text).not.toContain(payload.paymentLink);
+    mocks.writer.mockImplementation(async input => (await vi.importActual<typeof import("@/server/sales/writer")>("@/server/sales/writer")).writeSalesReply(input));
+    await turn(); expect(paymentFact()).toBeNull(); expect(out()).toEqual([]); expect(mocks.graph).not.toHaveBeenCalled();
     expect(mocks.writer).toHaveBeenCalledOnce(); expect(tables.conversation![0]!.handoffReason).toBe("commercial");
   });
   it("sandbox: instrucciones persistidas, fact y humano; cero Graph/upload/sender/jobs", async () => {

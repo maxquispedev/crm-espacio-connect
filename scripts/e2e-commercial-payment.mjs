@@ -106,6 +106,7 @@ export async function runCommercialPaymentSelftest({ BASE, api, ok, waitFor, get
     const happy = await send("payment-happy");
     const text = happy.messages.map(m => m.text).join("\n");
     ok("022 · instrucciones exactas visibles", ["000-123", "000456", "999000001", payment.paymentLink].every(v => text.includes(v)) && !text.includes("evil.example") && happy.outbox.length === 1 && happy.outbox[0].body?.text?.body === text);
+    ok("022 · copy de pago silencioso y CTA", text.startsWith("Estos son los medios de pago:") && text.endsWith("Cuando realices el pago, envíanos el comprobante por aquí para confirmarlo y continuar con la implementación.") && !/equipo|persona|asesor|handoff|confirmación de activación/i.test(text));
     ok("022 · fact y handoff posteriores", !!happy.payment_instructions_sent_at && happy.handoff_reason === "commercial" && happy.automation_lane === "human");
     const beforeSandbox = graphCalls;
     const preview = await api("/api/lab/preview", { method: "POST", body: JSON.stringify({ mode: "published", conversation: [{ from: "lead", text: "Confirmo que quiero pagar" }] }) });
@@ -117,10 +118,14 @@ export async function runCommercialPaymentSelftest({ BASE, api, ok, waitFor, get
     rejectSend = false;
     await savePayment({ transfers: [], yape: null, paymentLink: null });
     const absent = await send("payment-absent");
-    ok("022 · vacío honesto sin fact", !absent.payment_instructions_sent_at && absent.handoff_reason === "commercial" && absent.messages[0]?.text?.includes("No tengo métodos"));
-    await savePayment(payment); human = 0.9;
+    ok("022 · vacío honesto sin fact", !absent.payment_instructions_sent_at && absent.handoff_reason === "commercial" && absent.messages[0]?.text === "En este momento no tengo los medios de pago disponibles por aquí.");
+    await savePayment(payment);
+    action = "schedule_call";
+    const call = await send("silent-call");
+    ok("022 · schedule_call sin outbound artificial", call.automation_lane === "human" && call.handoff_reason === "commercial" && call.messages.length === 0 && call.outbox.length === 0);
+    action = "send_payment_instructions"; human = 0.9;
     const priority = await send("payment-human");
-    ok("022 · HUMAN prioritario sin destinos", !priority.payment_instructions_sent_at && priority.handoff_reason === "commercial" && priority.messages.every(m => !m.text?.includes("000-123")));
+    ok("022 · HUMAN prioritario sin destinos", !priority.payment_instructions_sent_at && priority.handoff_reason === "commercial" && priority.messages.length === 0 && priority.outbox.length === 0);
     human = 0.1;
     ok("022 · rollback 1.0", (await api("/api/playbook/rollback", { method: "POST", body: JSON.stringify({ version_id: legacy.id, notes: "E2E restaurar 1.0" }) })).res.ok);
     const restored = (await api("/api/playbook")).json.published;

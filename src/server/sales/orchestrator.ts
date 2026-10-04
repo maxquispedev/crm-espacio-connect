@@ -259,6 +259,7 @@ export async function runSalesOrchestratorTurn(
     }
   }
 
+  // text=null en HUMAN puro omite outbound, pero conserva el efecto interno.
   if (plan.shouldHandoff) {
     await applyHandoff(conversationId, organizationId, "commercial");
   }
