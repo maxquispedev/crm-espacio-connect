@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { ACCENT_PRESETS, isValidHex, resolveAccentSet, type Branding } from "@/lib/branding";
+import { ACCENT_PRESETS, DEFAULT_BRANDING, isValidHex, resolveAccentSet, type Branding } from "@/lib/branding";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -76,7 +76,7 @@ export function BrandingClient() {
               maxLength={30}
               value={name}
               onChange={(e) => setName(e.target.value)}
-              placeholder="Vocero"
+              placeholder={DEFAULT_BRANDING.name}
               className="max-w-xs"
             />
           </div>
@@ -132,11 +132,11 @@ export function BrandingClient() {
                 className="flex h-[30px] w-[30px] items-center justify-center rounded-sm text-[15px] font-bold text-white"
                 style={{ background: previewSet.accent }}
               >
-                {(name.trim() || "Vocero").charAt(0).toUpperCase()}
+                {(name.trim() || DEFAULT_BRANDING.name).charAt(0).toUpperCase()}
               </span>
               <span>
                 <span className="block text-[15px] font-[650] leading-tight">
-                  {name.trim() || "Vocero"}
+                  {name.trim() || DEFAULT_BRANDING.name}
                 </span>
                 <span className="block text-[11px] text-text-3">CRM · WhatsApp</span>
               </span>

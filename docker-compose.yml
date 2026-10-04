@@ -1,5 +1,5 @@
 # ============================================================
-# Vocero CRM — Ruta B: app + Postgres + Caddy (HTTPS automático)
+# Espacio Connect — Ruta B: app + Postgres + Caddy (HTTPS automático)
 # Uso:  cp .env.example .env  →  rellenar  →  docker compose up -d --build
 # ============================================================
 services:

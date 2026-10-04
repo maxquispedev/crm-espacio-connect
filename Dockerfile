@@ -1,5 +1,5 @@
 # ============================================================
-# Vocero CRM — imagen multi-etapa (Next.js standalone + Node 22)
+# Espacio Connect — imagen multi-etapa (Next.js standalone + Node 22)
 # Los secretos NO se necesitan en build: llegan en runtime.
 # ============================================================
 

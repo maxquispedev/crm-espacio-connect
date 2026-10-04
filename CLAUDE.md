@@ -4,10 +4,10 @@
 > [docs/CURRENT_STATE.md](docs/CURRENT_STATE.md). Este archivo añade reglas
 > específicas para Claude Code; la Constitución sigue siendo la autoridad normativa.
 
-Vocero es un CRM de WhatsApp open source (MIT), self-hosted, con agente de IA y
-Laboratorio de auto-evaluación. Una instancia = un negocio. Este archivo guía a
+Espacio Connect es un CRM de WhatsApp open source (MIT), self-hosted, con agente de
+IA y Laboratorio de auto-evaluación. Una instancia = un negocio. Este archivo guía a
 Claude Code (u otro asistente) para operar y **modificar** este repositorio —
-el caso típico: una agencia adaptando Vocero para un cliente.
+el caso típico: una agencia adaptando Espacio Connect para un cliente.
 
 ## Stack
 

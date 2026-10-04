@@ -1,3 +1,132 @@
+# Checkpoint 2026-10-04 — Spec 014, CUT 6: rebrand a Espacio Connect (CIERRE)
+
+**REBRAND CONSOLIDADO. GATES EN VERDE Y VERIFICACIÓN EN NAVEGADOR REAL: 21/21.**
+Commit único: `chore(brand): consolidar Espacio Connect`. Base limpia `a00d169`
+(cierre de 013 CUT 5). Árbol limpio.
+
+**Objetivo.** Que la **marca visible** del producto sea **Espacio Connect**, sin
+replace ciego. `rg -n -i 'vocero'` dio **231 ocurrencias en 62 ficheros** al
+arrancar; quedan **199 en 56**. Se cambiaron **32** y **cada superviviente está
+justificada por escrito** en `specs/014-espacio-connect-rebrand/tasks.md`
+(FR-6.1, FR-6.7). Sin comportamiento nuevo, sin contratos, sin dependencias.
+
+**Lo que cambió (el producto se llama Espacio Connect)**
+
+- `src/lib/branding.ts`: `DEFAULT_BRANDING.name` → `"Espacio Connect"`. Es **el**
+  literal de marca que queda en el código. `normalizeBranding`, los presets de
+  acento y el aislamiento por tenant **no se tocaron**.
+- `src/components/settings/branding-client.tsx`: el literal estaba **triplicado**
+  (placeholder, inicial y nombre de la vista previa); los tres leen ahora
+  `DEFAULT_BRANDING.name`. Un rebrand futuro es una edición, no tres.
+- `src/components/inbox/contact-panel.tsx`: "El agente de Vocero no responde…"
+  → copy **neutral de marca**. No solo quita la marca: arregla un bug de
+  white-label, porque aquel texto mentía en cualquier tenant que hubiera puesto
+  su propio nombre.
+- `src/app/api/dev/wa-mock/graph/[...path]/route.ts`: `verified_name` del mock.
+- `README.md`, `INSTALL-IA.md`, `CLAUDE.md`, `tests/e2e/us-bot-api.md` y los
+  comentarios de cabecera de `Dockerfile` / `docker-compose.yml`.
+- `tests/unit/branding.test.ts`: **la única expectativa modificada**, y era de
+  marca visible por definición (FR-6.8). Se le añadió
+  `expect(DEFAULT_BRANDING.name).toBe("Espacio Connect")` para que un rebrand
+  futuro no pase inadvertido, y **un test nuevo de white-label**. Ninguna otra
+  expectativa se tocó.
+
+**Lo que NO se cambió, y por qué (esto es la parte importante)**
+
+1. **La constitución** sigue diciendo "Vocero CRM" (4 ocurrencias). Es norma
+   ratificada v1.3.0 con procedimiento de enmienda propio: renombrarla **exige**
+   enmienda formal con Sync Impact Report y aprobación del responsable. **Es
+   PENDIENTE y es decisión de gobernanza, no de copy** (`tasks.md` T611). No
+   bloquea el rebrand: el producto ya es Espacio Connect en todo lo visible.
+2. **Cookies y `localStorage`** (`vocero.theme`, `vocero.theme-resolved`,
+   `vocero.panelOpen`, `vocero.notifySound`). Renombrarlas **no cambia la marca y
+   sí borra la preferencia ya guardada** de cada usuario instalado. Un cambio de
+   comportamiento invisible disfrazado de copy.
+3. **Volúmenes con nombre y usuario del contenedor** (`vocero_pg`,
+   `vocero_caddy_data`, `vocero_caddy_config`, usuario no-root `vocero`, base de
+   datos `vocero`). **Renombrar un volumen con nombre deja los datos huérfanos en
+   el próximo redespliegue**: es el elemento de más riesgo del repo. Un rebrand no
+   es un cambio de infraestructura.
+4. **`package.json` `name: "vocero-crm"`** (plan D-1): identificador de paquete,
+   no marca visible. Su `description` **ya era neutra**, no había nada que tocar.
+5. **Migraciones, specs cerrados (incluido el nombre de carpeta
+   `001-vocero-core`), `docs/AUDITORIA_BASE_ESPACIO_CONNECT.md`, checkpoints,
+   `.ai/logs/**`**: historia y trazabilidad. Reescribir la auditoría base
+   *falsificaría* la auditoría.
+6. **Fixtures `@vocero.test` y la BD `vocero_e2e`** del arnés (49 ocurrencias en
+   12 guiones): renombrarlos es editar ~50 líneas **y** el arnés, para ganancia de
+   producto cero. Es justo el replace ciego que el spec prohíbe.
+7. **Símbolos `__vocero*`** en `globalThis` (`auth`, `db`, `rate-limit`, `events/bus`,
+   `follow-ups/worker`): caché de singletons en HMR, invisibles.
+
+**Corrección al `plan.md` (para que nadie lo dé por hecho).** El plan listaba como
+"marca visible" `src/app/(app)/layout.tsx` y `app-nav.tsx`, y como copy a renombrar
+el `description` de `package.json`. **Ninguno de los tres tenía tal cosa**: el
+título es `` `${branding.name} — CRM de WhatsApp` `` y login/sidebar renderizan
+`branding.name`, así que cambiar `DEFAULT_BRANDING` los renombra a la vez y **por
+organización**; y el `description` ya era neutro.
+
+**"EV Connect": deliberadamente no se usa en la UI.** El nombre lo elige cada
+organización: un "EV Connect" fijo en la barra lateral **pisaría el white-label**.
+La forma corta ya existe y se verificó en pantalla: la inicial que la UI deriva
+sola del nombre, **"E"**.
+
+**Gates.** `typecheck` OK · `lint` **0 errores** (3 warnings preexistentes) ·
+`build` compiló · `test` **113 ficheros / 1312 tests** verdes (+1: el test nuevo de
+white-label), 1 fichero skipped (opt-in).
+
+**Verificación en vivo: EJECUTADA, 21/21, `exit=0`.** App de desarrollo real +
+**PostgreSQL real** en `127.0.0.1:55432` (BD desechable `espacio_brand_cut6`,
+migrada con `scripts/migrate.mjs` y **eliminada** al terminar) + Chromium real vía
+Playwright. Con **navegador de verdad** se comprobó:
+
+- El nombre por defecto "Espacio Connect" en el `h1` del login, en el `<title>` y
+  en la **barra lateral**.
+- El **white-label por organización sigue funcionando**: tras
+  `PUT /api/settings/branding` con `{name: "Vende Veloz 365", accent: "#3f6b66"}`,
+  el login, el título, la barra lateral, el input y la vista previa muestran
+  "Vende Veloz 365" — y el default **no** pisa al nombre propio.
+- **Cero copy visible** "Vocero" en `/inbox`, `/pipeline`, `/contacts`, `/agenda` y
+  `/lab`, medido con `innerText` (texto renderizado), que ignora el `<script>` donde
+  sí viven las claves de cookie que se conservaron a propósito.
+
+Un detalle de método que conviene guardar: el primer intento de check dio **falsos
+negativos**
+en tres sitios, y los tres eran culpa del script, no del producto — la marca vive en
+el `<aside>` y no en `<nav>`; `textContent` include el `<script>` del tema (y por eso
+"contó" 8 `vocero` por página, que son las cookies conservadas); y `networkidle`
+nunca dispara en una app con SSE abierto. Corregido y reverificado.
+
+**Precondición de 013 confirmada en vivo** durante la misma corrida: la captura
+muestra "Por atender", "Comprometidos" y "Agenda" en la barra lateral. El corte no
+toca el workspace.
+
+**Pendientes honestos**
+
+1. **Enmienda de la constitución: PENDIENTE FORMAL** (responsable: el dueño). Es
+   lo único que queda de este corte.
+2. **`docs/screenshots/*.png`: NO re-generadas.** Son binarios y muestran la
+   interfaz anterior; el `alt` de la README sí dice Espacio Connect. Regenerarlas
+   es trabajo de CUT 7/8, cuando además cambie el diseño.
+3. Los identificadores del punto 2–7 se conservan **a propósito**: tocarlos es un
+   corte propio con migración o decisión de datos.
+
+**Archivos clave.** `src/lib/branding.ts` ·
+`src/components/settings/branding-client.tsx` ·
+`src/components/inbox/contact-panel.tsx` ·
+`tests/unit/branding.test.ts` · `specs/014-espacio-connect-rebrand/tasks.md`
+(inventario completo por categoría).
+
+**Siguiente paso exacto.** **CUT 7 — Rediseño práctico**, commit
+`refactor(ui): simplificar experiencia de Espacio Connect`: shell/sidebar/header
+(jerarquía, respiración, acento), Bandeja, tarjetas de estado, Pipeline y
+consistencia de labels, **reutilizando tokens y componentes existentes, sin librería
+UI nueva y sin tocar contratos ni la lógica de 013**. Su E2E de UI con Playwright
+ya tiene el camino probado en este corte (PostgreSQL real en `:55432` + `LD_LIBRARY_PATH`
+para Chromium).
+
+---
+
 # Checkpoint 2026-10-04 — Spec 013, CUT 5: verificación del workspace (CIERRE)
 
 **CORTES 1–5 CERRADOS. E2E REAL EJECUTADO EN VERDE: 120/120 checks, tres

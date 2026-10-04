@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   ACCENT_PRESETS,
+  DEFAULT_BRANDING,
   accentCssVariables,
   isValidHex,
   normalizeBranding,
@@ -36,10 +37,23 @@ describe("white-label: acento", () => {
 });
 
 describe("white-label: normalización", () => {
-  it("nombre vacío o nulo → default 'Vocero'; se recorta a 30", () => {
-    expect(normalizeBranding(null).name).toBe("Vocero");
-    expect(normalizeBranding({ name: "   " }).name).toBe("Vocero");
+  it("nombre vacío o nulo → default de marca; se recorta a 30", () => {
+    // El nombre por defecto ES marca visible (spec 014 FR-6.2), así que se
+    // afirma a la vista: si cambia la marca, este test lo delata.
+    expect(DEFAULT_BRANDING.name).toBe("Espacio Connect");
+    expect(normalizeBranding(null).name).toBe("Espacio Connect");
+    expect(normalizeBranding({ name: "   " }).name).toBe("Espacio Connect");
     expect(normalizeBranding({ name: "x".repeat(50) }).name).toHaveLength(30);
+  });
+
+  it("el nombre por organización manda sobre el default (white-label intacto)", () => {
+    expect(normalizeBranding({ name: "Vende Veloz 365" }).name).toBe("Vende Veloz 365");
+    expect(normalizeBranding({ name: "Espacio Veloz" }).name).toBe("Espacio Veloz");
+    // Acento propio + nombre propio: ninguna de las dos dimensiones se pisa.
+    expect(normalizeBranding({ name: "Espacio Veloz", accent: "#3f6b66" })).toEqual({
+      name: "Espacio Veloz",
+      accent: "#3f6b66",
+    });
   });
 
   it("acento inválido → default", () => {

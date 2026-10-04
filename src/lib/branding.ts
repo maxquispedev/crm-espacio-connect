@@ -17,7 +17,7 @@ export type Branding = {
   accent: string; // hex del acento base elegido
 };
 
-export const DEFAULT_BRANDING: Branding = { name: "Vocero", accent: "#3f5972" };
+export const DEFAULT_BRANDING: Branding = { name: "Espacio Connect", accent: "#3f5972" };
 
 /** Presets del handoff (valores exactos). */
 export const ACCENT_PRESETS: Record<string, { label: string; set: AccentSet }> = {

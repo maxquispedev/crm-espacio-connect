@@ -1,14 +1,14 @@
-# Vocero CRM
+# Espacio Connect
 
 **El CRM de WhatsApp open source con un agente de IA que se pone a prueba solo.**
 
-Vocero es un CRM self-hosted y gratuito para negocios que venden por WhatsApp:
+Espacio Connect es un CRM self-hosted y gratuito para negocios que venden por WhatsApp:
 bandeja en tiempo real, pipeline de ventas, un agente de IA con el conocimiento
 de tu negocio y un **Laboratorio** donde clientes simulados lo evalúan antes de
 que hable con clientes reales. Una instancia = un negocio, en tu propio
 servidor, con tus datos.
 
-![Bandeja de Vocero CRM](docs/screenshots/bandeja.png)
+![Bandeja de Espacio Connect](docs/screenshots/bandeja.png)
 
 <p align="center">
   <img src="docs/screenshots/laboratorio.png" width="49%" alt="Laboratorio: reporte con score y hallazgos" />
@@ -100,7 +100,7 @@ genera los secretos y verifica el healthcheck.
 ### Ruta B — docker compose
 
 ```bash
-git clone https://github.com/kevinrivm/vocero-crm.git vocero && cd vocero
+git clone https://github.com/kevinrivm/vocero-crm.git espacio-connect && cd espacio-connect
 cp .env.example .env    # rellena: dominio + secretos (cada uno trae su comando openssl)
 docker compose up -d --build
 ```
@@ -120,7 +120,7 @@ Caddy emite el certificado HTTPS solo. Verifica con
 
 ## Conexión del número de WhatsApp
 
-Vocero **consume** un token de la WhatsApp Cloud API — no implementa el
+Espacio Connect **consume** un token de la WhatsApp Cloud API — no implementa el
 Embedded Signup. Hay dos formas de obtenerlo:
 
 ### Modo directo (el negocio tiene su propia app de Meta)
@@ -130,10 +130,10 @@ Embedded Signup. Hay dos formas de obtenerlo:
 2. Crea un **usuario del sistema** (Business Settings → System users) con
    acceso a la WABA y genera un token permanente con permisos
    `whatsapp_business_messaging` y `whatsapp_business_management`.
-3. En Vocero: **Configuración → WhatsApp** → pega WABA ID + Phone Number ID +
+3. En Espacio Connect: **Configuración → WhatsApp** → pega WABA ID + Phone Number ID +
    token → **Probar conexión** → Guardar.
 4. En el panel de Meta (WhatsApp → Configuration → Webhook) pega la **URL del
-   webhook** y el **verify token** que Vocero te muestra, y suscribe el campo
+   webhook** y el **verify token** que Espacio Connect te muestra, y suscribe el campo
    `messages` (y `message_template_status_update` si usarás plantillas).
 5. Recomendado: agrega `META_APP_SECRET` (App Secret de tu app) a las
    variables de la instancia para la verificación de firma de cada evento.
@@ -141,7 +141,7 @@ Embedded Signup. Hay dos formas de obtenerlo:
 ### Modo agencia (Tech Provider) — para agencias
 
 Tu plataforma de agencia ya hace el Embedded Signup y guarda los tokens de tus
-clientes; la instancia de Vocero del cliente solo recibe su token. El webhook
+clientes; la instancia de Espacio Connect del cliente solo recibe su token. El webhook
 del cliente se conecta con el **override de callback por WABA**:
 
 ```text
@@ -149,7 +149,7 @@ del cliente se conecta con el **override de callback por WABA**:
         │  webhooks (override_callback_uri)
         ▼
    ┌────────────────────────────┐      ┌─────────────────────────────┐
-   │  Instancia Vocero          │      │  Backend de TU agencia      │
+   │  Instancia Espacio Connect │      │  Backend de TU agencia      │
    │  (VPS del cliente)         │      │  (Embedded Signup + tokens) │
    │  /api/webhooks/wa/<token>  │      └──────────────┬──────────────┘
    └────────────▲───────────────┘                     │
@@ -196,7 +196,7 @@ del cliente se conecta con el **override de callback por WABA**:
 >
 > ℹ️ **Limitación conocida de Meta**: los eventos de estado de PLANTILLAS
 > (`message_template_status_update`) no siguen el override de callback — van a
-> la app dueña. Por eso Vocero también **sincroniza plantillas por la API de
+> la app dueña. Por eso Espacio Connect también **sincroniza plantillas por la API de
 > Graph** (botón "Sincronizar" en Configuración → Plantillas), así el modo
 > agencia ve las aprobaciones igual.
 
@@ -219,13 +219,13 @@ clientes reales.
 ## Cumplimiento con las políticas de Meta
 
 1. **Opt-in**: escribe solo a personas que iniciaron la conversación o
-   aceptaron recibir mensajes; Vocero respeta la ventana de 24 h y bloquea el
+   aceptaron recibir mensajes; Espacio Connect respeta la ventana de 24 h y bloquea el
    texto libre fuera de ella.
 2. **Plantillas aprobadas** para reabrir conversaciones: nada de trucos para
    saltarse la aprobación de Meta.
 3. **El Laboratorio es 100 % interno**: los clientes simulados jamás tocan la
    API de WhatsApp (bloqueado por diseño y verificado con tests).
-4. **Sin spam ni broadcast**: Vocero no incluye envíos masivos; úsalo para
+4. **Sin spam ni broadcast**: Espacio Connect no incluye envíos masivos; úsalo para
    conversaciones reales de venta y soporte.
 5. **Datos del cliente en su servidor**: cada negocio aloja su instancia; el
    token va cifrado en reposo y los webhooks se validan por URL secreta y
@@ -248,7 +248,7 @@ Configuración → WhatsApp. Si dice "reconectar", el token expiró: pega uno
 nuevo. En modo directo usa un token de usuario del sistema (no expira).
 
 **Error 131030 al enviar** — El número destino no está en la lista de
-permitidos (números de prueba de Meta) o el formato es inválido. Vocero ya
+permitidos (números de prueba de Meta) o el formato es inválido. Espacio Connect ya
 normaliza los números de México (521 → 52).
 
 **El agente no responde** — ¿Token de IA configurado? ¿Toggle global

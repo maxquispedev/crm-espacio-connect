@@ -6,7 +6,7 @@ guardada y `BOT_API_KEY` configurada (≥16 caracteres).
 
 Esta superficie NO la usa el navegador: la usa un bot propio del operador que
 quiere conducir la conversación sin que el token de WhatsApp salga del CRM. El
-agente in-process de Vocero puede quedar apagado.
+agente in-process de Espacio Connect puede quedar apagado.
 
 ## Autorización
 
