@@ -1,3 +1,129 @@
+# Checkpoint 2026-10-04 — Spec 013, CUT 3: Agenda de recordatorios humanos
+
+**IMPLEMENTADO, GATES TÉCNICOS VERDES Y E2E DE UI REAL EJECUTADO EN VERDE
+(49/49).** Commit único: `feat(inbox): añadir agenda de recordatorios humanos`.
+Base limpia `e05b85b` (CUT 2).
+
+**Objetivo.** Que el operador pueda ponerse un "me acuerdo el jueves" que
+sobreviva al día, sin convertirlo en un seguimiento automático. La columna
+vertebral es la misma del corte 2: **los cinco grupos los calcula el servidor**
+(`overdue/today/tomorrow/week/later`), nunca el cliente, y **vencer no dispara
+nada** — la conversación simplemente vuelve a "Por atender" y la decisión sigue
+siendo de la persona.
+
+**Cambios.**
+
+- `src/server/inbox/agenda-buckets.ts` (nuevo, puro y sin dependencias): los
+  cinco grupos con `now` INYECTABLE y zona horaria explícita. `overdue` con tope
+  CERRADO (`due_at <= now`, el mismo criterio que `isOverdue`); los otros cuatro
+  semiabiertos y encadenados sin huecos. `startOfLocalDay` / `addLocalDays` /
+  `startOfLocalWeek` aritmética de calendario local, no de 24 h: un día con
+  cambio de horario de 25 h no desplaza los límites. Zona: `?tz=` →
+  `OPERATOR_TIMEZONE` → zona del proceso → `UTC`; una zona inválida no rompe la
+  vista.
+- `src/server/inbox/agenda.ts` (nuevo, SOLO LECTURA): un `SELECT` con
+  `innerJoin` y el `organization_id` de AMBOS lados en el `ON`, `is_test = false`
+  y solo `state = 'deferred'`. No importa nada capaz de enviar.
+- `GET|POST /api/reminders` y `DELETE /api/reminders/[conversationId]`: Zod
+  `.strict()` (un `organizationId` en el body es 422, no un campo ignorado en
+  silencio), `dueAt` **futura** (422 `due_in_past`), nota opcional recortada a
+  280 (422 si excede o viene vacía), organización **siempre** de la sesión
+  (ajena → 404), `ai_owns_conversation` e `is_test` → 409.
+- `cancelHumanReminder` en `attention.ts`: borra el `deferred` filtrando por
+  `state = 'deferred'` en la propia sentencia del `DELETE`, de modo que cancelar
+  un recordatorio **nunca** puede borrar trabajo vivo de la cola (409 si lo que
+  hay es `pending`).
+- `src/components/inbox/reminder-schedule.tsx` (nuevo): acción "Recordarme" en
+  el panel de la conversación, solo si es del humano. Fecha con
+  `datetime-local` y nota opcional; **sin parsing de texto libre**. La etiqueta
+  "Vencido" usa `attention.needsAttentionNow` (derivado en el servidor), no el
+  reloj del navegador.
+- `src/app/(app)/agenda/page.tsx` + `src/components/agenda/agenda-client.tsx`
+  (nuevos): la Agenda como superficie PROPIA (enlace en el `AppNav`, sin contador
+  de vencidos — eso es T403, corte 4). Cada item: contacto, fecha/hora, nota,
+  estado ("programado" / "vencido · en Por atender") y dos acciones: **Abrir**
+  (`/inbox?contact=…`) y **Cancelar**.
+- `ReminderDto` / `AgendaDto` en `src/lib/types.ts` (aditivos).
+- `OPERATOR_TIMEZONE` documentada en `.env.example` (placeholder vacío en `.env`).
+
+**Decisiones (trazadas en `tasks.md`).** (1) Los grupos se calculan en el
+servidor con reloj y zona explícitos: si los calculara el cliente, "Hoy" del
+navegador y del servidor discreparían justo en el borde de medianoche.
+(2) La Agenda lista **solo `deferred`**: `pending` es trabajo ahora (Bandeja) y
+`waiting_client` es la pelota en el cliente; ninguno es un compromiso con fecha.
+(3) "Esta semana" es el resto de la semana **en curso** (lunes a domingo) que
+queda después de mañana; en fin de semana queda vacía y el lunes siguiente entra
+directo en "Más adelante", sin huecos ni duplicados. (4) **Cancelar borra la
+fila**, no la devuelve a `pending`: cancelar significa "ya no hay nada que
+retomar a esa hora", y la conversación sigue siendo humana.
+(5) La fecha vive en la Agenda, así que la lista de la Bandeja no necesita
+mostrarla.
+
+**Evidencia.** `pnpm typecheck`, `pnpm lint` (0 errores; 3 warnings
+preexistentes), `pnpm build` y `pnpm test` en verde: **112 ficheros, 1280
+tests**, 9 skipped. **59 tests nuevos** en 4 ficheros:
+`agenda-buckets.test.ts` (20 — los cinco grupos con reloj inyectable, 23:59:59 /
+medianoche / cambio de día, sábado y domingo, DST de 25 h, el mismo timestamp en
+distinto grupo según zona, ventanas contiguas), `reminder-agenda-api.test.ts` (26
+— contrato, ciclo completo, tenant A/B, sandbox), `agenda-no-send.test.ts` (8) y
+`agenda-view.test.ts` (5, JSX real con `renderToStaticMarkup`).
+
+**E2E: EJECUTADO Y VERDE.** Sección nueva `E2E_SECTION=024`
+(`scripts/e2e-operator-agenda.mjs`, guion en
+`tests/e2e/013-agenda-recordatorios.md`): **49/49** con PostgreSQL real
+(`operator_workspace_test` en `:55432`), app real en modo desarrollo (los mocks
+se apagan en producción por diseño, así que `next start` no sirve) y Playwright.
+Programar desde la UI y verlo salir de "Por atender" (2→1) sin recargar a mano;
+vencer y volver (1→2) tocando solo `due_at` por SQL — lo que demuestra que no
+hay proceso ni worker detrás; inbound real por el wa-mock y vuelta inmediata;
+cancelar desde la Agenda con la fila desapareciendo de la BD; aislamiento de
+tenant en pantalla; y el camino infeliz completo (422/404/409/401 por API y
+errores en la UI sin romper el panel). Al final, **outbox del wa-mock sin cambios
+y `sales_follow_up_job` intacta**: cero WhatsApp y cero seguimientos.
+
+**Bug que los tests cazaron (corregido).** El bucketing de `overdue` era
+semiabierto mientras la regla de dominio es cerrada: un recordatorio vencido
+hacía horas podía clasificarse como "Hoy" y quedar escondido en vez de volver a
+la cola. Lo detectó el test de límites de día. El guion E2E documenta además que
+el `phone_number_id` del mock debe ser ÚNICO por corrida, porque el webhook
+resuelve la organización por la PRIMERA fila que coincide (con un PN fijo el
+inbound acababa en la organización de una corrida anterior).
+
+**Lo que NO se tocó.** `src/server/sales/follow-ups/**` (store, política, worker,
+writer, seeds), las cadencias y los errores `human_lane`/`handoff_active`: el
+endpoint de follow-ups **sigue rechazando** la vía humana, y eso ahora se afirma
+también en `agenda-no-send.test.ts`. Sin plantillas WhatsApp, sin messaging
+proactivo, sin etapas operativas, sin tabla ni columna nueva y sin dependencias
+externas. `docs/SALES_FOLLOW_UPS.md` solo recibió una nota (§14bis) que deja
+constancia de que conviven dos mecanismos distintos: no cambia ninguna regla del
+motor.
+
+**Pendiente heredado de CUT 2 (sigue abierto).** La migración `0010` declara dos
+FK de una columna y ninguna compuesta: una fila de `conversation_attention`
+podría decir `organization_id = A` apuntando a una conversación de B. **Impacto
+aquí: ninguno**, porque lista, JOIN y `getAttention` filtran por
+`organization_id` (y ahora la Agenda lo afirma además con un test de fila
+inconsistente). El arreglo —FK compuesta + `UNIQUE (organization_id, id)`— sigue
+exigiendo migración propia: corresponde a CUT 5 o a un corte de migración.
+
+**Siguiente paso exacto: CUT 4 (flujo operativo / UX integrada), commit
+`feat(inbox): unificar el flujo operativo humano`.** T401 revisar el naming
+("Atención humana", "Marcar atendido / Esperando respuesta", "Recordarme",
+"Reactivar IA"); T402 quitar `handoffAt`, lanes, jobs y timestamps internos del
+copy visible; **T403 el contador de vencidos en el nav de la Agenda** (el enlace
+ya existe desde este corte, sin badge); T404 acciones coherentes en la
+conversación; T405 el mismo estado humano/IA con la misma semántica en lista,
+hilo y Agenda; T406 (opcional) automáticos read-only con 👤/🤖 sin reimplementar
+el motor. Arrancar por T401+T402 (son copy) antes de tocar T403.
+
+**Decisión de producto para sincronizar en Obsidian:** el "recordarme" del
+operador es un compromiso **humano**, no un seguimiento automático: no tiene
+plantilla, no envía nada al vencer y no se apoya en `sales_follow_up_job`. Al
+vencer solo vuelve a "Por atender". Y la Agenda se ordena por el **día local del
+operador** (`OPERATOR_TIMEZONE`), con las fechas en UTC en la base.
+
+---
+
 # Checkpoint 2026-10-04 — Spec 013, CUT 2: la Bandeja como cola "Por atender"
 
 **IMPLEMENTADO, GATES TÉCNICOS VERDES Y E2E DE UI REAL EJECUTADO EN VERDE

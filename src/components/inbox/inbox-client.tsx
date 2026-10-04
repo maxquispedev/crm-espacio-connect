@@ -252,6 +252,7 @@ export function InboxClient() {
               refreshKey={detailRev}
               onPatchConversation={patchConversation}
               onContactUpdated={onContactUpdated}
+              onAttentionChanged={() => void refetchConversations()}
               onClose={() => togglePanel(false)}
             />
           </div>

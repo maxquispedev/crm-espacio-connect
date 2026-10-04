@@ -64,19 +64,124 @@ Cortes 6–8 (rebrand + rediseño) viven en `specs/014-espacio-connect-rebrand/t
 
 ## CUT 3 — Agenda y programación humana
 
-- [ ] T301 Store de consulta con buckets `overdue/today/tomorrow/week/later`
-- [ ] T302 `GET /api/reminders` (org de sesión, sin org en el body)
-- [ ] T303 `POST /api/reminders` (Zod: `dueAt` **futura**, `note` opcional recortada)
-- [ ] T304 `DELETE /api/reminders/[conversationId]` (cancelar)
-- [ ] T305 Acción "Recordarme" en la conversación en HUMAN
-- [ ] T306 Vista Agenda: vencidos / hoy / mañana / esta semana / más adelante, con
+- [x] T301 Store de consulta con buckets `overdue/today/tomorrow/week/later`
+- [x] T302 `GET /api/reminders` (org de sesión, sin org en el body)
+- [x] T303 `POST /api/reminders` (Zod: `dueAt` **futura**, `note` opcional recortada)
+- [x] T304 `DELETE /api/reminders/[conversationId]` (cancelar)
+- [x] T305 Acción "Recordarme" en la conversación en HUMAN
+- [x] T306 Vista Agenda: vencidos / hoy / mañana / esta semana / más adelante, con
       contacto, fecha/hora, nota y estado
-- [ ] T307 Vencido → Por atender; inbound antes → Por atender inmediato
-- [ ] T308 Programar un segundo recordatorio tras atender el anterior
-- [ ] T309 Cero envíos: ningún camino desde la Agenda hasta Graph/sender
-- [ ] T310 Tests de bucketing (UTC/local), fecha límite, tenant, cero Graph
-- [ ] T311 Gate + E2E (o PENDIENTE con causa)
-- [ ] T312 Evidencia, un commit, árbol limpio
+- [x] T307 Vencido → Por atender; inbound antes → Por atender inmediato
+- [x] T308 Programar un segundo recordatorio tras atender el anterior
+- [x] T309 Cero envíos: ningún camino desde la Agenda hasta Graph/sender
+- [x] T310 Tests de bucketing (UTC/local), fecha límite, tenant, cero Graph
+- [x] T311 Gate + E2E **EJECUTADO y VERDE** (49/49, ver evidencia)
+- [x] T312 Evidencia, un commit, árbol limpio
+
+### Evidencia CUT 3
+
+**T301 · store y bucketing en el servidor** — `src/server/inbox/agenda-buckets.ts`
+(puro, sin BD ni red) + `src/server/inbox/agenda.ts` (lectura). Cinco grupos
+calculados con `now` INYECTABLE y zona explícita; `overdue` con tope CERRADO
+(`due_at <= now`, el mismo criterio que `isOverdue`) y los otros cuatro
+semiabiertos `[from, to)`, encadenados sin huecos. `startOfLocalDay` /
+`addLocalDays` / `startOfLocalWeek` trabajan en calendario local (no +24h), así
+que un día con cambio de horario de 25 h no desplaza los límites. Zona:
+`?tz=` → `OPERATOR_TIMEZONE` → zona del proceso → `UTC`; una zona inválida no
+rompe la vista. La lista es UN SELECT con `innerJoin` y el `organization_id` de
+AMBOS lados en el ON, `is_test = false`, y solo `state = 'deferred'`.
+
+**T302-T304 · endpoints** — `GET`/`POST` en `src/app/api/reminders/route.ts`,
+`DELETE` en `src/app/api/reminders/[conversationId]/route.ts`. Zod `.strict()`:
+un `organizationId` en el body es 422. `dueAt` pasada → 422 `due_in_past`; nota
+>280 o vacía → 422 (no un `null` silencioso). Org siempre de la sesión: ajeno →
+404. `ai_owns_conversation` y `is_test` → 409. Cancelar un `pending` vivo → 409
+(cancelar no borra trabajo de la cola) y sin recordatorio → 404. Programar y
+cancelar publican `conversation.updated`, y por eso la Bandeja sale de
+"Por atender" sin recargar a mano.
+
+**Decisión de producto · qué significa "cancelar"**: se BORRA la fila
+`deferred`. No se devuelve a `pending`, porque "cancelar" es "ya no hay nada que
+retomar a esa hora" y devolverla a la cola sería lo contrario. La conversación
+sigue siendo humana (`ai_enabled`/`handoff_at` intactos) y si el cliente
+escribe vuelve a `pending` por la ingesta.
+
+**T305 · "Recordarme"** — `src/components/inbox/reminder-schedule.tsx`, dentro
+del panel de la conversación y solo si es del humano (`handoffAt || !aiEnabled`);
+si no, ni se ofrece (el servidor lo rechaza con 409). Fecha por `datetime-local`
+(conversión a ISO en el navegador) y nota opcional. **Sin parsing de texto
+libre** (spec §2.3). El botón "Vencido" usa `attention.needsAttentionNow`, que
+ya viene derivado del servidor: el cliente no recalcula el reloj.
+
+**T306 · Agenda** — `src/app/(app)/agenda/page.tsx` +
+`src/components/agenda/agenda-client.tsx`. Superficie PROPIA (enlace en el
+`AppNav`, sin contador de vencidos: eso es T403, corte 4). Cada item muestra
+contacto, fecha/hora, nota, estado ("programado" / "vencido · en Por atender") y
+las dos acciones: **Abrir** (`/inbox?contact=…`, el mismo deep-link que ya usa la
+Bandeja) y **Cancelar**. Se refresca con SSE y con botón "Actualizar"; camino
+infeliz: si el GET falla, avisa y sigue vacía sin colgarse.
+
+**T307-T308 · ciclo** — verificado en vivo (ver T311) y en unit: programar →
+sale de Por atender; vencido → vuelve (sin proceso ni worker, es derivación de
+lectura); inbound antes → `pending` inmediato y sale de la Agenda; segundo
+recordatorio tras atender → **reemplaza** (UNIQUE `(org, conversation)`), nunca
+se acumulan compromisos ambiguos; cancelar → desaparece de la Agenda y de la BD.
+
+**T309 · cero envíos** — `tests/unit/agenda-no-send.test.ts`, que es requisito de
+producto, no extra. Estructural: los 7 ficheros de la Agenda no importan ni
+nominan sender/Graph/plantillas/motor (`sales_follow_up_job`, `nextFollowUpAt`),
+y el motor de follow-ups no conoce la Agenda. Dinámico: el camino COMPLETO por
+los endpoints reales con los 10 colaboradores de envío sabotajeados (si se
+llaman, el test revienta) y `sales_follow_up_job` declarada en el doble
+precisamente para comprobar que sigue VACÍA. El E2E lo confirma en pantalla:
+outbox del wa-mock sin cambios y `sales_follow_up_job` intacta.
+
+**T310 · tests** — 59 casos nuevos: `agenda-buckets.test.ts` (20: los cinco
+grupos, reloj inyectable, 23:59:59/medianoche/cambio de día, sábado y domingo
+con "esta semana" vacía, DST de 25 h, el mismo timestamp en distinto grupo según
+zona), `reminder-agenda-api.test.ts` (26: contrato, ciclo, tenant A/B),
+`agenda-no-send.test.ts` (8), `agenda-view.test.ts` (5, JSX real con
+`renderToStaticMarkup`).
+
+**T311 · gate + E2E EJECUTADO** —
+`pnpm typecheck && pnpm lint && pnpm build && pnpm test`: typecheck limpio, lint
+0 errores (3 warnings preexistentes), build OK y **1280 tests / 112 ficheros en
+verde** (9 skipped, opt-in de PostgreSQL).
+E2E `E2E_SECTION=024` (nuevo `scripts/e2e-operator-agenda.mjs`): **49/49 checks
+VERDES** con app real en desarrollo, PostgreSQL real (`operator_workspace_test`),
+wa-mock + ai-mock y Playwright. Cubre: los cinco grupos en pantalla; programar
+desde la UI y verlo salir de "Por atender" (2→1) sin recargar; vencer y volver
+(1→2); inbound real por el mock y vuelta inmediata; cancelar; aislamiento de
+tenant en pantalla; y todo el camino infeliz. Guion en
+`tests/e2e/013-agenda-recordatorios.md`.
+
+**T312 · cierre** — `docs/CURRENT_STATE.md` y `docs/SALES_FOLLOW_UPS.md`
+actualizados (nota de que existe un mecanismo HUMANO distinto, sin tocar ninguna
+regla del motor). Un commit atómico:
+`feat(inbox): añadir agenda de recordatorios humanos`.
+
+**Hallazgos que dejó el E2E (arreglados en el corte)**
+
+1. El bucketing `overdue` era semiabierto mientras la regla de dominio es
+   cerrada: un recordatorio vencido hacía horas podía clasificarse como "hoy" y
+   esconderse. Lo cazó el test de límites.
+2. `cancelHumanReminder` filtra por `state = 'deferred'` en la propia sentencia
+   del `DELETE`, no solo en un read previo: si un `pending` llegase entre medias,
+   "cancelar" no puede borrar trabajo vivo de la cola.
+3. Para el E2E, el `phone_number_id` del mock debe ser ÚNICO por corrida: el
+   webhook resuelve la organización por la PRIMERA fila que coincide, así que un
+   PN fijo hacía que el inbound acabase en la organización de una corrida
+   anterior. Documentado en el guion.
+
+**Lo que este corte NO abre**
+
+- Sin plantillas WhatsApp, sin messaging proactivo, sin etapas operativas
+  (decisión de producto, spec §5 y §6).
+- El contador de vencidos en el nav es T403 (corte 4), no se metió aquí.
+- `src/server/sales/follow-ups/**`, cadencias, worker, seeding y los errores
+  `human_lane`/`handoff_active`: **intactos**. El endpoint de follow-ups sigue
+  rechazando la vía humana, y ahora eso se afirma también en
+  `agenda-no-send.test.ts`.
 
 ## CUT 4 — Flujo operativo / UX integrada
 

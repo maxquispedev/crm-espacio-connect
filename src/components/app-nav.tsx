@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import {
+  CalendarClock,
   FlaskConical,
   Inbox,
   Kanban,
@@ -31,6 +32,10 @@ import { useEvents } from "@/components/use-events";
 
 const NAV = [
   { href: "/inbox", label: "Bandeja", icon: Inbox, badge: true },
+  // 013 C3 — Agenda de recordatorios humanos. Superficie PROPIA, no una pestaña
+  // más de la Bandeja: agrupa compromisos con fecha, no mensajes. El conteo de
+  // vencidos en este enlace es T403 (corte 4), no entra aquí.
+  { href: "/agenda", label: "Agenda", icon: CalendarClock },
   { href: "/pipeline", label: "Pipeline", icon: Kanban },
   { href: "/contacts", label: "Contactos", icon: Users },
   { href: "/agent", label: "Agente", icon: Sparkles },

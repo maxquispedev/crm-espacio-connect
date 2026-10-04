@@ -35,6 +35,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { formatTime } from "@/components/inbox/helpers";
+import { ReminderSchedule } from "@/components/inbox/reminder-schedule";
 
 type ContactNameUpdate = { id: string; name: string };
 
@@ -52,6 +53,7 @@ export function ContactPanel({
   refreshKey = 0,
   onPatchConversation,
   onContactUpdated,
+  onAttentionChanged,
   onClose,
 }: {
   conversation: ConversationDto;
@@ -67,6 +69,12 @@ export function ContactPanel({
    * superficies (panel, header del hilo, lista izquierda) vía patch in-place.
    */
   onContactUpdated?: (update: ContactNameUpdate) => void;
+  /**
+   * 013 C3 — El recordatorio se guardó/canceló: el padre recarga la lista para
+   * que "Por atender" y la cabecera de la conversación queden al día sin
+   * esperar al SSE.
+   */
+  onAttentionChanged?: () => void;
   onClose: () => void;
 }) {
   const [notes, setNotes] = useState("");
@@ -260,6 +268,19 @@ export function ContactPanel({
               >
                 Reactivar IA
               </Button>
+            </div>
+          )}
+
+          {/* 013 C3 — "Recordarme" solo cuando la conversación es del humano.
+              Programar sobre una conversación en manos de la IA es un 409 en
+              el servidor (`ai_owns_conversation`): aquí ni se ofrece. */}
+          {(conversation.handoffAt || !conversation.aiEnabled) && (
+            <div className="mt-3">
+              <ReminderSchedule
+                conversationId={conversation.id}
+                attention={conversation.attention ?? null}
+                onChanged={onAttentionChanged}
+              />
             </div>
           )}
 

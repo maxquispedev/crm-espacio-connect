@@ -393,7 +393,46 @@ No implementar todavía:
 
 ---
 
+## 14bis. NO confundir con la Agenda humana (013 C3, 2026-10-04)
+
+Existe un mecanismo **humano y separado**: la **Agenda de recordatorios**
+(`/agenda`, `GET|POST /api/reminders`, `DELETE /api/reminders/[conversationId]`).
+
+| | Motor automático (este doc) | Agenda humana (013) |
+|---|---|---|
+| Qué es | seguimiento que decide la máquina | compromiso que se pone una persona |
+| Dónde vive | `sales_follow_up_job` + `lead.next_follow_up_at` | `conversation_attention` (`state='deferred'`) |
+| Quién lo dispara | worker in-process + cadencia | nadie: al vencer, vuelve a "Por atender" |
+| Envía WhatsApp | sí, con su política y su plantilla | **nunca, en ningún camino** |
+| Desactivación | `sales_follow_ups_enabled` | la conversación está en humano (`handoffAt` / IA apagada) |
+
+Reglas que siguen intactas y que este corte NO cambió:
+
+- `src/server/sales/follow-ups/**` no se tocó en 013: ni store, ni política, ni
+  worker, ni seeds, ni reintentos.
+- `POST/DELETE /api/pipeline/leads/[id]/follow-up` **sigue rechazando** la vía
+  humana con `human_lane` / `handoff_active`. Esa es la prueba de que son dos
+  mecanismos: el automático no programa encima de una conversación humana, y el
+  humano no se apoya en `sales_follow_up_job`.
+- La Agenda no lee ni escribe `sales_follow_up_job` ni `lead.next_follow_up_at`.
+  Afirmado por código en `tests/unit/agenda-no-send.test.ts` y en pantalla en el
+  E2E `E2E_SECTION=024` (outbox del mock sin cambios, `sales_follow_up_job`
+  intacta).
+
+Pendiente de sincronizar en Obsidian: la decisión de producto de que el
+"recordarme" del operador **no** sea un seguimiento automático (sin plantilla,
+sin envío al vencer) y de que la Agenda se ordene por día local del operador
+(`OPERATOR_TIMEZONE`), no por UTC.
+
+---
+
 ## Implementation log
+
+### 2026-10-04 — 013 C3 (Agenda humana)
+
+Se añadió el mecanismo humano descrito en §14bis. Este documento no cambia de
+reglas: solo deja constancia de que conviven dos mecanismos distintos y de dónde
+está cada uno.
 
 ### 2026-09-20 — phase 15
 

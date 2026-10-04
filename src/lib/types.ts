@@ -60,6 +60,46 @@ export type AttentionDto = {
   needsAttentionNow: boolean;
 };
 
+/**
+ * 013 C3 — Grupos de la Agenda humana. El grupo lo decide el SERVIDOR
+ * (`src/server/inbox/agenda-buckets.ts`) contra un reloj y una zona horaria
+ * explícitos; el cliente solo pinta el resultado. Nótese que estos cinco son
+ * grupos de COMPROMISOS, no estados: no son fases operativas (spec §2.3).
+ */
+export type AgendaBucketName = "overdue" | "today" | "tomorrow" | "week" | "later";
+
+/**
+ * 013 C3 — Un recordatorio humano: una fecha que una persona se girdó para
+ * retomar una conversación. NO es un seguimiento automático, no tiene
+ * plantilla y no dispara ningún envío (plan §5 D-5).
+ */
+export type ReminderDto = {
+  conversationId: string;
+  /** Para "Abrir conversación" (la Bandeja abre por `?contact=`). */
+  contact: { id: string; name: string; phone: string | null };
+  /** ISO-8601 UTC, tal cual se guarda en BD. */
+  dueAt: string;
+  /** Razón del compromiso; texto libre escrito por el operador. */
+  note: string | null;
+  state: AttentionDto["state"];
+  bucket: AgendaBucketName;
+  /**
+   * Derivado en el servidor: vencido ⇒ vuelve a "Por atender". Es el mismo
+   * criterio que usa la Bandeja, para que ambas superficies coincidan.
+   */
+  needsAttentionNow: boolean;
+};
+
+/** 013 C3 — Respuesta de `GET /api/reminders`. */
+export type AgendaDto = {
+  /** Instante de referencia con el que se calcularon los grupos. */
+  generatedAt: string;
+  /** Zona con la que se agrupó por día local. */
+  timeZone: string;
+  buckets: Record<AgendaBucketName, ReminderDto[]>;
+  total: number;
+};
+
 export type ConversationDto = {
   id: string;
   contact: { id: string; name: string; phone: string | null };

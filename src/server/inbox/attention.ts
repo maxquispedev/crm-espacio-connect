@@ -69,7 +69,18 @@ export type AttentionView = {
 export type AttentionErrorCode =
   | "conversation_not_found"
   | "ai_owns_conversation"
-  | "due_in_past";
+  | "due_in_past"
+  | "no_reminder"
+  | "not_scheduled";
+
+/**
+ * 013 C3 — Resultado de cancelar un recordatorio humano. Explícito en vez de
+ * excepción: `DELETE` necesita distinguir 404 (no hay nada que cancelar) de 409
+ * (hay trabajo humano VIVO que no es un recordatorio y no se puede borrar).
+ */
+export type CancelReminderResult =
+  | { ok: true; conversationId: string; cancelled: boolean }
+  | { ok: false; error: AttentionErrorCode };
 
 export class AttentionError extends Error {
   readonly code: AttentionErrorCode;
@@ -384,6 +395,48 @@ export async function scheduleHumanReminder(input: {
     dueAt: input.dueAt,
     note: normalizeNote(input.note),
   });
+}
+
+/**
+ * 013 C3 — Cancela un compromiso futuro (FR-3.9).
+ *
+ * Qué hace y —sobre todo— qué NO hace: borra el `deferred`, y con él sale de la
+ * Agenda. NO manda WhatsApp, no crea seguimiento automático y no toca el motor
+ * de `sales_follow_up_job` (plan §5 D-5). Un `pending` (acción humana AHORA) o
+ * un `waiting_client` NO se borran: cancelar un recordatorio nunca puede borrar
+ * trabajo vivo de la cola "Por atender" ni hacer desaparecer una conversación de
+ * la que el operador tiene que responder. Por eso el `DELETE` filtra por
+ * `state = 'deferred'` en la propia sentencia: un `pending` creado entre el read
+ * y el delete no se cuela.
+ *
+ * La fila se elimina en vez de volverse `pending`: "cancelar" significa "ya no
+ * hay nada que retomar a esa hora". La conversación sigue siendo humana
+ * (`ai_enabled` / `handoff_at` no se tocan) y, si el cliente escribe, vuelve a
+ * `pending` por la vía normal de la ingesta.
+ */
+export async function cancelHumanReminder(input: {
+  organizationId: string;
+  conversationId: string;
+}): Promise<CancelReminderResult> {
+  const conversation = await loadConversation(input.organizationId, input.conversationId);
+  if (!conversation) return { ok: false, error: "conversation_not_found" };
+  const view = await getAttention(input.organizationId, input.conversationId);
+  if (!view) return { ok: false, error: "no_reminder" };
+  if (view.state !== "deferred") return { ok: false, error: "not_scheduled" };
+
+  const db = getDb();
+  const deleted = await db
+    .delete(schema.conversationAttention)
+    .where(
+      scoped(
+        schema.conversationAttention.organizationId,
+        input.organizationId,
+        eq(schema.conversationAttention.conversationId, input.conversationId),
+        eq(schema.conversationAttention.state, "deferred")
+      )
+    )
+    .returning({ id: schema.conversationAttention.id });
+  return { ok: true, conversationId: input.conversationId, cancelled: deleted.length > 0 };
 }
 
 /** Limpia el estado humano de una conversación. Devuelve filas eliminadas. */
