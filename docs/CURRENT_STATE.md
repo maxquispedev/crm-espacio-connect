@@ -1,5 +1,73 @@
 # CURRENT STATE — Espacio Connect
 
+**Actualizado: 2026-10-03 — Spec 011: PAUSA OPERATIVA de recursos comerciales
+cerrada (OP1–OP4 cumplidos).**
+
+Este commit es **solo documental**: registra evidencia operativa real ya
+verificada en producción. Sin código productivo, sin deploy, sin runner/codex
+anidado, sin WhatsApp adicional, sin inicio de C4 y sin tocar contratos de pago.
+Commit de cierre: `docs: registrar pausa operativa de recursos comerciales`.
+Evidencia operativa aportada por el operador; esta sesión solo la registra.
+
+**OP1 CUMPLIDO.** Los tres MP4 reales fueron subidos desde la UI de Vende Veloz
+365, no por SQL ni por copia al contenedor: `demo_enrollment_panel` (matrícula y
+panel), `demo_payments_balances` (pagos y saldos) y `demo_online_enrollment`
+(matrícula online). **Ningún MP4 real fue agregado a Git**; verificado aquí de
+forma independiente: `git ls-files` no devuelve ningún `.mp4`/`.mov`/`.m4v`/
+`.webm` y `.dev-media/` sigue ignorado.
+
+**OP2 CUMPLIDO.** Se detectó que **producción no tenía persistent storage
+configurado**, por lo que `MEDIA_DIR` resolvía contra el sistema de archivos
+efímero del contenedor. Se creó un volumen persistente en Coolify montado en
+`/data/media` y se configuró `MEDIA_DIR=/data/media`. Escritura verificada como
+usuario `vocero`; `persistence-test.txt` sobrevivió a un redeploy; después se subió
+un video comercial y se recibió una imagen real por WhatsApp, y **ambos siguieron
+visibles tras otro redeploy**. Confirma operacionalmente que la media de
+conversaciones y los recursos comerciales usan almacenamiento persistente.
+
+**OP3 CUMPLIDO.** Producción controlada de la organización Vende Veloz 365,
+destinatario autorizado de prueba, **sin registrar teléfono ni PII**. Los tres
+recursos se enviaron y reprodujeron correctamente como **video nativo de
+WhatsApp**, no como enlaces ni como documentos. Routing correcto por intención
+verificado; captions verificados y posteriormente **V3 publicada**.
+
+**OP4 CUMPLIDO con evidencia combinada.** Prueba rápida/Laboratorio ejecutado como
+sandbox **sin envío real a WhatsApp**; los tests verdes del Corte 3 cubren
+ausencia de asset, fallo de media, ventana/fallo sin `demoShownAt` y sandbox sin
+Graph/WhatsApp real. **No se destruyó ningún recurso productivo** para provocar
+un fallo artificial.
+
+**Hallazgo operativo — causa de la pérdida histórica de imágenes y adjuntos:** la
+causa raíz era `MEDIA_DIR` sin almacenamiento persistente, que provocaba que cada
+redeploy perdiera el contenido del contenedor efímero. La corrección fue montar
+`/data/media` como persistent storage y configurar `MEDIA_DIR=/data/media`. **No se afirma recuperación automática de los
+archivos históricos ya perdidos**. Su recuperación no fue verificada y queda
+fuera de este registro.
+
+**Pendientes que esta pausa NO cierra:** los self-tests **E2E 020/021** con
+PostgreSQL + ffmpeg/Chromium y los **4 tests PostgreSQL opt-in** de
+`tests/unit/commercial-resource-postgres.test.ts` siguen **PENDIENTES**, sin
+cambios respecto a C1–C3. **No READY punta a punta** por esos pendientes. La
+verificación en producción complementa la evidencia del self-test local; no la
+sustituye.
+
+**Constitution Check:** sin cambios de código ni de contrato; I/III/IV/VI/VII no
+afectados, sin nueva superficie observable. Sin decisión comercial nueva que
+sincronizar en Obsidian (V3 publicada es la versión del playbook vigente, ya
+registrada). C4 sigue **sin iniciar** y mantiene Published 1.0 hasta que una
+sesión posterior actualice el draft a 1.1, lo pruebe y lo publique explícitamente.
+
+Detalle completo, tabla de slots y límites de afirmación en
+`specs/011-commercial-resources/tasks.md` → *Pausa operativa tras 1–3*.
+
+**Siguiente paso exacto:** con C4 sin iniciar, provisionar el entorno local
+app+PostgreSQL dedicado + mocks + ffmpeg/Chromium, aplicar/repetir la migración y
+la suite opt-in de C1, y ejecutar 020 con reinicio administrado y 021 según
+`specs/011-commercial-resources/quickstart.md`, registrando evidencia real. Esta
+sesión no despliega ni ejecuta el runner. STOP tras el único commit y árbol limpio.
+
+---
+
 **Actualizado: 2026-10-03 — Spec 011, C3: demos como video nativo implementadas.**
 
 Objetivo único: entrega automática de demos configuradas en C1/C2. Commit de
