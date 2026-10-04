@@ -2,7 +2,10 @@
 
 **Estado:** C1 implementado con gates técnicos verdes; BD real y E2E PENDIENTES.
 C2 implementado con gate técnico verde / E2E PENDIENTE; C3 implementado con
-gate técnico verde / E2E PENDIENTE; pausa operativa pendiente; C4 sin iniciar.
+gate técnico verde / E2E PENDIENTE; **pausa operativa CERRADA con OP1–OP4
+cumplidos y evidencia real registrada**; C4 sin iniciar. **No READY punta a
+punta**: los self-tests E2E 020/021 y los 4 tests PostgreSQL opt-in siguen
+PENDIENTES (sin cambios respecto a C1–C3).
 Dependency order: bootstrap → C1 → C2 → C3 → pausa operativa → C4.
 Un corte = sesión nueva de codex exec = objetivo único = commit atómico único.
 Prompts ejecutables autocontenidos: .ai/tasks/commercial-resources/01–04.
@@ -265,14 +268,107 @@ productivo. La comprobación del runner será estática; NO ejecutar pipeline.
 
 ## Pausa operativa tras 1–3
 
-- [ ] OP1 Tres MP4 reales subidos desde UI, ningún binario real en Git.
-- [ ] OP2 Persistencia tras reinicio/redeploy observada con MEDIA_DIR persistente.
-- [ ] OP3 Tres videos reproducibles como nativos WhatsApp; registrar fecha,
+- [x] OP1 Tres MP4 reales subidos desde UI, ningún binario real en Git.
+- [x] OP2 Persistencia tras reinicio/redeploy observada con MEDIA_DIR persistente.
+- [x] OP3 Tres videos reproducibles como nativos WhatsApp; registrar fecha,
   entorno y evidencia sin PII, destinatario autorizado y volumen mínimo.
-- [ ] OP4 Degradación sin asset y sandbox sin WhatsApp real verificados.
+- [x] OP4 Degradación sin asset y sandbox sin WhatsApp real verificados.
 
 Esta comprobación no la ejecuta el runner ni autoriza despliegue automático.
 No bloquear datos técnicos en defaults imaginarios; no afirmar READY sin evidencia.
+
+### Evidencia durable de la pausa operativa — 2026-10-03
+
+**OP1 CUMPLIDO — tres MP4 reales subidos desde la UI de Vende Veloz 365.** Los tres
+slots quedaron poblados con material real mediante la pantalla Comercial / Jev →
+Recursos comerciales, no por SQL ni por copia al contenedor:
+
+| Slot | Contenido real subido |
+| --- | --- |
+| `demo_enrollment_panel` | matrícula y panel |
+| `demo_payments_balances` | pagos y saldos |
+| `demo_online_enrollment` | matrícula online |
+
+Ningún MP4 real fue agregado a Git. Verificado de forma independiente en este
+registro: `git ls-files` no devuelve ningún `.mp4`, `.mov`, `.m4v` ni `.webm`
+(versionado), y `.dev-media/` sigue ignorado por `.gitignore`. El arnés de E2E
+genera su fixture sintético en `/tmp` por diseño, nunca en el repositorio.
+
+**OP2 CUMPLIDO — almacenamiento persistente corregido y verificado.** Se detectó
+que producción **no tenía persistent storage configurado**, de modo que `MEDIA_DIR`
+resolvía contra el sistema de archivos efímero del contenedor y todo lo escrito se
+perdía en cada redeploy. Corrección aplicada y verificada, en este orden:
+
+- Se creó un volumen persistente en Coolify montado en `/data/media`.
+- Se configuró `MEDIA_DIR=/data/media`.
+- Escritura verificada como usuario no-root del contenedor, no como root.
+- `persistence-test.txt` **sobrevivió a un redeploy** completo.
+- Después se subió un video comercial y se recibió una imagen real por WhatsApp.
+- **Ambos siguieron visibles después de otro redeploy**.
+
+Esto confirma operacionalmente, no solo por configuración, que la media de
+conversaciones y los recursos comerciales usan almacenamiento persistente. Es
+además el mismo camino que ya describían `docs/playbook.md` ("MEDIA_DIR debe estar
+en un volumen persistente para sobrevivir redeploy") y la guía de `.env.example`
+("En Coolify: montar un persistent storage en /data/media y poner esa ruta aqui"),
+que hasta ahora no se había aplicado en producción.
+
+**OP3 CUMPLIDO — entrega nativa en WhatsApp verificada.** Entorno: producción
+controlada de la organización Vende Veloz 365, con destinatario autorizado de
+prueba. **No se registró teléfono ni dato PII en este repositorio.** Los tres
+recursos se enviaron y reprodujeron correctamente como **video nativo de WhatsApp**:
+
+- matrícula y panel · pagos y saldos · matrícula online.
+
+No llegaron como enlaces ni como documentos: llegaron como video reproducido, que
+es exactamente el contrato de C3 (`sendMediaMessage` con MIME `video/mp4`, sin texto
+previo ni documento de respaldo). Se verificó además que el **routing por intención
+funciona**: la intención elegida determina el slot, con prioridad de la acción
+explícita online. Los **captions se verificaron** y posteriormente se publicó V3.
+
+**OP4 CUMPLIDO con evidencia combinada — degradación y aislamiento de red.** La
+verificación de este punto es combinada y deliberadamente no destructiva:
+
+- La **Prueba rápida / Laboratorio se ejecutó como sandbox**, sin envío real a
+  WhatsApp, confirmando que el camino sandbox persiste copia local de media y
+  caption y no toca Graph.
+- Los **tests verdes del Corte 3** cubren los cuatro modos de degradación que
+  exigía este punto: ausencia de asset, fallo de media, ventana/fallo sin
+  `demoShownAt` marcado, y sandbox sin llamadas Graph/WhatsApp reales.
+- **No se destruyó ningún recurso productivo** únicamente para provocar un fallo
+  artificial: no es una práctica aceptable para generar evidencia.
+
+**PENDIENTES que esta pausa NO cierra (se mantienen explícitamente):**
+
+- **E2E 020** (happy/unhappy de UI real, upload/reemplazo, preview, cobro y
+  persistencia tras reinicio) con PostgreSQL + ffmpeg/libx264 + Chromium.
+- **E2E 021** (inbound → pipeline real → video+caption en outbox/hilo → fact, y
+  unhappy) con el proveedor HTTP mock local.
+- Los **4 tests PostgreSQL opt-in** de
+  `tests/unit/commercial-resource-postgres.test.ts`, omitidos por falta de BD local
+  dedicada.
+
+**Por estos pendientes NO se declara READY punta a punta.** La pausa operativa
+resuelve la verificación en producción, que es un objetivo distinto del self-test
+local automatizado: complementan la evidencia, no la sustituyen.
+
+### Hallazgo operativo — causa de la pérdida histórica de imágenes y adjuntos
+
+- **Causa raíz**: `MEDIA_DIR` sin almacenamiento persistente. El directorio de
+  media existía y la aplicación escribía correctamente en él, pero al residir en
+  el sistema de archivos efímero del contenedor, **cada redeploy borraba el
+  contenido**. Esto explica el síntoma histórico de imágenes y adjuntos que
+  desaparecían, y descarta como causa un fallo de la lógica de descarga,
+  persistencia o de autorización.
+- **Corrección operativa**: montar `/data/media` como persistent storage en Coolify
+  y configurar `MEDIA_DIR=/data/media`, verificado según OP2.
+- **Límite explícito de la afirmación**: esto **previene** nuevas pérdidas hacia
+  adelante y queda verificado para archivos nuevos. **NO se afirma recuperación
+  automática de los archivos históricos ya perdidos**: el contenido que anterior-
+  mente desapareció con el contenedor ya no está en el volumen y no existe copia
+  de la que restaurarlo. Cualquier recuperación de ese material histórico
+  dependería de una fuente externa (por ejemplo Meta, mientras los IDs vivan) y
+  sería una tarea distinta, no verificada aquí.
 
 ## Corte 4 — Acción explícita de instrucciones de pago
 
