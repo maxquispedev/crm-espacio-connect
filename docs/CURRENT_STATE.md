@@ -8,6 +8,7 @@ verificada en producción. Sin código productivo, sin deploy, sin runner/codex
 anidado, sin WhatsApp adicional, sin inicio de C4 y sin tocar contratos de pago.
 Commit de cierre: `docs: registrar pausa operativa de recursos comerciales`.
 Evidencia operativa aportada por el operador; esta sesión solo la registra.
+Este commit es solo documental: registra evidencia operativa real ya verificada en producción, sin código productivo, sin deploy, sin runner/codex anidado, sin WhatsApp adicional, sin tocar contratos de pago.
 
 **OP1 CUMPLIDO.** Los tres MP4 reales fueron subidos desde la UI de Vende Veloz
 365, no por SQL ni por copia al contenedor: `demo_enrollment_panel` (matrícula y
@@ -20,7 +21,7 @@ forma independiente: `git ls-files` no devuelve ningún `.mp4`/`.mov`/`.m4v`/
 configurado**, por lo que `MEDIA_DIR` resolvía contra el sistema de archivos
 efímero del contenedor. Se creó un volumen persistente en Coolify montado en
 `/data/media` y se configuró `MEDIA_DIR=/data/media`. Escritura verificada como
-usuario `vocero`; `persistence-test.txt` sobrevivió a un redeploy; después se subió
+usuario `vocero` (no-root del contenedor); `persistence-test.txt` sobrevivió a un redeploy; después se subió
 un video comercial y se recibió una imagen real por WhatsApp, y **ambos siguieron
 visibles tras otro redeploy**. Confirma operacionalmente que la media de
 conversaciones y los recursos comerciales usan almacenamiento persistente.
@@ -39,10 +40,7 @@ un fallo artificial.
 
 **Hallazgo operativo — causa de la pérdida histórica de imágenes y adjuntos:** la
 causa raíz era `MEDIA_DIR` sin almacenamiento persistente, que provocaba que cada
-redeploy perdiera el contenido del contenedor efímero. La corrección fue montar
-`/data/media` como persistent storage y configurar `MEDIA_DIR=/data/media`. **No se afirma recuperación automática de los
-archivos históricos ya perdidos**. Su recuperación no fue verificada y queda
-fuera de este registro.
+redeploy borró el contenido del contenedor efímero; no era un fallo de descarga, persistencia ni autorización. La corrección fue montar `/data/media` como persistent storage y configurar `MEDIA_DIR=/data/media`. **No se afirma recuperación automática de los archivos históricos ya perdidos**: el contenido que antes desaparecía con el contenedor ya no está en el volumen y no existe copia local de la que restaurarlos; cualquier recuperación sería una tarea distinta, no verificada aquí.
 
 **Pendientes que esta pausa NO cierra:** los self-tests **E2E 020/021** con
 PostgreSQL + ffmpeg/Chromium y los **4 tests PostgreSQL opt-in** de

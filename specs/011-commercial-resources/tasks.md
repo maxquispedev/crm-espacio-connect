@@ -279,9 +279,7 @@ No bloquear datos técnicos en defaults imaginarios; no afirmar READY sin eviden
 
 ### Evidencia durable de la pausa operativa — 2026-10-03
 
-Evidencia operativa aportada por el operador, ya verificada. Esta sesión solo
-registra los resultados; no repite envíos, despliegues ni pruebas productivas.
-
+Evidencia operativa aportada por el operador, ya verificada. Esta sesión solo registra los resultados; no repite envíos, despliegues ni pruebas productivas.
 **OP1 CUMPLIDO — tres MP4 reales subidos desde la UI de Vende Veloz 365.** Los tres
 slots quedaron poblados con material real mediante la pantalla Comercial / Jev →
 Recursos comerciales, no por SQL ni por copia al contenedor:
@@ -304,7 +302,7 @@ perdía en cada redeploy. Corrección aplicada y verificada, en este orden:
 
 - Se creó un volumen persistente en Coolify montado en `/data/media`.
 - Se configuró `MEDIA_DIR=/data/media`.
-- Escritura verificada como usuario `vocero`.
+- Escritura verificada como usuario `vocero` (no-root del contenedor).
 - `persistence-test.txt` **sobrevivió a un redeploy** completo.
 - Después se subió un video comercial y se recibió una imagen real por WhatsApp.
 - **Ambos siguieron visibles después de otro redeploy**.
@@ -334,11 +332,12 @@ verificación de este punto es combinada y deliberadamente no destructiva:
 
 - La **Prueba rápida / Laboratorio se ejecutó como sandbox**, sin envío real a
   WhatsApp. La cobertura de aislamiento de Graph se registra en los tests de C3.
+  La verificación de este punto es combinada y deliberadamente no destructiva: el camino sandbox persiste copia local de media y caption y no toca Graph.
 - Los **tests verdes del Corte 3** cubren los cuatro modos de degradación que
   exigía este punto: ausencia de asset, fallo de media, ventana/fallo sin
   `demoShownAt` marcado, y sandbox sin llamadas Graph/WhatsApp reales.
 - **No se destruyó ningún recurso productivo** únicamente para provocar un fallo
-  artificial.
+  artificial: no es una práctica aceptable para generar evidencia.
 
 **PENDIENTES que esta pausa NO cierra (se mantienen explícitamente):**
 
@@ -360,23 +359,12 @@ local automatizado: complementan la evidencia, no la sustituyen.
   media existía y la aplicación escribía correctamente en él, pero al residir en
   el sistema de archivos efímero del contenedor, **cada redeploy borraba el
   contenido**. Esto explica el síntoma histórico de imágenes y adjuntos que
-  desaparecían.
+  desaparecían, y descarta como causa un fallo de la lógica de descarga, persistencia o de autorización.
 - **Corrección operativa**: montar `/data/media` como persistent storage en Coolify
   y configurar `MEDIA_DIR=/data/media`, verificado según OP2.
 - **Límite explícito de la afirmación**: esto **previene** nuevas pérdidas hacia
   adelante y queda verificado para archivos nuevos. **NO se afirma recuperación
-  automática de los archivos históricos ya perdidos**. Su recuperación no fue
-  verificada y queda fuera de este registro.
-
-### Cierre documental de la pausa
-
-- Único commit documental sobre C3: `docs: registrar pausa operativa de recursos comerciales`.
-  Ya existía al iniciar esta sesión; se ajusta ese mismo commit sin duplicarlo.
-- `git diff --check`: exit 0; revisión limitada a tasks.md y CURRENT_STATE.md.
-- C4 sin iniciar; código productivo y contratos de pago sin cambios.
-- Gates de aplicación y E2E no ejecutados en esta sesión documental.
-- Siguiente paso, fuera de esta sesión: resolver los pendientes locales según
-  quickstart.md. STOP tras verificar el único commit y el árbol limpio.
+  automática de los archivos históricos ya perdidos**: el contenido que anteriormente desapareció con el contenedor ya no está en el volumen y no existe copia de la que restaurarlo. Cualquier recuperación de ese material histórico dependería de una fuente externa (por ejemplo Meta, mientras los IDs vivan) y sería una tarea distinta, no verificada aquí.
 
 ## Corte 4 — Acción explícita de instrucciones de pago
 
