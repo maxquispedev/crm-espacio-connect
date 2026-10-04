@@ -64,6 +64,7 @@ const tables: Tables = {
   conversation: [],
   conversation_attention: [],
   contact: [],
+  ad_attribution: [],
   sales_follow_up_job: [],
 };
 const db = createMemDb(tables);
@@ -104,6 +105,9 @@ vi.mock("@/server/sales/follow-ups/worker", () => ({
 
 const { GET, POST } = await import("@/app/api/reminders/route");
 const { DELETE } = await import("@/app/api/reminders/[conversationId]/route");
+const { POST: MARCAR_ATENDIDO } = await import(
+  "@/app/api/conversations/[id]/attention/route"
+);
 const { listAgenda } = await import("@/server/inbox/agenda");
 const { markAttentionPending } = await import("@/server/inbox/attention");
 
@@ -111,14 +115,26 @@ const ORG_A = "org_a";
 const AHORA = new Date("2026-10-05T17:00:00Z");
 const H = 3_600_000;
 
+/**
+ * 013 C4 amplía la lista: el flujo operativo completo (el endpoint de "Marcar
+ * atendido", el bloque de atención, el vocabulario compartido y los dos ficheros
+ * de la Bandeja) hereda la misma promesa — resolver una cola humana es escribir
+ * un estado, nunca mandar un mensaje. Si alguno de ellos "casi" se conectara al
+ * sender, esta lista lo delata.
+ */
 const FICHEROS_DE_LA_AGENDA = [
   "src/server/inbox/agenda.ts",
   "src/server/inbox/agenda-buckets.ts",
   "src/app/api/reminders/route.ts",
   "src/app/api/reminders/[conversationId]/route.ts",
+  "src/app/api/conversations/[id]/attention/route.ts",
   "src/app/(app)/agenda/page.tsx",
   "src/components/agenda/agenda-client.tsx",
   "src/components/inbox/reminder-schedule.tsx",
+  "src/components/inbox/attention-block.tsx",
+  "src/components/inbox/conversation-list.tsx",
+  "src/components/inbox/bandeja-filtros.ts",
+  "src/lib/operational-state.ts",
 ];
 
 function sembrarHumana(id: string) {
@@ -315,6 +331,48 @@ describe("013 C3 — prueba dinámica: el camino completo no envía ni encola", 
     // La tabla del motor sigue vacía: el recordatorio vive solo en la humana.
     expect(tables.sales_follow_up_job).toHaveLength(0);
     expect(tables.conversation_attention).toHaveLength(1);
+  });
+
+  it("'Marcar atendido' resuelve la cola sin enviar ni encolar nada", async () => {
+    // 013 C4: la acción nueva de la conversación pasa por la MISMA prueba que
+    // la Agenda. Resolver "Por atender" tocando un estado no puede terminar en un
+    // WhatsApp ni en un follow-up encolado.
+    sembrarHumana("cv_1");
+    await POST(
+      new Request("http://localhost/api/reminders", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          conversationId: "cv_1",
+          dueAt: new Date(Date.now() + 24 * H).toISOString(),
+        }),
+      })
+    );
+    expect(tables.conversation_attention![0]!.state).toBe("deferred");
+
+    const res = await MARCAR_ATENDIDO(
+      new Request("http://localhost/api/conversations/cv_1/attention", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ state: "waiting_client" }),
+      }),
+      { params: Promise.resolve({ id: "cv_1" }) }
+    );
+    expect(res.status).toBe(200);
+    expect(tables.conversation_attention![0]!.state).toBe("waiting_client");
+    // La fila se actualizó: no se añadió una segunda conversación al motor.
+    expect(tables.conversation_attention).toHaveLength(1);
+    expect(tables.sales_follow_up_job).toHaveLength(0);
+    for (const [nombre, mock] of [
+      ["graphRequest", graphRequest],
+      ["sendText", sendText],
+      ["sendMediaMessage", sendMediaMessage],
+      ["sendTemplate", sendTemplate],
+      ["enqueueFollowUp", enqueueFollowUp],
+      ["scheduleNextFollowUp", scheduleNextFollowUp],
+    ] as const) {
+      expect(mock, nombre).not.toHaveBeenCalled();
+    }
   });
 
   it("el sandbox del Laboratorio no tiene efecto en la atención ni en Graph", async () => {

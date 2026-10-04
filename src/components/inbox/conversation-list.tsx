@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import {
   AlertCircle,
+  Bell,
   Megaphone,
   Search,
   Sparkles,
@@ -17,6 +18,7 @@ import {
   etiquetaDeOrigen,
   titularDeOrigen,
 } from "@/lib/anuncios";
+import { ETIQUETA_ESTADO, estadoOperativo } from "@/lib/operational-state";
 import {
   type FiltroBandeja,
   resumirBandeja,
@@ -30,6 +32,38 @@ const STAGE_DOT: Record<string, string> = {
   Cliente: "#5f8f74",
   Perdido: "#a2504c",
 };
+
+/**
+ * 013 C4 — El estado de la fila dice lo MISMO que el panel del hilo y el item de
+ * la Agenda, y sale de la misma función (`estadoOperativo`). Aquí no se decide
+ * nada: si esta fila dijera "Esperando respuesta" y el hilo dijera "Por
+ * atender", el operador no sabría cuál de las dos pantallas está mintiendo
+ * (FR-4.4).
+ *
+ * Con la IA al mando no se pinta nada, como hasta ahora: una etiqueta "La IA
+ * responde" en cada fila de la lista no informa de nada, solo ocupa.
+ */
+function EstadoOperacionalChip({ conversacion }: { conversacion: ConversationDto }) {
+  const estado = estadoOperativo(conversacion);
+  if (estado === "ia") return null;
+  const urgente = estado === "por_atender";
+  const Icon = urgente ? AlertCircle : estado === "comprometido" ? Bell : UserRound;
+  return (
+    <span
+      className={cn(
+        "inline-flex shrink-0 items-center gap-1 whitespace-nowrap rounded-full border px-2 py-0.5 text-[11px] font-medium",
+        urgente
+          ? "border-danger-border bg-danger-soft text-danger-text"
+          : "border-warning-border bg-warning-soft text-warning-text"
+      )}
+      data-testid="fila-estado"
+      data-estado={estado}
+    >
+      <Icon className="h-3 w-3" strokeWidth={1.7} />
+      {ETIQUETA_ESTADO[estado]}
+    </span>
+  );
+}
 
 function EmptyState({ onSeeded }: { onSeeded: () => void }) {
   const [seeding, setSeeding] = useState(false);
@@ -97,15 +131,14 @@ export function ConversationList({
 
   const loading = conversationsProp === null;
   const conversations = conversationsProp ?? [];
-  // 013 C2 — Toda la lógica de la fila de filtros vive en un módulo puro: el
-  // conteo de "Por atender" y su listado salen de la MISMA operación, así que
-  // no pueden discrepar. "Por atender" va primero porque es la pregunta con la
-  // que arranca el día; "Todas", "No leídas", "Anuncios" y la etapa conservan
-  // exactamente su definición de siempre (FR-2.6).
-  const { visibles, porAtender, noLeidas, anuncios, total } = resumirBandeja(
-    conversations,
-    { query, stage, filter }
-  );
+  // 013 C2/C4 — Toda la lógica de la fila de filtros vive en un módulo puro: los
+  // conteos y sus listados salen de la MISMA operación, así que no pueden
+  // discrepar. "Por atender" va primero porque es la pregunta con la que arranca
+  // el día y "Comprometidos" detrás porque es su contracara —"¿qué tengo
+  // guardado para después?"—; "Todas", "No leídas", "Anuncios" y la etapa
+  // conservan exactamente su definición de siempre (FR-2.6).
+  const { visibles, porAtender, comprometidos, noLeidas, anuncios, total } =
+    resumirBandeja(conversations, { query, stage, filter });
 
   // Etapas presentes en la bandeja, en el orden en que llegan del pipeline.
   const stages: string[] = [];
@@ -148,10 +181,11 @@ export function ConversationList({
         </div>
       </header>
 
-      <div className="flex items-center gap-1.5 border-b px-4 py-2.5">
+      <div className="flex flex-wrap items-center gap-1.5 border-b px-4 py-2.5">
         {(
           [
             { id: "por_atender", label: "Por atender", count: porAtender },
+            { id: "comprometidos", label: "Comprometidos", count: comprometidos },
             { id: "all", label: "Todas", count: total },
             { id: "unread", label: "No leídas", count: noLeidas },
           ] as const
@@ -160,6 +194,7 @@ export function ConversationList({
             key={f.id}
             onClick={() => setFilter(f.id)}
             aria-pressed={filter === f.id}
+            data-testid={`bandeja-filtro-${f.id}`}
             className={cn(
               "flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full border px-2.5 py-[5px] text-[12.5px] font-medium transition-colors",
               filter === f.id
@@ -169,6 +204,9 @@ export function ConversationList({
           >
             {f.id === "por_atender" && (
               <AlertCircle className="h-3.5 w-3.5" strokeWidth={1.7} />
+            )}
+            {f.id === "comprometidos" && (
+              <Bell className="h-3.5 w-3.5" strokeWidth={1.7} />
             )}
             {f.label}
             <span
@@ -238,7 +276,9 @@ export function ConversationList({
           <p className="p-6 text-center text-xs text-text-3">
             {filter === "por_atender"
               ? "Nada pendiente de tu lado ahora mismo."
-              : "Sin resultados para este filtro."}
+              : filter === "comprometidos"
+                ? "No tienes nada comprometido para después."
+                : "Sin resultados para este filtro."}
           </p>
         ) : (
           <ul>
@@ -311,12 +351,7 @@ export function ConversationList({
                             {c.stageName}
                           </span>
                         )}
-                        {c.handoffAt && (
-                          <span className="inline-flex items-center gap-1 rounded-full border border-warning-border bg-warning-soft px-2 py-0.5 text-[11px] text-warning-text">
-                            <UserRound className="h-3 w-3" strokeWidth={1.7} />
-                            Atención humana
-                          </span>
-                        )}
+                        <EstadoOperacionalChip conversacion={c} />
                         {(() => {
                           const eti = etiquetaDeOrigen(c.anuncio?.sourceType);
                           const tit = titularDeOrigen(

@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { CalendarClock, ExternalLink, Loader2, RefreshCw, Trash2 } from "lucide-react";
 import type { AgendaBucketName, AgendaDto, ReminderDto } from "@/lib/types";
+import { ETIQUETA_ESTADO, estadoDeAtencion } from "@/lib/operational-state";
 import { Button } from "@/components/ui/button";
 import { useEvents } from "@/components/use-events";
 
@@ -235,10 +236,30 @@ export function AgendaGroups({
   );
 }
 
+/**
+ * El estado de cada item, con las MISMAS palabras que la fila de la lista y el
+ * panel del hilo (FR-4.4). Sale de `estadoOperativo`, así que un recordatorio
+ * vencido no puede decir aquí "programado" mientras la Bandeja dice "Por
+ * atender": las dos superficies leen el mismo `needsAttentionNow` que ya derivó
+ * el servidor y llegan al mismo estado.
+ *
+ * "Vencido" es la palabra de la Agenda —"ya tocaba"— y se le pega la etiqueta
+ * compartida para que quede claro que ese trabajo ya está en la cola.
+ */
 function stateLabel(reminder: ReminderDto): string {
-  if (reminder.state === "deferred" && !reminder.needsAttentionNow) return "programado";
-  if (reminder.needsAttentionNow) return "vencido · en Por atender";
-  return reminder.state;
+  const estado = estadoDeAtencion({
+    state: reminder.state,
+    dueAt: reminder.dueAt,
+    note: reminder.note,
+    needsAttentionNow: reminder.needsAttentionNow,
+  });
+  if (estado === "por_atender") {
+    return `vencido · en ${ETIQUETA_ESTADO.por_atender}`;
+  }
+  // Un recordatorio que no está vencido es un compromiso a futuro. La palabra
+  // "programado" describe la fecha, no el estado, y por eso no se mezcla con las
+  // etiquetas de arriba.
+  return "programado";
 }
 
 function formatWhen(iso: string): string {

@@ -1,0 +1,207 @@
+"use client";
+
+import { useState } from "react";
+import { AlertCircle, Bell, Check, Loader2, Sparkles, UserRound } from "lucide-react";
+import type { ConversationDto } from "@/lib/types";
+import { Button } from "@/components/ui/button";
+import {
+  ETIQUETA_ESTADO,
+  EXPLICACION_ESTADO,
+  estadoOperativo,
+  esConversacionHumana,
+  type EstadoOperativo,
+} from "@/lib/operational-state";
+import { ReminderSchedule } from "./reminder-schedule";
+
+/**
+ * Por qué la conversación pasó a ser del humano. Son los motivos que ya
+ * distinguía el panel; viven aquí porque son la explicación de este estado, no
+ * un dato suelto de la conversación. En castellano de operación, nunca el
+ * `handoffReason` crudo (FR-4.2).
+ */
+const MOTIVOS_HUMANO: Record<string, string> = {
+  cliente: "El cliente pidió que le atendiera una persona.",
+  modelo: "El agente decidió no seguir solo.",
+  error: "La IA falló al responder.",
+  ventana: "La ventana de 24 h está cerrada.",
+  manual_reply: "Respondiste desde el teléfono, así que la IA se pausó.",
+  commercial: "El seguimiento comercial pidió que lo atendiera una persona.",
+};
+
+/**
+ * 013 C4 — El bloque de ATENCIÓN HUMANA de una conversación: el estado que ve la
+ * persona y las tres acciones que puede tomar sobre él.
+ *
+ * Antes de este corte el estado y las acciones vivían sueltos: un aviso
+ * "Atención humana" que solo aparecía si hubo handoff, y debajo, separado, el
+ * "Recordarme" del corte 3. Aquí se juntan porque son una sola decisión —"¿qué
+ * hago con esta conversación?"— y porque la respuesta tiene que ser la MISMA en
+ * la lista y en la Agenda (FR-4.4).
+ *
+ * Las acciones, y a qué estado dejan la conversación:
+ *
+ * | Acción | Estado | Efecto operativo |
+ * |---|---|---|
+ * | Marcar atendido | `waiting_client` | sale de "Por atender" |
+ * | Recordarme | `deferred(due_at)` | sale de "Por atender", aparece en la Agenda |
+ * | Reactivar IA | (limpia) | la IA vuelve a responder |
+ *
+ * "Marcar atendido" solo se ofrece cuando hay algo que atender. Cuando ya está
+ * atendida o tiene un recordatorio puesto, el botón desaparecería sin
+ * explicación, así que lo que se hace es la inversa: el aviso de estado lo dice
+ * con palabras y el botón se ofrece solo en `por_atender`. Un botón que aparece
+ * exactamente cuando hay una tarea es la misma promesa que hace el chip de la
+ * lista.
+ *
+ * Este componente no es una puerta al estado: llama al endpoint, y quien decide
+ * es el servidor. "No se puede marcar: la IA es la dueña" se muestra tal cual.
+ */
+export function AttentionBlock({
+  conversation,
+  onPatchConversation,
+  onChanged,
+}: {
+  conversation: ConversationDto;
+  onPatchConversation: (patch: { reactivate?: boolean }) => void | Promise<void>;
+  onChanged?: () => void;
+}) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [done, setDone] = useState<string | null>(null);
+
+  // Los hooks van ANTES del return temprano: el orden de hooks tiene que ser el
+  // mismo tanto si la conversación es del humano como si no lo es.
+  if (!esConversacionHumana(conversation)) return null;
+  const estado = estadoOperativo(conversation);
+
+  const markAttended = async () => {
+    setBusy(true);
+    setError(null);
+    setDone(null);
+    try {
+      const res = await fetch(`/api/conversations/${conversation.id}/attention`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ state: "waiting_client" }),
+      });
+      if (!res.ok) {
+        const data = (await res.json().catch(() => null)) as {
+          error?: { message?: string };
+        } | null;
+        setError(data?.error?.message ?? `No se pudo marcar como atendida (${res.status})`);
+        return;
+      }
+      setDone("Atendida · esperando respuesta del cliente");
+      onChanged?.();
+    } catch {
+      setError("No se pudo marcar como atendida. Revisa tu conexión.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <section
+      className="mt-3 rounded-md border border-warning-border bg-warning-soft p-3"
+      data-testid="attention-block"
+      data-estado={estado}
+    >
+      <div className="flex items-start justify-between gap-3">
+        <p className="flex items-center gap-1.5 text-[13px] font-medium text-warning-text">
+          <UserRound className="h-4 w-4" strokeWidth={1.7} /> Atención humana
+        </p>
+        <EstadoChip estado={estado} />
+      </div>
+
+      <p
+        className="mt-1 text-xs text-warning-text opacity-80"
+        data-testid="attention-explanation"
+      >
+        {EXPLICACION_ESTADO[estado]}
+      </p>
+
+      {conversation.handoffReason && MOTIVOS_HUMANO[conversation.handoffReason] && (
+        <p
+          className="mt-1 text-[11px] text-warning-text opacity-70"
+          data-testid="attention-reason"
+        >
+          {MOTIVOS_HUMANO[conversation.handoffReason]}
+        </p>
+      )}
+
+      <div className="mt-2 flex flex-wrap gap-2">
+        {estado === "por_atender" && (
+          <Button
+            size="sm"
+            onClick={() => void markAttended()}
+            disabled={busy}
+            data-testid="attention-mark-attended"
+          >
+            {busy ? (
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            ) : (
+              <Check className="h-3.5 w-3.5" strokeWidth={1.7} />
+            )}
+            Marcar atendido
+          </Button>
+        )}
+        <Button
+          size="sm"
+          variant="outline"
+          onClick={() => void onPatchConversation({ reactivate: true })}
+          disabled={busy}
+          data-testid="attention-reactivate"
+        >
+          <Sparkles className="h-3.5 w-3.5" strokeWidth={1.7} />
+          Reactivar IA
+        </Button>
+      </div>
+
+      {error && (
+        <p className="mt-2 text-[11px] text-danger-text" data-testid="attention-error">
+          {error}
+        </p>
+      )}
+      {done && (
+        <p className="mt-2 text-[11px] text-warning-text" data-testid="attention-done">
+          {done}
+        </p>
+      )}
+
+      {/* 013 C3 — "Recordarme" solo cuando la conversación es del humano.
+          Programar sobre una conversación en manos de la IA es un 409 en el
+          servidor (`ai_owns_conversation`): aquí ni se ofrece. */}
+      <ReminderSchedule
+        conversationId={conversation.id}
+        attention={conversation.attention ?? null}
+        onChanged={onChanged}
+      />
+    </section>
+  );
+}
+
+/**
+ * La etiqueta del estado, con el mismo texto y el mismo significado que la fila
+ * de la lista y el item de la Agenda. Para `atencion_humana` no se pinta nada:
+ * el título del bloque ya dice "Atención humana" y repetirlo sería ruido, no
+ * información.
+ */
+function EstadoChip({ estado }: { estado: EstadoOperativo }) {
+  if (estado === "atencion_humana") return null;
+  const urgente = estado === "por_atender";
+  const comprometido = estado === "comprometido";
+  const Icon = urgente ? AlertCircle : comprometido ? Bell : UserRound;
+  return (
+    <span
+      className={
+        urgente
+          ? "inline-flex shrink-0 items-center gap-1 rounded-full border border-danger-border bg-danger-soft px-2 py-0.5 text-[11px] font-medium text-danger-text"
+          : "inline-flex shrink-0 items-center gap-1 rounded-full border bg-background/70 px-2 py-0.5 text-[11px] font-medium text-warning-text"
+      }
+      data-testid="attention-state"
+    >
+      <Icon className="h-3 w-3" strokeWidth={1.7} />
+      {ETIQUETA_ESTADO[estado]}
+    </span>
+  );
+}

@@ -1,11 +1,21 @@
 import type { AutomationLane } from "@/lib/types";
 
-/** Etiquetas operativas de lane (panel de contacto). */
+/**
+ * Etiquetas operativas de lane (panel de contacto).
+ *
+ * 013 C4 — `human` NO dice "Atención humana": esa es la etiqueta del ESTADO
+ * humano en la lista, el hilo y la Agenda, y este badge habla del lane del motor
+ * AUTOMÁTICO. Con las dos cosas llamándose igual, un "Atención humana" sobre
+ * "Detenido" se leía como un estado del ciclo de atención cuando en realidad
+ * describía que el motor dejó de trabajar la conversación porque alguien la tomó.
+ * Aquí la atención humana se nombra por lo que es para el motor: la conversación
+ * está en manos de una persona.
+ */
 export const LANE_LABELS: Record<AutomationLane, string> = {
   auto: "Automático",
   auto_close: "Cierre automático",
   wait: "En espera",
-  human: "Atención humana",
+  human: "En manos de una persona",
   stop: "Detenido",
 };
 

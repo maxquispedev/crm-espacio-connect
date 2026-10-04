@@ -1,3 +1,116 @@
+# Checkpoint 2026-10-04 — Spec 013, CUT 4: flujo operativo / UX integrada
+
+**IMPLEMENTADO, GATES TÉCNICOS VERDES Y E2E DE UI REAL EJECUTADO EN VERDE
+(84/84, dos corridas).** Commit único:
+`feat(inbox): integrar flujo operativo de atención`. Base limpia `73cd87c`
+(CUT 3).
+
+**Objetivo.** Que una persona pueda operar el CRM **sin pensar en estados
+técnicos**. Los cortes 1–3 construyeron las piezas (estado durable, cola
+"Por atender", Agenda); este corte las conecta y las habla en el mismo
+vocabulario. No añade estados ni endpoints de dominio: es flujo y copy.
+
+**Cambios.**
+
+- `src/lib/operational-state.ts` (nuevo, puro): **el vocabulario operativo en un
+  solo sitio**, que es lo que hace que lista, hilo y Agenda no puedan
+  contradecirse. `estadoOperativo()` deriva de `{attention, aiEnabled,
+  handoffAt}`; `estadoDeAtencion()` hace lo mismo desde la fila de atención sola
+  (lo que tiene la Agenda, sin inventar una conversación). `ETIQUETA_ESTADO` y
+  `EXPLICACION_ESTADO` son el copy. `vencidosDeAgenda()` lee el grupo `overdue`.
+  **No recalcula el reloj**: "vencido" llega derivado en `needsAttentionNow`.
+- `src/app/api/conversations/[id]/attention/route.ts` (nuevo): `POST`
+  `{state: "waiting_client"}` en `.strict()`. Delega en
+  `markAttentionWaitingClient` — **la misma función del corte 1** que ya corren el
+  envío manual y el eco del dueño, así que "marcar atendido" y "contestar" no
+  son dos puertas parecidas sino la misma. 404 ajena, 409 IA/Laboratorio, 422
+  cualquier otro estado. Publica `conversation.updated` con el DTO derivado.
+- `src/components/inbox/attention-block.tsx` (nuevo): estado + las tres acciones
+  (`Marcar atendido` → `waiting_client`, `Recordarme` → `deferred`, `Reactivar
+  IA` → limpia). Aparece para **cualquier** conversación del humano; antes, con
+  la IA apagada a mano, solo había "Recordarme": sin estado y sin "Reactivar IA".
+- `conversation-list.tsx`: la etiqueta de la fila pasa de "atención humana" (solo
+  `handoffAt`) al estado operativo compartido. Nuevo chip **"Comprometidos"**
+  detrás de "Por atender" → la Bandeja responde las dos preguntas de FR-4.3.
+- `app-nav.tsx`: la Agenda lleva **contador de vencidos**, con la misma
+  reactividad SSE que el de no leídas. Un refetch en paralelo para los dos
+  contadores, independientes: si la Agenda falla, no leídas no se congela.
+- `contact-panel.tsx` + `sales-ui.ts`: el motivo del handoff se cuenta en
+  castellano dentro del bloque; el lado automático se nombra "Seguimiento
+  automático" / "Intentos automáticos" / "Próxima automatización"; y el lane
+  `human` del badge de "Venta" pasa de "Atención humana" a "En manos de una
+  persona" (decía lo mismo que la etiqueta de estado humano: dos significados
+  con un solo nombre).
+
+**Decisiones (trazadas en `tasks.md`).** (1) El estado visible se deriva en **un
+solo módulo**: si cada superficie tradujera `attention.state` por su cuenta, una
+palabra de más bastaría para que el hilo dijera una cosa y la Agenda otra.
+(2) El contador del nav es el grupo `overdue` **tal cual**, no un cálculo
+propio: por construcción no puede discrepar del chip "Por atender". (3) El
+endpoint nuevo expone **una sola transición**; `pending` (lo dispara un mensaje
+del cliente) y `deferred` (nace de "Recordarme" con fecha validada) no se pueden
+fabricar desde la UI. (4) "Comprometidos" cuenta solo compromisos **futuros**: lo
+vencido ya es trabajo de "Por atender", son preguntas distintas. (5) Sin
+temporizador en el nav: los contadores se refrescan al montar y con cada evento
+SSE, como el badge que ya existía.
+
+**Evidencia.** `pnpm typecheck`, `pnpm lint` (0 errores; 3 warnings
+preexistentes), `pnpm build` y `pnpm test` en verde: **114 ficheros, 1311
+tests**, 9 skipped. **30 tests nuevos** en `tests/unit/operational-flow.test.ts`
+(derivación única; coherencia de las tres superficies con JSX real vía
+`renderToStaticMarkup`; copy sin internals; las tres acciones contra los
+endpoints reales con Zod/`scoped()` reales; conteos de nav y cola incluido el
+vencimiento; regresión de los filtros del corte 2). `agenda-no-send.test.ts` pasa
+de 8 a 9 casos y su lista de ficheros ya cubre el endpoint nuevo, el bloque, el
+vocabulario compartido y los dos ficheros de la Bandeja.
+
+**E2E: EJECUTADO Y VERDE.** Sección nueva `E2E_SECTION=025`
+(`scripts/e2e-operator-flow.mjs`, guion en
+`tests/e2e/013-flujo-operativo.md`): **84/84 checks, dos veces seguidas**, con
+PostgreSQL real (`operator_workspace_test` en `:55432`), app real en modo
+desarrollo (los mocks se apagan en producción por diseño, así que `next start` no
+sirve) y Playwright. Recorre el flujo como una persona: ver las dos preguntas,
+**abrir y comprobar que NO saca** (sigue en 2), "Marcar atendido" (2 → 1),
+"Recordarme" (Comprometidos 1 → 2), verlo en la Agenda con las MISMAS palabras
+que la lista, "Reactivar IA" que limpia y saca de la Agenda, y un inbound real
+seguido de una respuesta escrita a mano que sí sale. Camino infeliz completo:
+sin sesión, organización ajena, 409 de la IA y del Laboratorio, 422 por estado no
+permitido, y **la Agenda en 500** avisando sin romper la vista.
+
+**Garantía medible del guion.** El outbox del wa-mock crece **exactamente en 1**
+en toda la corrida, y es el mensaje que la persona escribió a mano. Ni marcar
+atendida, ni recordarme, ni reactivar IA, ni un recordatorio vencido mandan
+nada; `sales_follow_up_job` queda intacta.
+
+**T406 NO se hizo, a propósito.** La vista read-only de seguimientos automáticos
+en la Agenda exigía **cambiar el contrato `ReminderDto`**, prohibido en este
+corte, y leer la tabla del motor desde la Agenda es justo el acoplamiento que el
+spec §2.3 prohíbe. Lo que sí se resolvió, sin tocar contratos, es la distinción
+👤/🤖 en el copy. Queda para un corte que sí pueda cambiar el DTO.
+
+**Bug que el E2E cazó.** El botón "Enviar" del composer se deshabilita con el
+texto vacío (`canSubmit`), así que usarlo como prueba de "la ventana de 24 h
+está abierta" daba falso negativo; y la ventana se abre por SSE, así que el
+panel ya está pintado con la conversación anterior cuando el inbound aterriza.
+La comprobación mira ahora el aviso real del composer y espera al
+`conversation.updated`.
+
+**Lo que NO se tocó.** Sin cambios de contrato: ni DTOs, ni endpoints
+existentes, ni la lógica de atención de 013, ni `src/server/sales/follow-ups/**`.
+Sin plantillas, sin envío proactivo, sin etapas operativas, sin dashboard nuevo y
+sin dependencias externas. `docs/SALES_FOLLOW_UPS.md` **no se modificó**: no
+cambió ningún contrato ni ninguna regla del motor.
+
+**Siguiente paso exacto:** `specs/013-operator-workspace/tasks.md` → **CUT 5
+(verificación del workspace)**: sección propia en `scripts/e2e-selftest.mjs` que
+junte los 11 casos mínimos, guion en `tests/e2e/`, y cierre de bloque con los
+cuatro commits. Antes conviene cerrar la **FK compuesta ausente en
+`conversation_attention`** (pendiente heredado del corte 1): es un cambio de
+schema con migración propia y afecta a `attention-migration.test.ts`, que sigue
+con 2 checks en rojo.
+
+---
+
 # Checkpoint 2026-10-04 — Spec 013, CUT 3: Agenda de recordatorios humanos
 
 **IMPLEMENTADO, GATES TÉCNICOS VERDES Y E2E DE UI REAL EJECUTADO EN VERDE

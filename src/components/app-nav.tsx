@@ -14,6 +14,8 @@ import {
   Users,
 } from "lucide-react";
 import type { Branding } from "@/lib/branding";
+import type { AgendaDto } from "@/lib/types";
+import { vencidosDeAgenda } from "@/lib/operational-state";
 import { cn, initials } from "@/lib/utils";
 import { signOut } from "@/lib/auth/client";
 import { OrganizationSwitcher } from "@/components/organization-switcher";
@@ -30,17 +32,28 @@ import {
 } from "@/lib/notifications/inbound";
 import { useEvents } from "@/components/use-events";
 
+/**
+ * 013 C4 — Los contadores del nav son la longitud de un listado YA calculado: el
+ * de no leídas sale de la lista de conversaciones y el de vencidos del grupo
+ * `overdue` que el servidor agrupó para la Agenda. Por eso el número del nav y el
+ * chip de "Por atender" no pueden discrepar: un recordatorio vencido está en los
+ * dos sitios por definición, no por dos cálculos que puedan separarse.
+ */
 const NAV = [
-  { href: "/inbox", label: "Bandeja", icon: Inbox, badge: true },
-  // 013 C3 — Agenda de recordatorios humanos. Superficie PROPIA, no una pestaña
-  // más de la Bandeja: agrupa compromisos con fecha, no mensajes. El conteo de
-  // vencidos en este enlace es T403 (corte 4), no entra aquí.
-  { href: "/agenda", label: "Agenda", icon: CalendarClock },
-  { href: "/pipeline", label: "Pipeline", icon: Kanban },
-  { href: "/contacts", label: "Contactos", icon: Users },
-  { href: "/agent", label: "Agente", icon: Sparkles },
-  { href: "/lab", label: "Laboratorio", icon: FlaskConical },
+  { href: "/inbox", label: "Bandeja", icon: Inbox, badge: "no_leidas" as const },
+  // Agenda de recordatorios humanos. Superficie PROPIA, no una pestaña más de la
+  // Bandeja: agrupa compromisos con fecha, no mensajes (013 C3). Su contador es el
+  // de VENCIDOS, que es el único grupo que vuelve a ser trabajo de hoy; lo que
+  // todavía no toca no es urgencia, y sumarlo aquí mezclaría "¿qué hago ahora?"
+  // con "¿qué tengo para después?" (FR-4.3).
+  { href: "/agenda", label: "Agenda", icon: CalendarClock, badge: "vencidos" as const },
+  { href: "/pipeline", label: "Pipeline", icon: Kanban, badge: null },
+  { href: "/contacts", label: "Contactos", icon: Users, badge: null },
+  { href: "/agent", label: "Agente", icon: Sparkles, badge: null },
+  { href: "/lab", label: "Laboratorio", icon: FlaskConical, badge: null },
 ] as const;
+
+type Contadores = { no_leidas: number; vencidos: number };
 
 export function AppNav({
   branding,
@@ -55,27 +68,61 @@ export function AppNav({
 }) {
   const pathname = usePathname();
   const router = useRouter();
-  const [unread, setUnread] = useState(0);
+  const [contadores, setContadores] = useState<Contadores>({
+    no_leidas: 0,
+    vencidos: 0,
+  });
 
   const seenInboundIds = useRef(new Set<string>());
 
-  async function refetchUnread() {
-    const res = await fetch("/api/conversations").catch(() => null);
-    if (!res?.ok) return;
-    const data = (await res.json()) as {
-      conversations: { unreadCount: number }[];
-    };
-    setUnread(data.conversations.reduce((a, c) => a + c.unreadCount, 0));
+  /**
+   * Un solo refetch para los dos contadores, en paralelo e independientes: si la
+   * Agenda falla, el contador de no leídas sigue siendo correcto (y al revés). Un
+   * `await` en cadena dejaría el primer número congelado cada vez que el segundo
+   * endpoint fallara, que es justo el camino infeliz que no puede romper la
+   * navegación.
+   *
+   * No hay temporizador: los contadores se refrescan al montar y con cada evento
+   * SSE, igual que el badge de no leídas que ya existía. Un recordatorio que
+   * vence solo se ve al siguiente evento o al cambiar de sección, y es
+   * deliberado — un `setInterval` en el nav sería trabajo en background para
+   * un número que la siguiente acción va a mover igual.
+   */
+  async function refetchContadores() {
+    const [conversaciones, agenda] = await Promise.all([
+      fetch("/api/conversations").catch(() => null),
+      fetch("/api/reminders").catch(() => null),
+    ]);
+    const noLeidas = conversaciones?.ok
+      ? await conversaciones
+          .json()
+          .then(
+            (data: { conversations: { unreadCount: number }[] }) =>
+              data.conversations.reduce((a, c) => a + c.unreadCount, 0)
+          )
+          .catch(() => null)
+      : null;
+    const vencidos = agenda?.ok
+      ? await agenda
+          .json()
+          .then((data: unknown) => vencidosDeAgenda(data as AgendaDto))
+          .catch(() => null)
+      : null;
+    if (noLeidas === null && vencidos === null) return;
+    setContadores((prev) => ({
+      no_leidas: noLeidas ?? prev.no_leidas,
+      vencidos: vencidos ?? prev.vencidos,
+    }));
   }
 
   useEffect(() => {
-    void refetchUnread();
+    void refetchContadores();
   }, []);
 
   useEvents({
     onMessageNew: (data) => {
       if (!data.organizationId || data.organizationId === organizationId) {
-        void refetchUnread();
+        void refetchContadores();
       }
       const fields = notificationFieldsFromEvent(data);
       const decision = decideInboundNotification({
@@ -104,7 +151,7 @@ export function AppNav({
       });
       if (isNotifySoundEnabled()) playNotifyBeep();
     },
-    onConversationUpdated: () => void refetchUnread(),
+    onConversationUpdated: () => void refetchContadores(),
   });
 
   return (
@@ -149,14 +196,21 @@ export function AppNav({
                 strokeWidth={1.7}
               />
               <span className="flex-1">{item.label}</span>
-              {"badge" in item && item.badge && unread > 0 && (
+              {item.badge && contadores[item.badge] > 0 && (
                 <span
+                  // `vencidos` va en el color de aviso: es un compromiso que ya
+                  // tocaba, no un número informative como las no leídas.
                   className={cn(
                     "flex h-[18px] min-w-[18px] items-center justify-center rounded-full px-1.5 text-[10.5px] font-semibold",
-                    active ? "bg-brand text-white" : "bg-border-strong text-text-2"
+                    active
+                      ? "bg-brand text-white"
+                      : item.badge === "vencidos"
+                        ? "bg-danger-soft text-danger-text"
+                        : "bg-border-strong text-text-2"
                   )}
+                  data-testid={`nav-contador-${item.badge}`}
                 >
-                  {unread}
+                  {contadores[item.badge]}
                 </span>
               )}
             </Link>

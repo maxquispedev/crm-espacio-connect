@@ -8,7 +8,6 @@ import {
   FlaskConical,
   Pencil,
   Sparkles,
-  UserRound,
   X,
 } from "lucide-react";
 import type {
@@ -35,18 +34,9 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { formatTime } from "@/components/inbox/helpers";
-import { ReminderSchedule } from "@/components/inbox/reminder-schedule";
+import { AttentionBlock } from "@/components/inbox/attention-block";
 
 type ContactNameUpdate = { id: string; name: string };
-
-const HANDOFF_LABELS: Record<string, string> = {
-  cliente: "El cliente pidió un humano",
-  modelo: "El agente decidió escalar",
-  error: "Error del proveedor de IA",
-  ventana: "Ventana de 24h cerrada",
-  manual_reply: "Respondiste desde el teléfono — IA en pausa",
-  commercial: "El orquestador comercial pidió un humano",
-};
 
 export function ContactPanel({
   conversation,
@@ -251,38 +241,17 @@ export function ContactPanel({
             </div>
           </div>
 
-          {conversation.handoffAt && (
-            <div className="mt-3 rounded-md border border-warning-border bg-warning-soft p-3">
-              <p className="flex items-center gap-1.5 text-[13px] font-medium text-warning-text">
-                <UserRound className="h-4 w-4" strokeWidth={1.7} /> Atención humana
-              </p>
-              <p className="mt-1 text-xs text-warning-text opacity-80">
-                {HANDOFF_LABELS[conversation.handoffReason ?? ""] ??
-                  "La IA está en pausa en esta conversación."}
-              </p>
-              <Button
-                size="sm"
-                variant="outline"
-                className="mt-2 w-full"
-                onClick={() => void onPatchConversation({ reactivate: true })}
-              >
-                Reactivar IA
-              </Button>
-            </div>
-          )}
-
-          {/* 013 C3 — "Recordarme" solo cuando la conversación es del humano.
-              Programar sobre una conversación en manos de la IA es un 409 en
-              el servidor (`ai_owns_conversation`): aquí ni se ofrece. */}
-          {(conversation.handoffAt || !conversation.aiEnabled) && (
-            <div className="mt-3">
-              <ReminderSchedule
-                conversationId={conversation.id}
-                attention={conversation.attention ?? null}
-                onChanged={onAttentionChanged}
-              />
-            </div>
-          )}
+          {/* 013 C4 — Estado y acciones de la atención humana en un solo bloque.
+              Aparece para CUALQUIER conversación del humano (hubo handoff o se
+              apagó la IA a mano), no solo con handoff: antes, una conversación
+              con la IA desactivada tenía "Recordarme" pero ni estado ni
+              "Reactivar IA", que es justo el hueco que dejaba el flujo
+              incoherente. Si la IA es la dueña, el bloque no se pinta. */}
+          <AttentionBlock
+            conversation={conversation}
+            onPatchConversation={onPatchConversation}
+            onChanged={onAttentionChanged}
+          />
 
           <div className="mt-3 rounded-md border bg-secondary/50 px-3 py-2.5">
             <div className="flex items-center justify-between gap-3">
@@ -806,11 +775,16 @@ function SalesSection({
       <ul className="mt-3 space-y-1 text-[12px] text-text-2">
         <li>Demo mostrada: {sales.demoShownAt ? "sí" : "aún no"}</li>
         <li>Precio presentado: {sales.pricePresentedAt ? "sí" : "aún no"}</li>
-        <li>Estado del seguimiento: {followUpStatusLabel(sales)}</li>
-        <li>Intentos: {sales.followUpCount}</li>
+        {/* 013 C4 — Estas cuatro líneas son del lado AUTOMÁTICO y se nombran
+            como tales. "Seguimiento automático" contra "Recordarme" es la
+            distinción que el spec exige (FR-4.5, §2.3): sin ella, un
+            `nextFollowUpAt` con el mismo formato que un `due_at` humano
+            parecería el mismo tipo de compromiso. */}
+        <li>Seguimiento automático: {followUpStatusLabel(sales)}</li>
+        <li>Intentos automáticos: {sales.followUpCount}</li>
         <li>Motivo: {followUpReasonLabel(sales.followUpReason) ?? "—"}</li>
         <li>
-          Próximo:{" "}
+          Próxima automatización:{" "}
           {sales.nextFollowUpAt ? formatFollowUp(sales.nextFollowUpAt) : "—"}
         </li>
       </ul>
@@ -832,7 +806,8 @@ function SalesSection({
 
       {blockedHuman ? (
         <p className="mt-3 text-[12px] text-text-3">
-          No se puede programar: atención humana activa.
+          No se puede programar un seguimiento automático mientras la conversación
+          esté en atención humana.
         </p>
       ) : (
         <FollowUpScheduler

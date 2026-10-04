@@ -185,15 +185,130 @@ regla del motor). Un commit atómico:
 
 ## CUT 4 — Flujo operativo / UX integrada
 
-- [ ] T401 Revisión de naming: "Atención humana", "Marcar atendido / Esperando
+- [x] T401 Revisión de naming: "Atención humana", "Marcar atendido / Esperando
       respuesta", "Recordarme", "Reactivar IA"
-- [ ] T402 Nada de `handoffAt`, lanes, jobs ni timestamps internos en copy visible
-- [ ] T403 Nav con Agenda y conteo de vencidos
-- [ ] T404 Acciones coherentes en la conversación
-- [ ] T405 Estado humano/IA con la misma semántica en lista, hilo y Agenda
-- [ ] T406 (Opcional) Automáticos read-only con 👤/🤖, sin reimplementar el motor
-- [ ] T407 Gate + E2E de UI (o PENDIENTE con causa)
-- [ ] T408 Evidencia, un commit, árbol limpio
+- [x] T402 Nada de `handoffAt`, lanes, jobs ni timestamps internos en copy visible
+- [x] T403 Nav con Agenda y conteo de vencidos
+- [x] T404 Acciones coherentes en la conversación
+- [x] T405 Estado humano/IA con la misma semántica en lista, hilo y Agenda
+- [x] T406 (Opcional) Automáticos read-only con 👤/🤖, sin reimplementar el motor
+- [x] T407 Gate + E2E de UI (o PENDIENTE con causa)
+- [x] T408 Evidencia, un commit, árbol limpio
+
+### T406 · NO se hizo, y por qué (decisión de corte, no un olvido)
+
+La vista read-only de seguimientos automáticos en la Agenda se deja fuera a
+propósito, aunque el corte la tenía como opcional. Mostrarla exigía **cambiar el
+contrato `ReminderDto`** (añadir el estado del seguimiento y la fecha del
+automático), y este corte tiene prohibido cambiar DTOs. La alternativa —leer la
+tabla del motor desde la Agenda— es justo el acoplamiento que el spec §2.3
+prohíbe: la Agenda dejaría de ser un mecanismo humano independiente para
+convertirse en una segunda vista del motor.
+
+Lo que sí se hizo, sin tocar ningún contrato, es resolver en el panel la
+distinción 👤/🤖 que pedía FR-4.5: el lado humano se llama **"Recordarme"** y el
+automático **"Seguimiento automático"** / "Intentos automáticos" / "Próxima
+automatización". Con eso el operador ya sabe qué botón es suyo y cuál no, sin
+tratar de unify dos mecanismos que deben seguir separados. Queda como candidato a
+un corte propio que sí pueda cambiar `ReminderDto`.
+
+**Qué entró**
+
+Base: `73cd87c` (árbol limpio al empezar; cortes 1–3 cerrados). Este corte **no
+introduce estados ni endpoints de dominio**: integra los que ya existían. Lo que
+se toca es flujo, copy y una superficie de escritura nueva que delega en la
+función del corte 1.
+
+- `src/lib/operational-state.ts` (nuevo, puro): el vocabulario operativo en un
+  solo sitio. `estadoOperativo()` deriva el estado visible de
+  `{attention, aiEnabled, handoffAt}` y `estadoDeAtencion()` hace lo mismo desde
+  la fila de atención sola, que es lo que tiene la Agenda. `ETIQUETA_ESTADO` y
+  `EXPLICACION_ESTADO` son el copy; `vencidosDeAgenda()` lee el grupo `overdue`
+  que el servidor ya calculó. **No recalcula el reloj**: "vencido" llega derivado
+  en `needsAttentionNow`, igual que en los cortes 2 y 3.
+- `src/app/api/conversations/[id]/attention/route.ts` (nuevo): `POST` con
+  `{state: "waiting_client"}` en `.strict()`. La transición la ejecuta
+  `markAttentionWaitingClient` — **la misma función** que ya corren el envío
+  manual y el eco del dueño, así que "marcar atendido" y "contestar" no son dos
+  puertas parecidas sino la misma. 404 (no existe / otra organización), 409 (la
+  IA es la dueña / es del Laboratorio), 422 (cualquier otro estado). Publica
+  `conversation.updated` con el DTO ya derivado, que es lo que hace salir la fila
+  de la cola sin recargar.
+- `src/components/inbox/attention-block.tsx` (nuevo): el bloque que junta el
+  estado y las tres acciones. Aparece para **cualquier** conversación del humano
+  (hubo handoff o se apagó la IA a mano); antes, con la IA apagada solo había
+  "Recordarme", sin estado ni "Reactivar IA" — el hueco que dejaba el flujo
+  incoherente. "Marcar atendido" se ofrece solo en `por_atender`, que es
+  exactamente cuando hay una tarea.
+- `conversation-list.tsx`: la etiqueta de la fila pasa de "atención humana" (que
+  solo miraba `handoffAt`) al **estado operativo** compartido. Nuevo chip
+  "Comprometidos" detrás de "Por atender" (FR-4.3) y `flex-wrap` en la fila para
+  que quepan los cuatro sin aplastar el selector de etapa.
+- `bandeja-filtros.ts`: `comprometida()` y el campo `comprometidos`, sobre la
+  MISMA operación que el resto de contadores, para que el chip no pueda
+  discrepar de su listado. `FiltroBandeja` es un tipo local del cliente, no un
+  DTO: los tres filtros del corte 2 conservan su significado.
+- `app-nav.tsx`: la Agenda (enlace ya existente desde el corte 3) pasa a llevar
+  **contador de vencidos**, con la misma reactividad SSE que el de no leídas. Un
+  solo refetch en paralelo para los dos contadores e independientes entre sí: si
+  la Agenda falla, el número de no leídas no se congela. Lee el grupo `overdue`
+  tal cual, así que el número del nav y el chip "Por atender" no pueden
+  discrepar por construcción.
+- `contact-panel.tsx`: entra `AttentionBlock`; el motivo del handoff pasa al
+  bloque y se cuenta en castellano; el lado automático se nombra explícitamente
+  ("Seguimiento automático", "Intentos automáticos", "Próxima automatización")
+  para que no se confunda con el compromiso humano.
+- `src/lib/sales-ui.ts`: el lane `human` del badge de "Venta" se renombra a
+  "En manos de una persona". Decía "Atención humana", **la misma palabra que la
+  etiqueta de estado humano**: dos significados distintos con un solo nombre, y
+  se leía como un estado del ciclo cuando en realidad describía que el motor
+  automático dejó de trabajar la conversación.
+
+**T407 · gate + E2E EJECUTADOS**
+
+`pnpm typecheck && pnpm lint && pnpm build && pnpm test`: typecheck limpio, lint
+0 errores (3 warnings preexistentes), build OK y **1311 tests / 114 ficheros en
+verde** (9 skipped, opt-in de PostgreSQL). 30 casos nuevos en
+`operational-flow.test.ts`; `agenda-no-send.test.ts` pasa de 8 a 9 casos y su
+lista de ficheros cubre ya el endpoint nuevo, el bloque, el vocabulario
+compartido y los dos ficheros de la Bandeja.
+
+E2E `E2E_SECTION=025` (nuevo `scripts/e2e-operator-flow.mjs`): **84/84 checks
+VERDES**, dos veces seguidas, con app real en desarrollo, PostgreSQL real
+(`operator_workspace_test`), wa-mock + ai-mock y Playwright. Recorre el flujo
+completo como una persona: ver las dos preguntas, **abrir y comprobar que no
+saca**, "Marcar atendido" (2 → 1), "Recordarme" (Comprometidos 1 → 2), verlo en
+la Agenda, "Reactivar IA" que limpia y saca de la Agenda, y un inbound real
+seguido de una respuesta escrita a mano que sí sale. Camino infeliz completo:
+sin sesión, organización ajena, 409 de la IA y del Laboratorio, 422 por estado no
+permitido, y **la Agenda en 500** avisando sin romper la vista. Guion en
+`tests/e2e/013-flujo-operativo.md`.
+
+**Garantía medible que dejó el E2E**: el outbox del wa-mock crece
+**exactamente en 1** en todo el guion, y es el mensaje que la persona escribió a
+mano. Ni "marcar atendida", ni "recordarme", ni "reactivar IA", ni un recordatorio
+vencido mandan nada, y `sales_follow_up_job` queda intacta.
+
+**Hallazgos que dejó el E2E (arreglados en el corte)**
+
+1. El botón "Enviar" del composer está deshabilitado con el texto vacío
+   (`canSubmit`), así que usarlo como prueba de "la ventana de 24 h está
+   abierta" daba falso negativo. La comprobación mira el aviso real del composer.
+2. La ventana se abre por SSE: el panel ya está pintado con la conversación
+   anterior cuando el inbound aterriza. Se espera al `conversation.updated` en
+   vez de leer el estado en el mismo tick.
+3. Dos expectativas del guion mal calculadas (la Agenda acumula: al programar hay
+   3 items, no 2; al reactivar quedan 2, no 1). Corregidas.
+
+**Lo que este corte NO abre**
+
+- Sin cambios de contrato: ni DTOs, ni endpoints existentes, ni la lógica de
+  atención de 013, ni `src/server/sales/follow-ups/**`. El `ReminderDto` sigue
+  igual.
+- Etapas operativas en el pipeline, plantillas, envío proactivo y dashboards
+  nuevos: no objetivos del spec (§5).
+- Sigue pendiente de cortes anteriores: la FK compuesta de
+  `conversation_attention` (ver "Evidencia → PENDIENTE…", punto 1).
 
 ## CUT 5 — Verificación del workspace
 
@@ -222,16 +337,16 @@ regla del motor). Un commit atómico:
 |---|---|---|---|
 | handoff → Por atender | 2 | **verde** (023) | **verde** (`attention-hooks`, `attention-queue`) |
 | abrir no equivale a resolver | 1/2 | **verde** (023: `markRead` no cambia la cola) | **verde** (`attention-state`, `attention-hooks`) |
-| reply manual → estado coherente | 1 | pendiente (CUT 5) | **verde** (`attention-hooks`: echo + outbound) |
-| recordatorio futuro → Agenda, fuera de Por atender | 3 | fuera de Por atender **verde** (023); Agenda pendiente | **verde** (`attention-queue`) |
-| inbound antes de vencimiento → Por atender | 3 | pendiente (CUT 5) | **verde** (`attention-queue`, `attention-hooks`) |
-| recordatorio vencido → Por atender | 3/2 | **verde** (023) | **verde** (`attention-queue`) |
-| programar otro recordatorio | 3 | pendiente | pendiente |
-| reactivar IA | 1/4 | pendiente (CUT 5) | **verde** (`attention-hooks`) |
+| reply manual → estado coherente | 1/4 | **verde** (025: respuesta real desde el composer) | **verde** (`attention-hooks`, `operational-flow`) |
+| recordatorio futuro → Agenda, fuera de Por atender | 3/4 | **verde** (025) | **verde** (`attention-queue`, `operational-flow`) |
+| inbound antes de vencimiento → Por atender | 3/4 | **verde** (025) | **verde** (`attention-queue`, `attention-hooks`) |
+| recordatorio vencido → Por atender | 3/2/4 | **verde** (023, 025) | **verde** (`attention-queue`, `operational-flow`) |
+| programar otro recordatorio | 3/4 | **verde** (025: 1 → 2 compromisos) | **verde** (`operational-flow`) |
+| reactivar IA | 1/4 | **verde** (025: sale de la cola y de la Agenda) | **verde** (`attention-hooks`, `operational-flow`) |
 | Cliente / Perdido | 1 | pendiente (CUT 5) | **verde** (`attention-hooks`) |
 | aislamiento tenant | 1/2 | **verde** (023: dos orgs, API y UI) | **verde** (`attention-state`, `attention-hooks`, `attention-queue`) |
-| cero Graph en recordatorio humano | 1 | pendiente (CUT 5) | **verde** (`attention-no-send`) |
-| follow-ups automáticos sin regresión | 1/5 | pendiente (CUT 5) | **verde** (sin tocar expectativas) |
+| cero Graph en recordatorio humano | 1/4 | **verde** (025: el outbox solo crece con la respuesta escrita a mano) | **verde** (`attention-no-send`, `agenda-no-send`) |
+| follow-ups automáticos sin regresión | 1/5 | **verde** (025: `sales_follow_up_job` intacta) | **verde** (sin tocar expectativas) |
 
 ## Evidencia
 

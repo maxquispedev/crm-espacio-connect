@@ -18,19 +18,29 @@
 import type { ConversationDto } from "@/lib/types";
 import { cuentaComoAnuncio } from "@/lib/anuncios";
 import { matchesQuery } from "@/lib/search";
+import { tieneCompromiso } from "@/lib/operational-state";
 
 /**
  * Filtros de la fila de la Bandeja. `por_atender` es el primero de la fila
- * porque es la pregunta con la que arranca el día el operador (FR-4.3). Los
- * otros tres conservan su significado previo intacto (FR-2.6).
+ * porque es la pregunta con la que arranca el día el operador (FR-4.3), y
+ * `comprometidos` va justo detrás porque es la OTRA mitad de esa misma pregunta:
+ * qué tengo que hacer ahora y qué tengo comprometido para después. Los otros tres
+ * conservan su significado previo intacto (FR-2.6).
  */
-export type FiltroBandeja = "por_atender" | "all" | "unread" | "ads";
+export type FiltroBandeja =
+  | "por_atender"
+  | "comprometidos"
+  | "all"
+  | "unread"
+  | "ads";
 
 export type ResumenBandeja = {
   /** Lo que se pinta, ya filtrado por búsqueda + etapa + filtro. */
   visibles: ConversationDto[];
   /** Tamaño de la cola "Por atender" sobre la vista actual. */
   porAtender: number;
+  /** Compromisos con fecha viva: lo que hay en la Agenda ahora mismo. */
+  comprometidos: number;
   noLeidas: number;
   anuncios: number;
   /** Total tras búsqueda y etapa (lo que muestra "Todas"). */
@@ -48,13 +58,22 @@ export function necesitaAtencionAhora(c: ConversationDto): boolean {
 }
 
 /**
+ * La mitad "para después" de FR-4.3. Vive en `@/lib/operational-state` porque la
+ * Agenda usa la MISMA definición: un compromiso es un recordatorio FUTURO, y uno
+ * ya vencido no cuenta aquí porque para entonces ya es trabajo de "Por atender".
+ */
+export function comprometida(c: ConversationDto): boolean {
+  return tieneCompromiso(c);
+}
+
+/**
  * Resumen de la Bandeja para un filtro. Puro y sin estado: la lista es cliente
  * igual que hoy (`all`/`unread`/`ads`), sin endpoint propio para "Por atender" —
  * un endpoint nuevo además de sobrearquitectura, rompería la reactividad SSE
  * (plan §4.1).
  *
  * El orden de composición es el de siempre: búsqueda (nombre/teléfono) y después
- * etapa; los contadores de los tres chips se miden sobre ese mismo resultado
+ * etapa; los contadores de todos los chips se miden sobre ese mismo resultado
  * para que sean coherentes con lo que el usuario está mirando.
  */
 export function resumirBandeja(
@@ -80,21 +99,25 @@ export function resumirBandeja(
 
   // Cada subconjunto se calcula UNA vez; los contadores salen de aquí.
   const cola = searched.filter(necesitaAtencionAhora);
+  const compromisos = searched.filter(comprometida);
   const sinLeer = searched.filter((c) => c.unreadCount > 0);
   const deAnuncio = searched.filter((c) => cuentaComoAnuncio(c.anuncio));
 
   const visibles =
     filter === "por_atender"
       ? cola
-      : filter === "unread"
-        ? sinLeer
-        : filter === "ads"
-          ? deAnuncio
-          : searched;
+      : filter === "comprometidos"
+        ? compromisos
+        : filter === "unread"
+          ? sinLeer
+          : filter === "ads"
+            ? deAnuncio
+            : searched;
 
   return {
     visibles,
     porAtender: cola.length,
+    comprometidos: compromisos.length,
     noLeidas: sinLeer.length,
     anuncios: deAnuncio.length,
     total: searched.length,

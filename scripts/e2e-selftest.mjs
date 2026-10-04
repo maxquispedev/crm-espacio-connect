@@ -163,10 +163,16 @@ async function runSection021() {
 
 async function main() {
   // Cortes aislados: UI, demos, pago, la cola "Por atender" de 013 y la Agenda.
-  if (["020", "021", "022", "023", "024"].includes(process.env.E2E_SECTION)) {
+  if (["020", "021", "022", "023", "024", "025"].includes(process.env.E2E_SECTION)) {
     if (process.env.E2E_SECTION === "022") {
       const { runCommercialPaymentSelftest } = await import("./e2e-commercial-payment.mjs");
       await runCommercialPaymentSelftest({ BASE, api, ok, waitFor, getCookie: () => cookie });
+    } else if (process.env.E2E_SECTION === "025") {
+      // 013 C4 — Flujo operativo integrado. Misma garantía que 023/024: si esta
+      // sección corre, las tres acciones y la coherencia de estado se verificaron
+      // en pantalla con la app real.
+      const { runOperatorFlowSelftest } = await import("./e2e-operator-flow.mjs");
+      await runOperatorFlowSelftest({ BASE, api, ok, waitFor, getCookie: () => cookie });
     } else if (process.env.E2E_SECTION === "024") {
       // 013 C3 — Agenda de recordatorios humanos. Misma garantía que 023: si
       // esta sección corre, la Agenda se verificó en pantalla con la app real.
