@@ -1,7 +1,8 @@
 # Tasks — 011 Commercial Resources
 
 **Estado:** C1 implementado con gates técnicos verdes; BD real y E2E PENDIENTES.
-C2 implementado con gate técnico verde / E2E PENDIENTE; C3–C4 sin iniciar.
+C2 implementado con gate técnico verde / E2E PENDIENTE; C3 implementado con
+gate técnico verde / E2E PENDIENTE; pausa operativa pendiente; C4 sin iniciar.
 Dependency order: bootstrap → C1 → C2 → C3 → pausa operativa → C4.
 Un corte = sesión nueva de codex exec = objetivo único = commit atómico único.
 Prompts ejecutables autocontenidos: .ai/tasks/commercial-resources/01–04.
@@ -189,21 +190,78 @@ productivo. La comprobación del runner será estática; NO ejecutar pipeline.
 
 ## Corte 3 — Entrega automática de demos nativas
 
-**Estado:** PENDIENTE. **Commit previsto:** `feat(sales): entregar demos como video nativo`.
+**Estado:** IMPLEMENTADO; gate técnico VERDE. E2E happy/unhappy PENDIENTE.
+**Commit de cierre:** `feat(sales): entregar demos como video nativo`.
 
-- [ ] T1131 Routing puro de demos por acción y pedido vigente.
-- [ ] T1132 Sender media reutilizado, caption breve y origen IA compatible.
-- [ ] T1133 Sandbox media local, disponibilidad/fallos seguros y facts tras video.
-- [ ] T1134 Tests de entrega/facts/guards y E2E happy/unhappy; gates completos.
-- [ ] T1135 Actualizar tasks/CURRENT_STATE/docs relevantes, revisar diff, UN commit y árbol limpio.
+- [x] T1131 Routing puro de demos por acción y pedido vigente.
+- [x] T1132 Sender media reutilizado, caption breve y origen IA compatible.
+- [x] T1133 Sandbox media local, disponibilidad/fallos seguros y facts tras video.
+- [ ] T1134 Tests de entrega/facts/guards y gates completos VERDES; self-test 021
+  extendido e intentado, **E2E happy/unhappy PENDIENTE**, sin escenarios ejecutados.
+- [x] T1135 tasks/CURRENT_STATE/contratos/docs actualizados; diff revisado y
+  cierre en UN commit atómico. Hash por subject/git log, sin hash autorreferente.
 
-### Evidencia durable del corte
+### Evidencia durable del corte — 2026-10-03
 
-- HEAD inicial / commit final: pendiente.
-- Archivos y decisiones técnicas: pendiente.
-- Comandos/tests/gates y resultados: no ejecutados.
-- E2E happy/unhappy: no ejecutado; registrar causa si no disponible.
-- Pendientes y siguiente paso exacto: ejecutar solo este corte con su task.
+- HEAD inicial limpio: `73ab8ec82bfe8bb0c2a2106c45054a837224c929`, guardado en
+  `/tmp/commercial-c3-head`. Log sin C3 previo; C1/C2 contrastados con schema,
+  store scoped, validación MP4, persistencia local y API/UI administrativa reales.
+  Sus pendientes PostgreSQL/E2E siguen abiertos, no faltan dependencias de código.
+- Archivos clave: `src/server/sales/{demo-routing,demo-resource,orchestrator,writer}.ts`,
+  `src/server/ai/delivery.ts`, `src/server/inbox/send.ts`,
+  `src/server/lab/sandbox-case.ts`, tests `sales-demo-*`, sender/orchestrator/writer
+  y Lab/preview; `scripts/e2e-commercial-demos.mjs` y dispatch 021 del arnés existente.
+- Selección pura desde turnos del prospecto: payments para pagos/saldos/voucher/deuda
+  vigentes; panel para matrícula/alumnos/general; online tiene prioridad por acción
+  explícita. Último tema relevante, negaciones y menciones del vendedor probados.
+  Regla léxica limitada a este routing, sin decisión LLM nueva ni productos nuevos.
+- Store/asset scoped + bytes locales revalidados antes del writer. Disponibilidad
+  explícita; caption máximo 300 caracteres, sin enlaces ni afirmación de envío pasado.
+  Sender existente inferido como video/mp4, sin texto previo ni documento. Media IA
+  `origin=ai`, `aiGenerated=true` en éxito/fallo; default operador compatible.
+  prepareSend conserva guard is_test/ventana y no se cancelan follow-ups como manual.
+- DemoShownAt requiere media aceptada por Graph y persistida, o media+caption
+  persistidos en transacción sandbox. Texto honesto por ausencia/disco perdido no
+  cuenta ni programa after_demo; fallo de upload/Meta/ID/disco/persistencia/ventana
+  no marca fact ni reintenta. Ventana aplica handoff vigente; HUMAN/STOP, opt-in,
+  precio y follow-ups conservados. Sin payment action ni entrega de cobro.
+- Sandbox copia asset/bytes y persiste video+caption antes de sender/upload/Graph;
+  lectura tenant-safe proyecta caption para Lab/preview. Cleanup solo elimina copias
+  marcadas de conversaciones is_test del tenant; conserva recursos fuente.
+  Compensación no borra ante commit incierto. No WhatsApp ni destinatarios reales.
+- Constitution Check: I/III scoped y joins tenant-safe; II almacenamiento/sender
+  propios, sin servicios nuevos; IV webhook y no retry; VI spec previo; VII fallos
+  seguros; VIII conversación actual. V verde; IX **E2E pendiente**. No cambia decisión
+  comercial que sincronizar en Obsidian; pausa operacional del spec sigue pendiente.
+- Tests nuevos routing/caption **26** y pipeline demo **17**: orquestador/resolver,
+  store/FS/delivery/sender reales, mocks de estado/Jev/writer/Graph/upload y executor
+  BD en memoria, **no PostgreSQL real**. Limpieza sandbox verificada:
+  elimina copia propia, conserva fuente y archivo de tenant B (**17/17**). Cubren tres slots, video/caption/origen,
+  fact posterior, tenants A/B, fallos y sandbox con spies cero red. Regresión
+  Lab/demo de ocho archivos **123 pass**; preview/routing **46 pass** tras ajustes.
+- Gate completo en orden, **exit 0**:
+  `pnpm --pm-on-fail=ignore typecheck && pnpm --pm-on-fail=ignore lint && pnpm --pm-on-fail=ignore build && pnpm --pm-on-fail=ignore test`.
+  **1093 pass / 4 PostgreSQL skipped**, 102 archivos verdes / 1 omitido.
+  Lint 0 errores / 3 warnings previos (anuncio-origen/build-state). Sin cambios de
+  package/lock. Primer gate con sandbox alcanzó types/lint/build verdes, tests HTTP
+  con EPERM; repetición completa con sockets locales autorizados terminó exit 0.
+- `node --check scripts/e2e-selftest.mjs` y
+  `node --check scripts/e2e-commercial-demos.mjs`: **exit 0**.
+- Self-test 021 preparado: app+PG dedicados+mocks HTTP, inbound/pipeline real,
+  tres slots observando video+caption en outbox/hilo y fact; rechazo media y ausencia
+  sin fact, preview caption sin Graph. No se considera un 2xx/snapshot como entrega.
+  Comando exacto en quickstart: `E2E_SECTION=021 pnpm --pm-on-fail=ignore test:e2e`
+  con APP_BASE_URL localhost:3000, BD local `commercial_resources_test_c3`,
+  WA_MOCK_ENABLED=true, BOT_API_KEY placeholder y Graph/LLM/Jev localhost:3033.
+  **exit 1 antes del setup: ECONNREFUSED :3000**, tras autorizar sockets; primer
+  intento EPERM. App ausente; postgres/psql/pg_ctl/docker/ffmpeg no disponibles.
+  Ningún escenario happy/unhappy ejecutado, ningún MP4 generado ni codec probado.
+- Logs temporales `/tmp/commercial-c3-{typecheck,lint,build,test,e2e}.log`.
+- **No READY punta a punta**. Próximo paso exacto: provisionar entorno local
+  app+PostgreSQL dedicado+mocks+ffmpeg/Chromium, verificar pendientes C1/020 y
+  ejecutar 021 según quickstart; registrar evidencia. Mantener **PAUSA tras C3**
+  para verificar los tres MP4 reales en producción mediante operación autorizada,
+  sin deploy en esta sesión. OP1–OP4 y C4 sin iniciar; no runner/codex anidado.
 
 ## Pausa operativa tras 1–3
 

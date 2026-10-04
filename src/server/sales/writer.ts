@@ -60,6 +60,7 @@ export type WriteSalesReplyInput = {
   conversation: JevConversationTurn[];
   kb: KbEntry[];
   facts: DurableSalesFacts;
+  demo?: { slot: string; available: boolean };
   product?: VendeVelozProduct;
   policy?: VendeVelozCommercialPolicy;
   /**
@@ -201,6 +202,9 @@ function buildWriterSystemPrompt(input: WriteSalesReplyInput): string {
     humanHandoff
       ? `Decisión ya tomada (no la cambies): lane=human; handoff=true. Jev sugirió next_action=${nextAction} pero NO lo ejecutes en este mensaje; ángulo=${angle}; timing=${timing}.`
       : `Decisión ya tomada (no la cambies): next_action=${nextAction}; lane=${input.plan.lane}; ángulo=${angle}; timing=${timing}.`,
+    input.demo && !humanHandoff
+      ? `Recurso comercial ${input.demo.slot}: ${input.demo.available ? "disponible. Tu texto será SOLO el caption del video nativo: máximo 300 caracteres, sin enlaces ni afirmar entrega pasada." : "NO disponible. Responde brevemente que el video no está disponible ahora; no digas te envié, no inventes enlaces ni uses demos de KB."}`
+      : "",
     `Instrucción de este turno:\n${humanHandoff ? HUMAN_HANDOFF_INSTRUCTION : nextActionInstruction(nextAction, input.writerInstructions)}`,
   ].join("\n\n");
 }
@@ -251,7 +255,7 @@ function defaultNextActionInstruction(action: SalesPlan["nextAction"]): string {
     case "ask_more_questions":
       return "Haz como máximo UNA pregunta esencial. No preguntes por preguntar.";
     case "show_operations_demo":
-      return "Explica brevemente el flujo operativo relevante y orienta a ver cómo se centralizan alumnos, pagos, ventas, horarios y asistencia. Si la KB tiene un recurso real de demo, úsalo. Nunca inventes una URL.";
+      return "Explica brevemente el flujo operativo relevante y orienta a ver cómo se centralizan alumnos, pagos, ventas, horarios y asistencia. El CRM entrega el recurso comercial como video nativo. Redacta solo su caption breve, sin URL.";
     case "show_online_enrollment_demo":
       return "Centra la respuesta en matrícula o inscripción online: el lead expresó esa necesidad. No inventes URL.";
     case "present_price":

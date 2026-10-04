@@ -534,3 +534,11 @@ FOLLOW_UP_E2E=1 node --env-file=/tmp/app/.env scripts/e2e-follow-ups.mjs
 El arnés usa una cuenta/org exclusiva, elimina sus contactos de pruebas
 al iniciar y prueba fechas también con Node en America/Lima. No usar con
 datos reales. Para el E2E general sigue disponible pnpm test:e2e.
+
+### Demos nativas — spec 011 C3
+
+El envío de demo IA no cancela la secuencia como reply manual: media lleva
+origin=ai y aiGenerated=true (incluidos failed). after_demo solo se programa
+tras aceptación/persistencia de video real; fallback textual por recurso ausente
+y fallos de media no programan after_demo. Sandbox sigue sin scheduling. No
+cambian worker, cadencias, reintentos técnicos ni reglas de silencio.

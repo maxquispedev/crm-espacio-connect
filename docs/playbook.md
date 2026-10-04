@@ -577,6 +577,13 @@ Los reemplazos conservan media histórica. Si un guardado devuelve error,
 conserva el formulario y recarga para comprobar el estado persistido antes de
 reintentar. MEDIA_DIR debe estar en un volumen persistente para sobrevivir redeploy.
 
-Este corte administra recursos; su entrega automática por Jev llegará en los
-cortes siguientes. Gate técnico verde, pero **E2E UI/codec/reinicio pendiente**
+El corte 3 entrega estas demos como video nativo con caption breve cuando Jev
+lo indica. Pagos/saldos/voucher/deuda usan Pagos y saldos; matrícula/alumnos/
+general usan Matrícula y panel; la acción online usa Matrícula online. No se
+envían links de KB. Si falta el video, el agente lo informa sin marcar demo.
+Prueba rápida y Lab muestran el caption de la simulación sin enviar WhatsApp. Gate técnico verde, pero **E2E UI/codec/reinicio pendiente**
 en este entorno sin app/BD/ffmpeg: no está verificado punta a punta.
+
+Pausa obligatoria después de C3: verificar los tres MP4 reales y el volumen
+persistente en producción antes de C4. Sin deploy automático; instrucciones
+de pago todavía no habilitadas. E2E 021 de entrega nativa pendiente por entorno.

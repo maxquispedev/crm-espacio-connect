@@ -30,9 +30,10 @@
  * preview proyecta decisión + plan + writer.
  */
 
-import { asc, eq, isNotNull } from "drizzle-orm";
+import { asc, eq, isNotNull, and, sql } from "drizzle-orm";
 
 import { getDb, schema } from "@/lib/db";
+import { deleteMediaFile } from "@/server/whatsapp/media";
 import { newId } from "@/lib/db/ids";
 import { scoped } from "@/lib/db/tenant";
 import { createLeadInStage, findFirstOpenStage } from "@/server/leads/stage-gateway";
@@ -149,6 +150,22 @@ export async function cleanupSandboxCase(input: {
   contactId: string;
 }): Promise<void> {
   const db = getDb();
+  // Solo copias creadas por deliverDemo en casos is_test; nunca recursos fuente.
+  const conversations = await db.select({ id: schema.conversation.id }).from(schema.conversation).where(
+    scoped(schema.conversation.organizationId, input.organizationId,
+      eq(schema.conversation.contactId, input.contactId), eq(schema.conversation.isTest, true))
+  );
+  for (const conversation of conversations) {
+    const assets = await db.select({ id: schema.mediaAsset.id }).from(schema.mediaAsset).where(
+      scoped(schema.mediaAsset.organizationId, input.organizationId,
+        sql`${schema.mediaAsset.payload}->>'sandboxConversationId' = ${conversation.id}`)
+    );
+    for (const asset of assets) {
+      await db.delete(schema.mediaAsset).where(scoped(schema.mediaAsset.organizationId, input.organizationId,
+        eq(schema.mediaAsset.id, asset.id), sql`${schema.mediaAsset.payload}->>'sandboxConversationId' = ${conversation.id}`));
+      await deleteMediaFile(input.organizationId, asset.id);
+    }
+  }
   await db.delete(schema.contact).where(
     scoped(
       schema.contact.organizationId,
@@ -211,8 +228,12 @@ export async function readSandboxMessages(input: {
 }): Promise<{ direction: string; text: string | null }[]> {
   const db = getDb();
   const rows = await db
-    .select({ direction: schema.message.direction, text: schema.message.text })
+    .select({ direction: schema.message.direction, text: schema.message.text, caption: schema.mediaAsset.caption })
     .from(schema.message)
+    .leftJoin(schema.mediaAsset, and(
+      eq(schema.message.mediaAssetId, schema.mediaAsset.id),
+      eq(schema.mediaAsset.organizationId, schema.message.organizationId)
+    ))
     .where(
       scoped(
         schema.message.organizationId,
@@ -221,5 +242,5 @@ export async function readSandboxMessages(input: {
       )
     )
     .orderBy(asc(schema.message.createdAt));
-  return rows.map((r) => ({ direction: r.direction, text: r.text ?? null }));
+  return rows.map((r) => ({ direction: r.direction, text: r.text ?? r.caption ?? null }));
 }

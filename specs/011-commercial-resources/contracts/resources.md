@@ -160,3 +160,38 @@ Guardar cobro. Upload no pierde cambios de cobro aún sin guardar. Error conserv
 formulario/preview anteriores y libera controles. No escribe ConfigV1 ni KB.
 E2E 020/codec/reinicio y constraints físicos PostgreSQL pendientes en este entorno;
 ver tasks.md y quickstart. No nueva decisión comercial para Obsidian.
+
+## Entrega runtime de demos — corte 3
+
+Las siete acciones 1.0 permanecen iguales. `selectDemoSlot` es puro: online
+explícito gana; operations toma el último tema relevante del prospecto, nunca
+el vendedor. Pagos/saldos/voucher/deuda positivos eligen payments; matrícula,
+alumnos o pedido general y negaciones de interés en pagos eligen panel. Un
+asentimiento sin tema conserva el contexto. Esta selección léxica es acotada,
+no pretende comprender todas las paráfrasis ni añade una evaluación LLM.
+
+`loadDemoVideo` lee recurso y media con scoped, exige disponibilidad local y
+revalida los bytes MP4 con el validador administrativo. Nunca descarga Graph
+ni sustituye otro slot. Writer recibe slot+disponibilidad; texto ausente usa
+respuesta honesta controlada por código. Caption máximo 300 caracteres, sin
+URL ni afirmación de entrega pasada; salida incompatible usa caption breve
+por slot. El caption acompaña al video, nunca un texto previo de demo.
+
+`deliverDemo` usa el sender existente con `aiGenerated=true`, persistiendo
+`origin=ai` incluso en failed; default del sender sigue siendo operador.
+`prepareSend` conserva sandbox y ventana. Completar significa que el sender
+retorna después de aceptación Graph con ID y persistencia outbound. Ningún
+fallo o fallback textual marca demo ni programa after_demo; no retry ni segundo
+envío tras resultado incierto. Precio y acciones/handoff vigentes conservados.
+
+Sandbox copia bytes localmente y persiste asset con caption + mensaje video
+(text=null, sent simulado, origen IA) en transacción antes de cualquier sender,
+upload o Graph. Facts solo tras completar esa persistencia. Las copias se
+marcan en payload con sandboxConversationId; cleanup del caso elimina solo
+esas copias del tenant/caso is_test, nunca el recurso original. Un commit
+incierto conserva disco si no puede probar ausencia. Lab/preview proyectan
+caption mediante join tenant-safe si message.text es null.
+
+E2E 021 preparado e intentado, PENDIENTE por falta de app/PG local; ver tasks y
+quickstart. Pausa tras C3 para verificar MP4 reales en producción con permiso
+operativo; esta sesión no despliega ni inicia pago/C4.

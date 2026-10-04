@@ -3,7 +3,7 @@ import { getDb, schema } from "@/lib/db";
 import { scoped } from "@/lib/db/tenant";
 import { getConfigByVersionId, type LoadedPlaybookVersion } from "@/lib/sales/playbook/loader";
 import { publish } from "@/server/events/bus";
-import { applyHandoff, deliverReply } from "@/server/ai/delivery";
+import { applyHandoff, deliverReply, deliverDemo } from "@/server/ai/delivery";
 import { buildJevSalesState } from "@/server/sales/build-state";
 import { evaluateJev } from "@/server/sales/client";
 import type { PipelineSemantic, SalesPlan } from "@/server/sales/resolve-plan";
@@ -14,6 +14,8 @@ import { writeSalesReply } from "@/server/sales/writer";
 import { StageGatewayError, moveLeadStage } from "@/server/leads/stage-gateway";
 import { reportStageChangeOnMove } from "@/server/attribution/report-on-stage-change";
 import { JEV_SALES_QUESTIONS_V2 } from "@/server/sales/questions";
+import { selectDemoSlot } from "@/server/sales/demo-routing";
+import { loadDemoVideo, demoCaption, DEMO_UNAVAILABLE_TEXT } from "@/server/sales/demo-resource";
 import type { OfferBlock, WriterInstructions } from "@/server/sales/writer";
 
 type Conversation = typeof schema.conversation.$inferSelect;
@@ -170,6 +172,9 @@ export async function runSalesOrchestratorTurn(
 
   let sent = false;
   if (shouldWrite) {
+    const demoSlot = plan.lane !== "human" && plan.lane !== "stop" && !plan.shouldHandoff
+      ? selectDemoSlot(plan.nextAction, built.state.conversation) : null;
+    const demo = demoSlot ? await loadDemoVideo(organizationId, demoSlot) : null;
     const kb = await loadKb(organizationId);
     // T307 — overrides para el writer: el playbook gana sobre los
     // defaults VENDE_VELOZ_*. Si llega `null` o no hay override,
@@ -182,6 +187,7 @@ export async function runSalesOrchestratorTurn(
     const written = await writeSalesReply({
       decision: jev.decision,
       plan,
+      demo: demoSlot ? { slot: demoSlot, available: demo !== null } : undefined,
       conversation: built.state.conversation,
       kb,
       facts: {
@@ -203,13 +209,19 @@ export async function runSalesOrchestratorTurn(
     if (written.ok && written.text) {
       // deliverReply persiste is_test localmente sin llamar a WhatsApp.
       // Su resultado también gobierna los facts durables del sandbox.
-      sent = await deliverReply(conversation, written.text);
+      let demoDelivered = false;
+      if (demoSlot && demo) {
+        demoDelivered = await deliverDemo(conversation, demo.file, demoCaption(demoSlot, written.text));
+        sent = demoDelivered;
+      } else {
+        sent = await deliverReply(conversation, demoSlot ? DEMO_UNAVAILABLE_TEXT : written.text);
+      }
       if (sent) {
-        await persistDeliveryFacts(organizationId, leadCtx.lead.id, plan);
+        await persistDeliveryFacts(organizationId, leadCtx.lead.id, plan, demoDelivered);
         // T308 — sandbox suprime follow-ups. Las filas
         // sales_follow_up_job no se crean en `is_test=true`, así la
         // corrida de Laboratorio termina sin jobs pendientes.
-        if (!isTest) {
+        if (!isTest && (!demoSlot || demoDelivered)) {
           await scheduleNextFollowUp({
             organizationId,
             leadId: leadCtx.lead.id,
@@ -331,7 +343,8 @@ async function persistDecision(input: {
 async function persistDeliveryFacts(
   organizationId: string,
   leadId: string,
-  plan: SalesPlan
+  plan: SalesPlan,
+  demoDelivered: boolean
 ): Promise<void> {
   if (plan.lane === "human" || plan.shouldHandoff) return;
 
@@ -341,8 +354,8 @@ async function persistDeliveryFacts(
     patch.pricePresentedAt = now;
   }
   if (
-    plan.nextAction === "show_operations_demo" ||
-    plan.nextAction === "show_online_enrollment_demo"
+    demoDelivered && (plan.nextAction === "show_operations_demo" ||
+    plan.nextAction === "show_online_enrollment_demo")
   ) {
     patch.demoShownAt = now;
   }

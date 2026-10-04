@@ -226,4 +226,28 @@ describe("sendMediaMessage — override kind=document", () => {
       })
     ).rejects.toMatchObject({ code: "unsupported_type" });
   });
+  it.each([true, false])("media IA=%s conserva video/caption y cancelación compatible", async aiGenerated => {
+    const { sendMediaMessage } = await import("@/server/inbox/send");
+    await sendMediaMessage({ conversationId: "cv_1", organizationId: "org_1", aiGenerated,
+      file: { data: Buffer.from("video"), mimeType: "video/mp4" }, caption: "Así funciona" });
+    const sent = graphRequest.mock.calls[0]![1].body;
+    expect(sent).toMatchObject({ type: "video", video: { caption: "Así funciona" } });
+    expect(insertedAssets[0]?.caption).toBe("Así funciona");
+    expect(insertedMessages[0]).toMatchObject({ origin: aiGenerated ? "ai" : "operator", aiGenerated, type: "video", text: null });
+    expect(cancelFollowUpsOnManualReply).toHaveBeenCalledTimes(aiGenerated ? 0 : 1);
+  });
+
+  it.each(["upload", "graph", "missing-id"])("fallo %s conserva origin=ai sin cancelar follow-ups ni retry", async failure => {
+    const { sendMediaMessage } = await import("@/server/inbox/send");
+    if (failure === "upload") uploadGraphMedia.mockRejectedValue(new Error("upload"));
+    if (failure === "graph") graphRequest.mockRejectedValue(new Error("Graph"));
+    if (failure === "missing-id") graphRequest.mockResolvedValue({});
+    await expect(sendMediaMessage({ conversationId: "cv_1", organizationId: "org_1", aiGenerated: true,
+      file: { data: Buffer.from("video"), mimeType: "video/mp4" }, caption: "Demo" })).rejects.toThrow();
+    expect(insertedMessages[0]).toMatchObject({ status: "failed", origin: "ai", aiGenerated: true });
+    expect(cancelFollowUpsOnManualReply).not.toHaveBeenCalled();
+    expect(uploadGraphMedia).toHaveBeenCalledTimes(1);
+    expect(graphRequest).toHaveBeenCalledTimes(failure === "upload" ? 0 : 1);
+  });
+
 });

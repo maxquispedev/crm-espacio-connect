@@ -94,6 +94,7 @@ function evalClause(clause: Clause | undefined, row: Row): boolean {
     return valueOf(row, clause.col) === right;
   }
   if (clause.kind === "null") return valueOf(row, clause.col) == null;
+  if (clause.kind === "sql") return false; // no payload sandbox en los fixtures de esta suite
   if (clause.kind === "notNull") return valueOf(row, clause.col) != null;
   if (clause.kind === "in")
     return (clause.values as unknown[]).includes(valueOf(row, clause.col));
@@ -139,11 +140,13 @@ const fakeDb = {
     let clause: Clause;
     let ordering: { col: string; direction: number } | undefined;
     let cap = Infinity;
+    let join: { table: string; clause: Clause } | undefined;
     const q: Record<string, unknown> = {
       from(t: unknown) {
         table = tableNameOf(t);
         return q;
       },
+      leftJoin(t: unknown, c: Clause) { join = { table: tableNameOf(t), clause: c }; return q; },
       where(c: Clause) {
         clause = c;
         return q;
@@ -160,6 +163,14 @@ const fakeDb = {
         let matched = bucket(table)
           .map((r) => ({ ...r, ...qualified(table, r) }))
           .filter((r) => evalClause(clause, r));
+        if (join) {
+          const currentJoin = join;
+          matched = matched.flatMap(r => {
+            const joined = bucket(currentJoin.table).map(a => ({ ...r, ...qualified(currentJoin.table, a) }))
+              .filter(a => evalClause(currentJoin.clause, a));
+            return joined.length ? joined : [r];
+          });
+        }
         if (ordering) {
           const { col, direction } = ordering;
           matched.sort((a, b) => {
@@ -600,6 +611,20 @@ describe("Prueba rápida — POST /api/lab/preview", () => {
     expect(getPublishedConfigForOrg).toHaveBeenCalledTimes(1);
     // Ni una sola resolución por id: el `versionId` del body se ignora.
     expect(getConfigByVersionId).not.toHaveBeenCalled();
+  });
+
+  it("media sin message.text proyecta caption en writer del preview", async () => {
+    runSalesOrchestratorTurn.mockImplementation(async input => {
+      const lead = findLeadFor(input)!;
+      lead.lastJevDecision = jevSnapshot("pbv_pub_a", 1);
+      tables.mediaAsset = [{ id: "ma_caption", organizationId: input.organizationId, caption: "Caption de demo nativa" }];
+      tables.message!.push({ id: "msg_caption", organizationId: input.organizationId,
+        conversationId: input.conversationId, direction: "out", text: null, type: "video", mediaAssetId: "ma_caption", createdAt: new Date() });
+    });
+    const response = await preview(post({ conversation: [{ from: "lead", text: "muéstrame la demo" }] }));
+    expect(response.status).toBe(200);
+    expect((await response.json()).writer.text).toBe("Caption de demo nativa");
+    expect(sendText).not.toHaveBeenCalled();
   });
 
   /* --- 4 --- */

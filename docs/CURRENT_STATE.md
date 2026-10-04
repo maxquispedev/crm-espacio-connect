@@ -1,5 +1,64 @@
 # CURRENT STATE — Espacio Connect
 
+**Actualizado: 2026-10-03 — Spec 011, C3: demos como video nativo implementadas.**
+
+Objetivo único: entrega automática de demos configuradas en C1/C2. Commit de
+cierre `feat(sales): entregar demos como video nativo`; HEAD inicial limpio
+`73ab8ec82bfe8bb0c2a2106c45054a837224c929`. Un commit atómico; sin deploy/push.
+
+Routing puro desde el último tema relevante del prospecto: operaciones elige
+payments para pagos/saldos/voucher/deuda vigente y panel para matrícula/alumnos/
+general; acción explícita online tiene prioridad. Negaciones y menciones del
+vendedor probadas. Regla léxica limitada, sin nueva decisión LLM/producto.
+Recurso y asset scoped, bytes MP4 locales revalidados; writer conoce disponibilidad.
+Caption breve sin enlaces, entrega con sendMediaMessage existente como video nativo.
+Media IA conserva origin=ai/aiGenerated=true también en failed; default operador y
+prepareSend is_test/ventana intactos. No cancelación de follow-ups como reply manual.
+
+DemoShownAt solo después de aceptación Graph + persistencia o simulación sandbox
+persistida. Ausencia/corrupción/disco perdido responde texto honesto sin fact ni
+after_demo. Upload/Meta/ID/disco/persistencia/ventana fallando no cuentan ni causan
+retry/segundo mensaje. HUMAN/STOP, opt-in, facts precio y follow-ups vigentes.
+Sandbox persiste copia local de media+caption en transacción antes de sender/red;
+Lab/preview proyectan caption con join tenant-safe. Cleanup restringido a copias
+marcadas de casos is_test, conserva recursos fuente. Sin payment action/cobro.
+
+**Gate técnico VERDE:** typecheck → lint → build → test, **exit 0** con
+`pnpm --pm-on-fail=ignore`; **1093 pass / 4 PostgreSQL skipped**, 102 archivos
+verdes / 1 omitido. Lint 0 errores / 3 warnings previos. Repetición completa con
+sockets locales autorizados tras EPERM de tests HTTP en sandbox. Routing/caption
+26 tests nuevos y pipeline demo 17, sender/orchestrator/writer y Lab/preview
+extendidos. Dobles BD en memoria, FS real, mocks de proveedores; no sustituyen PG.
+Ambos scripts E2E parsean (`node --check`, exit 0). Comandos y evidencia durable
+en `specs/011-commercial-resources/tasks.md`; logs `/tmp/commercial-c3-*.log`.
+
+**E2E 021 happy/unhappy PENDIENTE:** arnés existente extendido con proveedor HTTP
+mock local y MP4 sintético fuera de Git: inbound/pipeline real, tres slots,
+video+caption en outbox/hilo, fact posterior; rechazo media/ausencia sin fact y
+preview sandbox sin Graph. Intento `E2E_SECTION=021 pnpm --pm-on-fail=ignore test:e2e`
+con app/BD/mocks locales salió **1 antes de setup**, ECONNREFUSED :3000 tras
+autorizar sockets (primer intento EPERM). App ausente; postgres/psql/pg_ctl/docker/
+ffmpeg no disponibles. Ningún escenario en vivo ni codec/reproducción probado.
+C1 BD física y C2 E2E UI/reinicio siguen pendientes. **No READY punta a punta**;
+T1134 abierto. Constitution Check V verde, IX pendiente; sin decisión comercial
+nueva que sincronizar en Obsidian.
+
+Archivos clave: `src/server/sales/{demo-routing,demo-resource,orchestrator,writer}.ts`,
+`src/server/ai/delivery.ts`, `src/server/inbox/send.ts`,
+`src/server/lab/sandbox-case.ts`, tests sales-demo/sender/sales/Lab,
+`scripts/e2e-commercial-demos.mjs`, arnés sección 021, contrato resources y
+quickstart. Contratos de dominio actualizados en SALES_ORCHESTRATOR,
+SALES_FOLLOW_UPS y playbook.
+
+**Siguiente paso exacto: PAUSA tras C3.** Provisionar app+PostgreSQL local dedicado+
+mocks+ffmpeg/Chromium; aplicar/repetir migración y suite opt-in C1, ejecutar 020
+con reinicio administrado y 021 según quickstart, registrar evidencia real.
+Después verificar los tres MP4 reales persistidos/reproducibles como videos nativos
+en producción mediante operación autorizada (OP1–OP4). Esta sesión no despliega
+ni contacta WhatsApp real; C4 no iniciado. STOP tras commit único y árbol limpio.
+
+---
+
 **Actualizado: 2026-10-03 — Spec 011, C2: administración de demos y cobro implementada.**
 
 Objetivo único: **Comercial / Jev → Recursos comerciales**, con API administrativa

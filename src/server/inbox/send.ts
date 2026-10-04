@@ -220,6 +220,8 @@ export async function sendMediaMessage(input: {
   organizationId: string;
   file: { data: Buffer; mimeType: string; fileName?: string };
   caption?: string;
+  /** Default operador compatible; IA no cancela seguimientos manualmente. */
+  aiGenerated?: boolean;
   /** Override tipado del kind (ver `validateOutgoing` para constraints). */
   kind?: FileMediaKind;
 }): Promise<SendResult> {
@@ -296,7 +298,8 @@ export async function sendMediaMessage(input: {
       type: kind,
       text: null,
       status: "pending",
-      origin: "operator",
+      origin: input.aiGenerated ? "ai" : "operator",
+      aiGenerated: input.aiGenerated,
       mediaAssetId: assetId,
       media: asset,
     });
@@ -327,7 +330,8 @@ export async function sendMediaMessage(input: {
       text: null,
       status: "failed",
       error: sendErr.message,
-      origin: "operator",
+      origin: input.aiGenerated ? "ai" : "operator",
+      aiGenerated: input.aiGenerated,
       mediaAssetId: assetId,
       media: asset,
     });

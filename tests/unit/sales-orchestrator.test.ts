@@ -5,9 +5,12 @@ import type { schema } from "@/lib/db";
 
 type Stage = typeof schema.pipelineStage.$inferSelect;
 
-const graphRequest = vi.fn();
+const graphRequest = vi.hoisted(() => vi.fn());
 const evaluateJev = vi.hoisted(() => vi.fn());
 const writeSalesReply = vi.hoisted(() => vi.fn());
+const deliverDemo = vi.hoisted(() => vi.fn());
+const loadDemoVideo = vi.hoisted(() => vi.fn());
+vi.mock("@/server/sales/demo-resource", async (original) => ({ ...await original<object>(), loadDemoVideo }));
 const deliverReply = vi.hoisted(() => vi.fn());
 const applyHandoff = vi.hoisted(() => vi.fn());
 const buildJevSalesState = vi.hoisted(() => vi.fn());
@@ -19,7 +22,7 @@ vi.mock("@/lib/meta/client", async (importOriginal) => {
 
 vi.mock("@/server/sales/client", () => ({ evaluateJev }));
 vi.mock("@/server/sales/writer", () => ({ writeSalesReply }));
-vi.mock("@/server/ai/delivery", () => ({ applyHandoff, deliverReply }));
+vi.mock("@/server/ai/delivery", () => ({ applyHandoff, deliverReply, deliverDemo }));
 vi.mock("@/server/sales/build-state", () => ({ buildJevSalesState }));
 
 const selectQueue: unknown[][] = [];
@@ -165,6 +168,8 @@ describe("runSalesOrchestratorTurn", () => {
     selectQueue.length = 0;
     leadPatches.length = 0;
     graphRequest.mockReset();
+    deliverDemo.mockReset(); deliverDemo.mockResolvedValue(true);
+    loadDemoVideo.mockReset(); loadDemoVideo.mockResolvedValue({ file: { data: Buffer.from("demo"), mimeType: "video/mp4" } });
     evaluateJev.mockReset();
     writeSalesReply.mockReset();
     deliverReply.mockReset();
@@ -204,6 +209,22 @@ describe("runSalesOrchestratorTurn", () => {
     });
     expect(leadPatches[0]).not.toHaveProperty("demoShownAt");
     expect(leadPatches[1]?.demoShownAt).toBeInstanceOf(Date);
+    expect(deliverDemo).toHaveBeenCalledWith(CONVERSATION, expect.objectContaining({ mimeType: "video/mp4" }), "mensaje");
+    expect(deliverReply).not.toHaveBeenCalled();
+  });
+
+  it.each(["absent", "failed"])("demo %s no registra fact falso", async failure => {
+    queueHappyPath("show_operations_demo");
+    if (failure === "absent") loadDemoVideo.mockResolvedValue(null);
+    else deliverDemo.mockResolvedValue(false);
+    const { runSalesOrchestratorTurn } = await import("@/server/sales/orchestrator");
+    await runSalesOrchestratorTurn({ organizationId: "org_1", conversationId: "cv_1", conversation: CONVERSATION as never });
+    expect(leadPatches.some(p => "demoShownAt" in p)).toBe(false);
+    if (failure === "absent") {
+      expect(deliverDemo).not.toHaveBeenCalled();
+      expect(deliverReply).toHaveBeenCalledWith(CONVERSATION, expect.stringContaining("no está disponible"));
+      expect(writeSalesReply.mock.calls[0]![0].demo.available).toBe(false);
+    } else expect(deliverReply).not.toHaveBeenCalled();
   });
 
   it("si el writer falla, no se marca precio y el writer no decide", async () => {

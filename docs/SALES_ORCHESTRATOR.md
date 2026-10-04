@@ -673,3 +673,25 @@ y CAPI conserva su guard sandbox. Transcript y outcomes se copian al caso
 durable antes del juez; finalmente se borra el contacto por cascada, sin
 borrar `agent_test_case` (su FK de conversación queda null). Pipeline excluye
 contactos archivados reales y sintéticos. No cambia la estrategia comercial.
+
+## Demos nativas — spec 011, corte 3 (2026-10-03)
+
+Cuando el plan permite demo (sin HUMAN/STOP/handoff), el CRM selecciona recurso
+por pedido vigente del prospecto: operations → payments para pagos/saldos/
+voucher/deuda; operations general/matrícula/alumnos → panel; acción online →
+online con prioridad explícita. Solo recursos del tenant y bytes MP4 locales,
+sin link de KB ni sustitución de slot. Writer informado de disponibilidad;
+un video nativo + caption breve por sendMediaMessage, sin texto previo.
+
+`demoShownAt` ya no prueba entrega de texto: requiere sender aceptado por Graph
+con ID y outbound persistido, o media+caption persistidos en sandbox. Ausencia,
+disco perdido, ventana, upload/Meta/persistencia fallando y fallback textual
+no cuentan ni programan after_demo. No retry ciego ni segundo envío incierto.
+Media IA usa origin=ai/aiGenerated=true también en failed; no cancela follow-ups
+como respuesta manual. Sender operador y guards se conservan.
+
+Lab y preview leen caption cuando message.text=null. Sandbox persiste local
+sin sender/upload/Graph, y limpia copias por marcador propio sin borrar recursos.
+Siete acciones 1.0, precio, opt-in y HUMAN/STOP conservados. E2E 021 PENDIENTE
+por entorno; el gate técnico no equivale a READY punta a punta. Tras este corte,
+pausa para verificar los tres MP4 reales antes de C4; no deploy automático.

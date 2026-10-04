@@ -160,4 +160,14 @@ describe("writeSalesReply", () => {
     expect(system).not.toMatch(/Presenta la oferta vigente/);
     expect(system).not.toMatch(/Instrucción de este turno \(show_operations_demo\)/);
   });
+  it.each([true, false])("writer conoce disponibilidad demo=%s y redacta caption sin link de KB", async available => {
+    const decision = makeDecision({ nextAction: "show_operations_demo" });
+    const plan = resolveSalesPlan({ decision, currentSalesState: BASE_FACTS, currentPipelineStage: "new" });
+    await writeSalesReply({ decision, plan, conversation: [], kb: [], facts: BASE_FACTS,
+      demo: { slot: "demo_payments_balances", available } });
+    const prompt = chatJson.mock.calls[0]![1][0].content;
+    expect(prompt).toContain(available ? "SOLO el caption del video nativo" : "NO disponible");
+    expect(prompt).not.toContain("Si la KB tiene un recurso real de demo, úsalo");
+  });
+
 });

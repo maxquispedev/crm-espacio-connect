@@ -112,3 +112,34 @@ MEDIA_DIR. El arnés espera health y comprueba UI, cobro, IDs y bytes tras reini
 Sin argv de reinicio, imprime **PENDIENTE**: una recarga de página no cuenta como
 reinicio. La comprobación de los tres MP4 reales en WhatsApp sigue siendo la
 pausa operativa después de C3; no se ejecuta en C2.
+
+## Self-test C3 — sección 021 aislada
+
+La app de desarrollo debe usar BD dedicada local migrada y MEDIA_DIR temporal,
+Jev/LLM/Graph hacia el proveedor HTTP mock que la sección levanta en :3033.
+Variables placeholder de auth/cifrado propias del entorno local. Nunca usar
+proceso ni BD productivos. Requiere app, PostgreSQL, ffmpeg/libx264 (solo test).
+
+```bash
+APP_BASE_URL=http://127.0.0.1:3000 \
+DATABASE_URL=postgresql://local_test:local_test@127.0.0.1:5432/commercial_resources_test_c3 \
+E2E_SECTION=021 WA_MOCK_ENABLED=true BOT_API_KEY=e2e-local-placeholder \
+META_GRAPH_BASE_URL=http://127.0.0.1:3033/graph \
+OPENROUTER_BASE_URL=http://127.0.0.1:3033 \
+TYPESAFE_JEV_ENDPOINT=http://127.0.0.1:3033/jev \
+pnpm --pm-on-fail=ignore test:e2e
+```
+
+Las mismas URLs deben estar en la app; configurar también modelos/tokens mock.
+021 tiene dispatch aislado en el arnés existente porque su proveedor propio
+necesita esas URLs de arranque; no altera los proveedores de las otras secciones.
+Graph mock reenvía solo a wa-mock/graph localhost, conserva outbox observable y
+simula rechazo; Jev/writer mocks no llaman proveedores externos. Se conduce
+inbound → pipeline real → video/caption en outbox y hilo → fact, los tres slots,
+fallo media sin fact, recurso ausente sin fact y preview sandbox sin Graph.
+El MP4 compatible es sintético en /tmp, nunca Git. Tests unitarios de estructura
+MP4 no prueban codec. 021 no reemplaza 020 ni la pausa de videos productivos.
+
+Intento C3: exit 1 antes de setup, ECONNREFUSED :3000 tras autorizar sockets;
+primer intento EPERM. App/PG/ffmpeg no disponibles. **Happy/unhappy PENDIENTES**,
+ningún escenario en vivo ejecutado ni MP4 generado, sin READY punta a punta.

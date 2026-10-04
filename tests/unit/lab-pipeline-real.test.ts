@@ -690,9 +690,10 @@ describe("Laboratorio comercial — pipeline real (T607)", () => {
     }
     for (const table of ["contact", "lead", "conversation", "message"]) expect(tables[table]).toHaveLength(0);
     // Builder y writer leen historial/outbound y facts durables del turno anterior.
+    // Sin recurso configurado, el fallback textual no cuenta como demo entregada.
     expect(evaluateJev.mock.calls.some(([input]) =>
       input.state.conversation.some((t: { from: string }) => t.from === "seller")
-      && input.state.crm_state.demo_shown === true)).toBe(true);
+      && input.state.crm_state.demo_shown === false)).toBe(true);
     expect(graphRequest).not.toHaveBeenCalled();
     expect(sendCapiEvent).not.toHaveBeenCalled();
   });

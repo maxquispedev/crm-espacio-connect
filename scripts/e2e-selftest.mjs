@@ -35,7 +35,7 @@ async function api(path, opts = {}) {
   const res = await fetch(`${BASE}${path}`, {
     ...opts,
     headers: {
-      "content-type": "application/json",
+      ...(opts.body instanceof FormData ? {} : { "content-type": "application/json" }),
       // Better Auth valida Origin (CSRF) en los endpoints de auth.
       origin: BASE,
       ...(cookie ? { cookie } : {}),
@@ -156,10 +156,16 @@ async function collectSse(predicate, { timeoutMs = 12000, trigger } = {}) {
   return { ok: res.ok, status: res.status, events, match: null };
 }
 
+async function runSection021() {
+  const { runCommercialDemoSelftest } = await import("./e2e-commercial-demos.mjs");
+  await runCommercialDemoSelftest({ BASE, api, ok, waitFor });
+}
+
 async function main() {
-  // Ejecutar únicamente la superficie del corte 011 C2, sin conectar WhatsApp.
-  if (process.env.E2E_SECTION === "020") {
-    await runSection020();
+  // Cortes 011 aislados: 020 UI local; 021 demos con proveedor HTTP mock propio.
+  if (["020", "021"].includes(process.env.E2E_SECTION)) {
+    if (process.env.E2E_SECTION === "021") await runSection021();
+    else await runSection020();
     console.log(`\n===== ${checks - failures}/${checks} checks OK, ${failures} fallos =====`);
     process.exit(failures > 0 ? 1 : 0);
   }
