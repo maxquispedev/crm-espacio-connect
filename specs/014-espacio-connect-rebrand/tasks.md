@@ -181,17 +181,111 @@ cumplía la precondición de este corte.
 
 ## CUT 7 — Rediseño práctico
 
-- [ ] T701 Shell / sidebar / header: jerarquía, respiración, acento
-- [ ] T702 Nav: "Por atender" y Agenda visibles con conteos
-- [ ] T703 Bandeja: lo urgente arriba; "Por atender" como primera opción
-- [ ] T704 Tarjetas de conversación y panel: estado humano/IA legible de un vistazo
-- [ ] T705 Pipeline: etapas comerciales claras, sin etapas operativas falsas
-- [ ] T706 Consistencia de labels, spacing, badges
-- [ ] T707 Empty states de las superficies nuevas y existentes tocadas
-- [ ] T708 Sin librería UI nueva; tokens y componentes reutilizados
-- [ ] T709 Sin cambios de contrato (DTOs, endpoints, lógica de 013)
-- [ ] T710 Gate + E2E de UI (o PENDIENTE con causa)
-- [ ] T711 Evidencia, un commit, árbol limpio
+- [x] T701 Shell / sidebar / header: jerarquía, respiración, acento
+- [x] T702 Nav: "Por atender" y Agenda visibles con conteos
+- [x] T703 Bandeja: lo urgente arriba; "Por atender" como primera opción
+- [x] T704 Tarjetas de conversación y panel: estado humano/IA legible de un vistazo
+- [x] T705 Pipeline: etapas comerciales claras, sin etapas operativas falsas
+- [x] T706 Consistencia de labels, spacing, badges
+- [x] T707 Empty states de las superficies nuevas y existentes tocadas
+- [x] T708 Sin librería UI nueva; tokens y componentes reutilizados
+- [x] T709 Sin cambios de contrato (DTOs, endpoints, lógica de 013)
+- [x] T710 Gate + E2E de UI (o PENDIENTE con causa)
+- [x] T711 Evidencia, un commit, árbol limpio
+
+### CUT 7 — CERRADO (2026-10-04)
+
+**Diagnóstico de partida.** El código ya tenía un sistema de diseño maduro
+(tokens Atlas, `cn`, `lucide-react`) y un vocabulario de estado bien hecho. El
+problema no era el sistema: era que la **señal de urgencia no era visual**. En
+concreto, cuatro fallos que se ven sin abrir la app:
+
+1. El contador de la Bandeja en el nav era **no leídas**, no la cola. "No leídas"
+   responde "¿qué no vi?" y casi siempre ya lo había contestado la IA; la pregunta
+   del día es "¿qué hago?". FR-7.7 pide que "Por atender" sea evidente, y en el
+   shell no lo era en ninguna parte.
+2. El bloque de estado del panel era **ámbar siempre**, con independencia del
+   estado. Un recordatorio vencido (hay trabajo HOY) se veía igual que una
+   conversación ya atendida esperando al cliente (no hay nada que hacer).
+3. La etiqueta del estado estaba **triplicada** en tres componentes: fila de la
+   lista, chip del panel y (a medias) el hilo. Tres copias se separan en cuanto
+   se rediseña una.
+4. Seis pantallas tenían **tres cabeceras distintas**: Agenda con icono y frase,
+   Pipeline/Contactos/Agente/Configuración con un `h2` pelado, Laboratorio con
+   otro. Rediseñar "la cabecera" obligaba a repetir el trabajo seis veces.
+
+**Decisiones de diseño (las cinco, con su porqué).**
+
+| # | Decisión | Razón |
+|---|---|---|
+| 1 | El nav se agrupa por **pregunta** —"Tu trabajo" (Bandeja, Agenda) y "Operación" (Pipeline, Contactos, Agente, Laboratorio)— | Seis items del mismo peso obligaban a leerlos todos para encontrar la Bandeja. Dos grupos lo dicen sin leer. |
+| 2 | El badge de la Bandeja pasa de **no leídas a la cola** (`nav-contador-por_atender`), contado con `necesitaAtencionAhora` sobre la MISMA lista que usa el chip | Extiende el invariante de 013 C4: dos números para la misma lista no pueden discrepar porque son la misma operación leída dos veces. Lo que se pierde no es información: las no leídas siguen como chip dentro de la Bandeja. |
+| 3 | **Una sola etiqueta de estado** (`EstadoPill` en `inbox/estado-chip.tsx`), usada por la fila, el panel y la cabecera del hilo; el tono se decide una vez por estado | El bloque del panel se tiñe con el tono del estado (`danger` / `warning` / neutro) en vez de ámbar fijo. Con la IA al mando no se pinta nada, igual que en 013 C4. |
+| 4 | La fila de la cola lleva un **canto rojo** a la izquierda, y el chip "Por atender" se pinta rojo al activarse y se insinúa en rojo si hay cola sin estar en ella | Una etiqueta de 11 px dentro de una fila con tres chips obligaba a *leer* para saber qué hacer. Ahora se reconoce al pasar el ratón por la lista. El canto sale de `necesitaAtencionAhora`, la misma función del chip: no inventa un estado. |
+| 5 | **Una `PageHeader`** compartida por las seis páginas, y el stepper de etapas del panel pasa de columna a **riel horizontal** | Seis cabeceras obligaban a repetir el rediseño; el stepper gastaba ~150 px de alto para decir una cosa y empujaba el bloque de estado y las notas. El riel conserva el mismo manejador, el mismo `aria-label` ("Mover a X") y el mismo orden de etapas. |
+
+**Lo que NO se hizo, a propósito.**
+
+- **No se metió un dashboard** (FR-7.8, D-4). El "Por atender" es la primera
+  opción de una fila de filtros que ya existía, no una pantalla nueva.
+- **No se inventaron etapas ni copy de negocio.** T705 pedía "sin etapas
+  operativas falsas" y así quedó: el Pipeline sigue mostrando las etapas que
+  siembra `org:create`, y solo se le añadió el recuento de leads y los estados
+  vacíos honestos.
+- **No se tocó ningún contrato.** `git diff --name-only` no toca `src/lib/types`,
+  `src/server/` ni `src/app/api/`: ni un DTO, ni un endpoint, ni la lógica de
+  atención de 013, ni el motor de follow-ups.
+- **No se normalizaron los 123 usos de `text-muted-foreground`.** Apunta al mismo
+  token que `text-text-3` (`--text-3`), así que es un detalle de nombre, no de
+  jerarquía visual, y tocar 21 ficheros para eso haría el diff irrevisible. Queda
+  anotado para CUT 8 si se decide.
+- **No se tocó el `letter-spacing: -0.01em` global.** A 11–12 px aprieta los
+  espacios alrededor de los `·` de la Agenda y de las frases de las cabeceras
+  (se ve en las capturas). Es una decisión del sistema de diseño, no de este corte.
+
+**Evidencia — gates técnicos.** `typecheck` OK · `lint` **0 errores** (los 3
+warnings son preexistentes: `<img>` en `anuncio-origen.tsx` y dos
+`eslint-disable` sin uso en `build-state.ts`) · `build` compiló · `test`
+**114 archivos / 1320 tests** verdes (1 archivo skipped = opt-in sin variable),
+incluidos los 8 nuevos de `tests/unit/redesign-practico.test.ts`.
+
+**Evidencia — E2E con UI real (Playwright).** App real + PostgreSQL real
+(`operator_workspace_test_c7` en `:55432`) + mocks, en `:3200`:
+
+| Sección | Resultado | Log |
+|---|---|---|
+| `E2E_SECTION=026` (los 12 casos del workspace) | **121/121 checks OK**, `exit=0` | `/tmp/e2e-c7-final-026.log` |
+| `E2E_SECTION=025` (flujo operativo) | **84/84 checks OK**, `exit=0` | `/tmp/e2e-c7-final-025.log` |
+| `E2E_SECTION=023` (cola "Por atender") | **35/35 checks OK**, `exit=0` | `/tmp/e2e-c7-final-023.log` |
+
+Se añadió **un check nuevo** al arnés 026 (no solo el `.md`):
+`026 · el nav cuenta la cola y coincide con el chip y con la API`, que compara
+las tres fuentes —badge del nav, chip de la lista y `GET /api/conversations`— para
+que una divergencia futura se vea en pantalla y no en una queja.
+
+**Revisión visual (modo oscuro y claro).** `scripts/screenshot-c7.mjs` deja PNGs
+en `/tmp/shots-c7` y `/tmp/shots-c7-light`. En la captura de la Bandeja se ve el
+resultado: nav con "TU TRABAJO" y los dos números en rojo, "Por atender 2" en
+rojo, las dos filas de la cola con el canto rojo y la etiqueta `Por atender` en
+rojo, "Esperando respuesta" en neutro, "Recordatorio" en ámbar, la etapa "Nuevo"
+ya subordinada a gris, y el Pipeline con la cabecera unificada, el recuento de
+leads y "Nadie en esta etapa" en las columnas vacías.
+
+**Contraste corregido sobre la marcha.** El badge activo con `bg-danger
+text-white` quedaba en **3.6:1** en modo oscuro (`--danger` es `#c46e6a`), por
+debajo del 4.5:1 que pide un texto de 10.5–12.5 px. Con `dark:bg-danger-soft
+dark:text-danger-text` se sube a 6.6:1 sin cambiar el significado del color.
+
+**Constitution Check re-evaluado tras el corte (V, IX).** Sin violaciones. Cero
+dependencias nuevas, luego II intacto; sin secretos nuevos (I); sin
+`organization_id` ni scope tocados, porque no se tocó la capa de datos (III);
+sin integraciones externas (IV); gate completo **más** verificación en navegador
+con camino feliz e infeliz comprobados en pantalla, nada dado por supuesto (V);
+los artefactos SDD preceden al corte (VI); la auditoría de decisiones queda
+grabada en esta tabla, no en memoria informal (VII); sin alcance nuevo, la
+jerarquía se resolvió dentro de las superficies existentes (VIII); y el
+comportamiento observable —qué número sale en el shell y cómo se ve una fila de
+la cola— se ejerció contra la app real, en los dos temas (IX).
 
 ## CUT 8 — Polish y regresión final
 

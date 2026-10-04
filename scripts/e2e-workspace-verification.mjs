@@ -336,6 +336,11 @@ export async function runWorkspaceVerification({ BASE, api, ok, waitFor, getCook
     };
     const chip = (id) => page.locator(`[data-testid='bandeja-filtro-${id}']`);
     const navVencidos = page.locator("[data-testid='nav-contador-vencidos']");
+    // 014 C7 — El badge del nav pasó a contar la COLA, no las no leídas: es la
+    // pregunta con la que arranca el día (FR-7.7). Se comprueba contra el chip, y
+    // contra la API, porque si divergieran el operador vería dos números
+    // distintos para la misma lista y dejaría de confiar en los dos.
+    const navCola = page.locator("[data-testid='nav-contador-por_atender']");
     const filaDe = (nombre) =>
       page.locator("[data-testid='conversation-item']", { hasText: nombre });
     const textoFila = async (nombre) =>
@@ -396,6 +401,14 @@ export async function runWorkspaceVerification({ BASE, api, ok, waitFor, getCook
     ok("026 · la Bandeja tiene 5 conversaciones y el Laboratorio no aparece",
       (await numeroDe(chip("all"))) === 5 && (await filaDe(nombreDe("Lab")).count()) === 0,
       `todas=${await numeroDe(chip("all"))}`);
+    // 014 C7 — El número del nav ES la cola, y coincide con el chip y con lo que
+    // el servidor dice que hay pendiente ahora mismo.
+    ok("026 · el nav cuenta la cola y coincide con el chip y con la API",
+      (await numeroDe(navCola)) === 2 && (await numeroDe(chip("por_atender"))) === 2 &&
+        (await api("/api/conversations")).json.conversations.filter(
+          (c) => c.attention?.needsAttentionNow === true
+        ).length === 2,
+      `nav=${await numeroDe(navCola)} chip=${await numeroDe(chip("por_atender"))}`);
 
     // =====================================================================
     // CASO 1 · Handoff REAL → "Por atender"

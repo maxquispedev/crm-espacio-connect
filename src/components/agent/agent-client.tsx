@@ -10,6 +10,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import { PageHeader } from "@/components/page-header";
 import { PlaybookClient } from "@/components/agent/playbook/playbook-client";
 import { countVariables } from "@/lib/whatsapp/template-placeholders";
 
@@ -106,31 +107,35 @@ export function AgentClient() {
 
   return (
     <div className="h-full overflow-y-auto">
-      <header className="flex items-center justify-between border-b px-6 py-4">
-        <h2 className="font-semibold">Agente de IA</h2>
-        <div className="flex items-center gap-3">
-          {saved && <span className="text-xs text-brand-text">Guardado ✓</span>}
-          <span className="text-sm text-muted-foreground">
-            {profile.enabled ? "Encendido" : "Apagado"}
-          </span>
-          <button
-            role="switch"
-            aria-checked={profile.enabled}
-            aria-label="Agente encendido"
-            disabled={!aiConfigured}
-            onClick={() => void saveProfile({ enabled: !profile.enabled })}
-            className={`relative h-6 w-11 rounded-full transition-colors disabled:opacity-40 ${
-              profile.enabled ? "bg-primary" : "bg-secondary"
-            }`}
-          >
+      <PageHeader
+        title="Agente de IA"
+        icon={Sparkles}
+        hint="El playbook con el que responde el agente, y su interruptor."
+        actions={
+          <>
+            {saved && <span className="text-xs text-brand-text">Guardado ✓</span>}
+            <span className="text-sm text-text-3">
+              {profile.enabled ? "Encendido" : "Apagado"}
+            </span>
+            <button
+              role="switch"
+              aria-checked={profile.enabled}
+              aria-label="Agente encendido"
+              disabled={!aiConfigured}
+              onClick={() => void saveProfile({ enabled: !profile.enabled })}
+              className={`relative h-6 w-11 rounded-full transition-colors disabled:opacity-40 ${
+                profile.enabled ? "bg-primary" : "bg-secondary"
+              }`}
+            >
             <span
               className={`absolute top-0.5 h-5 w-5 rounded-full bg-white transition-transform ${
                 profile.enabled ? "translate-x-5" : "translate-x-0.5"
               }`}
             />
           </button>
-        </div>
-      </header>
+          </>
+        }
+      />
 
       {!aiConfigured && (
         <div className="mx-6 mt-6 rounded-lg border border-brand-soft bg-brand-tint p-6 text-center">

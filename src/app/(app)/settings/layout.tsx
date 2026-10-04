@@ -1,4 +1,6 @@
+import { Settings } from "lucide-react";
 import { SettingsNav } from "@/components/settings/settings-nav";
+import { PageHeader } from "@/components/page-header";
 import { isCapiEnabled } from "@/server/attribution/flag";
 
 /**
@@ -24,9 +26,11 @@ export default function SettingsLayout({
 
   return (
     <div className="flex h-full flex-col">
-      <header className="border-b px-6 py-4">
-        <h2 className="font-semibold">Configuración</h2>
-      </header>
+      <PageHeader
+        title="Configuración"
+        icon={Settings}
+        hint="Marca, equipo y automatización de esta instancia."
+      />
       <div className="flex min-h-0 flex-1">
         <SettingsNav tabs={tabs} />
         <div className="min-w-0 flex-1 overflow-y-auto p-6">{children}</div>

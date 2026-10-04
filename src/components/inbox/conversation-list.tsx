@@ -7,7 +7,6 @@ import {
   Megaphone,
   Search,
   Sparkles,
-  UserRound,
   X,
 } from "lucide-react";
 import type { ConversationDto } from "@/lib/types";
@@ -18,11 +17,12 @@ import {
   etiquetaDeOrigen,
   titularDeOrigen,
 } from "@/lib/anuncios";
-import { ETIQUETA_ESTADO, estadoOperativo } from "@/lib/operational-state";
 import {
   type FiltroBandeja,
+  necesitaAtencionAhora,
   resumirBandeja,
 } from "./bandeja-filtros";
+import { EstadoOperacionalChip } from "./estado-chip";
 import { formatTime, previewText } from "./helpers";
 
 const STAGE_DOT: Record<string, string> = {
@@ -35,36 +35,11 @@ const STAGE_DOT: Record<string, string> = {
 
 /**
  * 013 C4 — El estado de la fila dice lo MISMO que el panel del hilo y el item de
- * la Agenda, y sale de la misma función (`estadoOperativo`). Aquí no se decide
- * nada: si esta fila dijera "Esperando respuesta" y el hilo dijera "Por
- * atender", el operador no sabría cuál de las dos pantallas está mintiendo
- * (FR-4.4).
- *
- * Con la IA al mando no se pinta nada, como hasta ahora: una etiqueta "La IA
- * responde" en cada fila de la lista no informa de nada, solo ocupa.
+ * la Agenda, y sale de la misma función (`estadoOperativo`, en `./estado-chip`).
+ * Aquí no se decide nada: si esta fila dijera "Esperando respuesta" y el hilo
+ * dijera "Por atender", el operador no sabría cuál de las dos pantallas está
+ * mintiendo (FR-4.4).
  */
-function EstadoOperacionalChip({ conversacion }: { conversacion: ConversationDto }) {
-  const estado = estadoOperativo(conversacion);
-  if (estado === "ia") return null;
-  const urgente = estado === "por_atender";
-  const Icon = urgente ? AlertCircle : estado === "comprometido" ? Bell : UserRound;
-  return (
-    <span
-      className={cn(
-        "inline-flex shrink-0 items-center gap-1 whitespace-nowrap rounded-full border px-2 py-0.5 text-[11px] font-medium",
-        urgente
-          ? "border-danger-border bg-danger-soft text-danger-text"
-          : "border-warning-border bg-warning-soft text-warning-text"
-      )}
-      data-testid="fila-estado"
-      data-estado={estado}
-    >
-      <Icon className="h-3 w-3" strokeWidth={1.7} />
-      {ETIQUETA_ESTADO[estado]}
-    </span>
-  );
-}
-
 function EmptyState({ onSeeded }: { onSeeded: () => void }) {
   const [seeding, setSeeding] = useState(false);
   const [failed, setFailed] = useState(false);
@@ -195,11 +170,26 @@ export function ConversationList({
             onClick={() => setFilter(f.id)}
             aria-pressed={filter === f.id}
             data-testid={`bandeja-filtro-${f.id}`}
+            // 014 C7 — "Por atender" es la COLA, no un filtro más: cuando está
+            // seleccionada se pinta en rojo, y cuando hay trabajo pendiente pero no
+            // estás en ella se insinúa en rojo también. Con el mismo verde de marca
+            // para los cuatro, el ojo no distinguía la pregunta del día del resto
+            // (FR-7.7). Los otros tres filtros no cambian: no son urgencia.
+            //
+            // El `dark:` del seleccionado es por contraste: blanco sobre
+            // `--danger` en modo oscuro se queda en 3.6:1, y este texto es de
+            // 12.5 px. En oscuro el chip activo usa el tono suave, que sí pasa.
             className={cn(
               "flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full border px-2.5 py-[5px] text-[12.5px] font-medium transition-colors",
               filter === f.id
-                ? "border-brand bg-brand text-white"
-                : "bg-background text-text-2 hover:bg-accent"
+                ? f.id === "por_atender"
+                  ? "border-danger bg-danger text-white dark:bg-danger-soft dark:text-danger-text"
+                  : "border-brand bg-brand text-white"
+                : f.id === "por_atender" && f.count > 0
+                  ? // `brightness` y no un modificador de opacidad: los tokens de
+                    // color son `var(--...)`, y Tailwind no les puede aplicar alfa.
+                    "border-danger-border bg-danger-soft text-danger-text hover:brightness-105"
+                  : "bg-background text-text-2 hover:bg-accent"
             )}
           >
             {f.id === "por_atender" && (
@@ -285,10 +275,23 @@ export function ConversationList({
             {visibles.map((c) => {
               const unread = c.unreadCount > 0;
               const active = selectedId === c.id;
+              // 014 C7 — La fila de la cola se reconoce SIN leer la etiqueta: un
+              // canto de rojo en el borde izquierdo, la misma marca que usa la
+              // fila seleccionada pero en el color del trabajo pendiente. Con la
+              // etiqueta de 11 px dentro de una fila con tres chips, scrolling
+              // 200 conversaciones era buscar texto (FR-7.3, FR-7.7). El color del
+              // canto NO inventa un estado nuevo: sale de la misma función que
+              // decide el chip.
+              const urgente = necesitaAtencionAhora(c);
               return (
                 <li key={c.id} className="relative border-b border-border/70">
-                  {active && (
-                    <span className="absolute inset-y-0 left-0 w-[3px] bg-brand" />
+                  {(active || urgente) && (
+                    <span
+                      className={cn(
+                        "absolute inset-y-0 left-0 w-[3px]",
+                        active ? "bg-brand" : "bg-danger"
+                      )}
+                    />
                   )}
                   <button
                     onClick={() => onSelect(c.id)}
@@ -340,8 +343,13 @@ export function ConversationList({
                         )}
                       </span>
                       <span className="mt-1.5 flex items-center gap-1.5">
+                        {/* 014 C7 — La etapa y el anuncio son CONTEXTO: bajan a
+                            `text-text-3` para que lo único con color en la fila sea
+                            el estado (rojo = por atender, ámbar = comprometido).
+                            Tres chips del mismo peso obligaban a leer los tres
+                            (FR-7.2). */}
                         {c.stageName && (
-                          <span className="inline-flex items-center gap-1.5 rounded-full border bg-secondary px-2 py-0.5 text-[11px] text-text-2">
+                          <span className="inline-flex items-center gap-1.5 rounded-full border bg-secondary px-2 py-0.5 text-[11px] text-text-3">
                             <span
                               className="h-[7px] w-[7px] rounded-full"
                               style={{
@@ -360,8 +368,8 @@ export function ConversationList({
                           );
                           if (!eti || !tit) return null;
                           return (
-                            <span className="inline-flex max-w-full items-center gap-1 truncate rounded-full border bg-background px-2 py-0.5 text-[11px] text-text-2">
-                              <Megaphone className="h-3 w-3 shrink-0 text-text-3" strokeWidth={1.7} />
+                            <span className="inline-flex max-w-full items-center gap-1 truncate rounded-full border bg-background px-2 py-0.5 text-[11px] text-text-3">
+                              <Megaphone className="h-3 w-3 shrink-0 text-text-4" strokeWidth={1.7} />
                               <span className="truncate">
                                 {eti} · {tit}
                               </span>

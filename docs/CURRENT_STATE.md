@@ -1,3 +1,81 @@
+# Checkpoint 2026-10-04 — Spec 014, CUT 7: rediseño práctico (CIERRE)
+
+**REDISEÑO PRÁCTICO CERRADO. GATES EN VERDE Y UI REAL VERIFICADA: 240/240 checks
+E2E.** Commit único: `refactor(ui): simplificar experiencia de Espacio Connect`.
+Base limpia `6907d24` (cierre de 014 CUT 6). Árbol limpio.
+
+**Objetivo.** Que el CRM sea más claro, compacto y agradable para la operación
+diaria, con la jerarquía al servicio de *qué tengo que hacer ahora* — y sin tocar
+un solo contrato. El sistema de diseño ya estaba maduro (tokens Atlas, `cn`,
+`lucide-react`): el trabajo no fue inventar uno, sino **hacer visible la urgencia**.
+
+**Los cuatro fallos que había, y su arreglo.**
+
+1. El nav contaba **no leídas** en vez de la cola. Ahora el badge de la Bandeja es
+   `nav-contador-por_atender`, contado con `necesitaAtencionAhora` sobre la misma
+   lista que el chip: por construcción no pueden discrepar. Las no leídas siguen
+   visibles como chip dentro de la Bandeja, así que no se perdió información.
+2. El bloque de estado del panel era **ámbar siempre**. Ahora se tiñe por estado
+   (`danger` rojo = por atender, `warning` ámbar = comprometido, neutro = nada
+   pendiente), que era el agujero más grande: había trabajo urgente con el mismo
+   aspecto que no tener nada que hacer.
+3. La etiqueta de estado estaba **triplicada**. Ahora vive en un sitio
+   (`inbox/estado-chip.tsx`, `EstadoPill`) y la usan la fila, el panel y la
+   cabecera del hilo, que antes no la tenía (con el panel plegado, el estado de
+   la conversación abierta era invisible).
+4. **Seis pantallas, tres cabeceras.** Ahora una `PageHeader` compartida por
+   Agenda, Pipeline, Contactos, Agente, Laboratorio y Configuración: un `h1`, un
+   icono, un recuento opcional y una frase subordinada.
+
+**Además:** el nav se agrupa por pregunta ("Tu trabajo" / "Operación"); la fila de
+la cola lleva un canto rojo reconocible sin leer; el stepper de etapas del panel
+pasa de columna a riel horizontal (mismo manejador, mismos `aria-label`, ~150 px →
+dos líneas); el carril humano/IA del Pipeline es una etiqueta con color en vez de
+versalitas de 10 px; y el Pipeline dice qué hacer cuando no tiene etapas
+("Nadie en esta etapa" ya no es un tablero mudo).
+
+**Gates.** `typecheck` OK · `lint` **0 errores** (3 warnings preexistentes) ·
+`build` compiló · `test` **114 archivos / 1320 tests** verdes.
+
+**E2E con UI real (Playwright, app + PostgreSQL + mocks).** `026` **121/121** ·
+`025` **84/84** · `023` **35/35**; `exit=0` en los tres. Se añadió un check al
+arnés: *el nav cuenta la cola y coincide con el chip y con la API*. Revisión
+visual en oscuro y claro con `scripts/screenshot-c7.mjs`.
+
+**Contraste corregido sobre la marcha:** blanco sobre `--danger` en modo oscuro
+daba 3.6:1 (por debajo del 4.5:1 de un texto de 10.5 px); con el tono suave en
+oscuro sube a 6.6:1 sin cambiar el significado del color.
+
+**Archivos clave.** `src/components/page-header.tsx` (nuevo) ·
+`src/components/inbox/estado-chip.tsx` (nuevo) · `src/components/app-nav.tsx` ·
+`src/components/inbox/{conversation-list,attention-block,inbox-client,
+contact-panel}.tsx` · `src/components/pipeline/pipeline-client.tsx` ·
+`src/components/{agenda/agenda-client,contacts/contacts-client,agent/agent-client,
+lab/lab-client}.tsx` · `src/app/(app)/settings/layout.tsx` ·
+`tests/unit/redesign-practico.test.ts` (nuevo, 8 tests) ·
+`scripts/e2e-workspace-verification.mjs` (check nuevo) ·
+`scripts/screenshot-c7.mjs` (nuevo, herramienta de revisión visual, no un test).
+
+**Sin cambios de contrato.** `git diff --name-only` no toca `src/lib/types`,
+`src/server/` ni `src/app/api/`. Sin dependencia nueva: `package.json` y
+`pnpm-lock.yaml` intactos.
+
+**Pendiente para CUT 8.** `text-muted-foreground` sigue en 123 sitios en 21
+ficheros apuntando al mismo token que `text-text-3`: es normalización de nombre,
+no de jerarquía visual, y quedó fuera a propósito para que el diff de este corte
+se pudiera leer. También `letter-spacing: -0.01em` aprieta los espacios alrededor
+de los `·` a 11–12 px (visible en Agenda y en las frases de cabecera): es una
+decisión del sistema de diseño, no de este corte. Y sigue pendiente lo propio de
+CUT 8: responsive, accesibilidad básica y regresión por superficie.
+
+**Siguiente paso exacto.** Abrir **CUT 8 — Polish y regresión final** (T801–T807):
+responsive de escritorio primero, foco visible / `aria` / contraste / teclado sobre
+lo que este corte tocó, y las regresiones por superficie (Inbox, Pipeline,
+Contactos, Agente) contra el mismo arnés 026/025/023, que ya está verde y no hay
+que reconstruir.
+
+---
+
 # Checkpoint 2026-10-04 — Spec 014, CUT 6: rebrand a Espacio Connect (CIERRE)
 
 **REBRAND CONSOLIDADO. GATES EN VERDE Y VERIFICACIÓN EN NAVEGADOR REAL: 21/21.**

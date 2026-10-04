@@ -18,6 +18,7 @@ import {
 import { useEvents } from "@/components/use-events";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { PageHeader } from "@/components/page-header";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -313,16 +314,12 @@ function Header({
   setArchivedId: (v: string) => void;
 }) {
   return (
-    <header className="flex flex-wrap items-center justify-between gap-3 border-b px-6 py-4">
-      <div>
-        <h2 className="flex items-center gap-2 font-semibold">
-          <FlaskConical className="h-4 w-4 text-brand-text" /> Laboratorio
-        </h2>
-        <p className="text-xs text-muted-foreground">
-          Sandbox interno — no envía mensajes reales
-        </p>
-      </div>
-      <div className="flex items-end gap-2">
+    <PageHeader
+      title="Laboratorio"
+      icon={FlaskConical}
+      hint="Sandbox interno — no envía mensajes reales"
+      actions={
+        <div className="flex items-end gap-2">
         <div className="space-y-1">
           <Label htmlFor="lab-mode" className="text-xs">
             Playbook
@@ -361,8 +358,9 @@ function Header({
           <Play className="h-4 w-4" />
           {running ? "Corrida en curso…" : "Correr evaluación"}
         </Button>
-      </div>
-    </header>
+        </div>
+      }
+    />
   );
 }
 

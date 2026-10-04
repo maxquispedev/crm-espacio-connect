@@ -6,6 +6,7 @@ import { CalendarClock, ExternalLink, Loader2, RefreshCw, Trash2 } from "lucide-
 import type { AgendaBucketName, AgendaDto, ReminderDto } from "@/lib/types";
 import { ETIQUETA_ESTADO, estadoDeAtencion } from "@/lib/operational-state";
 import { Button } from "@/components/ui/button";
+import { PageHeader } from "@/components/page-header";
 import { useEvents } from "@/components/use-events";
 
 /**
@@ -87,27 +88,22 @@ export function AgendaClient() {
 
   return (
     <div className="flex h-full flex-col overflow-hidden">
-      <header className="flex items-center justify-between gap-4 border-b px-6 py-4">
-        <div className="min-w-0">
-          <h1 className="flex items-center gap-2 text-lg font-semibold tracking-tight">
-            <CalendarClock className="h-5 w-5" strokeWidth={1.7} />
-            Agenda
-          </h1>
-          <p className="mt-0.5 text-xs text-text-3">
-            Recordatorios que tú te pusiste. Al vencer vuelven a “Por atender”; no se
-            manda ningún WhatsApp.
-          </p>
-        </div>
-        <Button
-          size="sm"
-          variant="outline"
-          onClick={() => void load()}
-          data-testid="agenda-refresh"
-        >
-          <RefreshCw className="h-3.5 w-3.5" strokeWidth={1.7} />
-          Actualizar
-        </Button>
-      </header>
+      <PageHeader
+        title="Agenda"
+        icon={CalendarClock}
+        hint="Recordatorios que tú te pusiste. Al vencer vuelven a “Por atender”; no se manda ningún WhatsApp."
+        actions={
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => void load()}
+            data-testid="agenda-refresh"
+          >
+            <RefreshCw className="h-3.5 w-3.5" strokeWidth={1.7} />
+            Actualizar
+          </Button>
+        }
+      />
 
       <div className="flex-1 overflow-y-auto px-6 py-4">
         {error && (

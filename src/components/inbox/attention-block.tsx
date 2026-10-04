@@ -1,16 +1,17 @@
 "use client";
 
 import { useState } from "react";
-import { AlertCircle, Bell, Check, Loader2, Sparkles, UserRound } from "lucide-react";
+import { Check, Loader2, Sparkles, UserRound } from "lucide-react";
 import type { ConversationDto } from "@/lib/types";
 import { Button } from "@/components/ui/button";
+import { cn } from "@/lib/utils";
 import {
-  ETIQUETA_ESTADO,
   EXPLICACION_ESTADO,
   estadoOperativo,
   esConversacionHumana,
   type EstadoOperativo,
 } from "@/lib/operational-state";
+import { EstadoPill } from "./estado-chip";
 import { ReminderSchedule } from "./reminder-schedule";
 
 /**
@@ -100,21 +101,36 @@ export function AttentionBlock({
     }
   };
 
+  // 014 C7 — El bloque entero se tiñe por el estado. Antes era SIEMPRE ámbar,
+  // así que una conversación con un recordatorio vencido (hay trabajo HOY) se
+  // veía igual que una que ya atendiste y solo espera al cliente (no hay nada que
+  // hacer). El ojo aprendió a ignorar el color y se perdió la señal más importante
+  // de la pantalla: si esto es rojo, hay algo que hacer conmigo (FR-7.2, FR-7.7).
+  // Los tonos son los mismos tokens que ya usan la fila de la lista y el chip del
+  // nav, para que "rojo = por atender" signifique lo mismo en todas partes.
+  const urgente = estado === "por_atender";
+  const comprometido = estado === "comprometido";
+  const Tono = urgente
+    ? "border-danger-border bg-danger-soft text-danger-text"
+    : comprometido
+      ? "border-warning-border bg-warning-soft text-warning-text"
+      : "border-border-strong bg-secondary text-text-2";
+
   return (
     <section
-      className="mt-3 rounded-md border border-warning-border bg-warning-soft p-3"
+      className={cn("mt-3 rounded-md border p-3", Tono)}
       data-testid="attention-block"
       data-estado={estado}
     >
       <div className="flex items-start justify-between gap-3">
-        <p className="flex items-center gap-1.5 text-[13px] font-medium text-warning-text">
+        <p className="flex items-center gap-1.5 text-[13px] font-semibold">
           <UserRound className="h-4 w-4" strokeWidth={1.7} /> Atención humana
         </p>
         <EstadoChip estado={estado} />
       </div>
 
       <p
-        className="mt-1 text-xs text-warning-text opacity-80"
+        className="mt-1 text-xs opacity-90"
         data-testid="attention-explanation"
       >
         {EXPLICACION_ESTADO[estado]}
@@ -122,7 +138,7 @@ export function AttentionBlock({
 
       {conversation.handoffReason && MOTIVOS_HUMANO[conversation.handoffReason] && (
         <p
-          className="mt-1 text-[11px] text-warning-text opacity-70"
+          className="mt-1 text-[11px] opacity-75"
           data-testid="attention-reason"
         >
           {MOTIVOS_HUMANO[conversation.handoffReason]}
@@ -163,7 +179,7 @@ export function AttentionBlock({
         </p>
       )}
       {done && (
-        <p className="mt-2 text-[11px] text-warning-text" data-testid="attention-done">
+        <p className="mt-2 text-[11px] opacity-80" data-testid="attention-done">
           {done}
         </p>
       )}
@@ -182,26 +198,17 @@ export function AttentionBlock({
 
 /**
  * La etiqueta del estado, con el mismo texto y el mismo significado que la fila
- * de la lista y el item de la Agenda. Para `atencion_humana` no se pinta nada:
- * el título del bloque ya dice "Atención humana" y repetirlo sería ruido, no
- * información.
+ * de la lista y el item de la Agenda — ahora también la MISMA pitted pieza, con
+ * el mismo `EstadoPill`. Para `atencion_humana` no se pinta nada: el título del
+ * bloque ya dice "Atención humana" y repetirlo sería ruido, no información.
  */
 function EstadoChip({ estado }: { estado: EstadoOperativo }) {
   if (estado === "atencion_humana") return null;
-  const urgente = estado === "por_atender";
-  const comprometido = estado === "comprometido";
-  const Icon = urgente ? AlertCircle : comprometido ? Bell : UserRound;
   return (
-    <span
-      className={
-        urgente
-          ? "inline-flex shrink-0 items-center gap-1 rounded-full border border-danger-border bg-danger-soft px-2 py-0.5 text-[11px] font-medium text-danger-text"
-          : "inline-flex shrink-0 items-center gap-1 rounded-full border bg-background/70 px-2 py-0.5 text-[11px] font-medium text-warning-text"
-      }
-      data-testid="attention-state"
-    >
-      <Icon className="h-3 w-3" strokeWidth={1.7} />
-      {ETIQUETA_ESTADO[estado]}
-    </span>
+    <EstadoPill
+      estado={estado}
+      testId="attention-state"
+      className="bg-background"
+    />
   );
 }

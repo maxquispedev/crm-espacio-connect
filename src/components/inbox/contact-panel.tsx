@@ -326,45 +326,50 @@ export function ContactPanel({
           </section>
         )}
 
-        {/* Stepper de etapa */}
+        {/* Stepper de etapa
+            014 C7 — De columna a RIEL. El vertical ocupaba ~150 px para decir una
+            cosa ("está en Interesado") y empujaba hacia abajo el bloque de estado y
+            las notas, que es lo que se usa a diario. El riel dice lo mismo —dónde
+            está, cuántas quedan por delante, cuál se puede tocar— en dos líneas, y
+            conserva el MISMO manejador, el MISMO `aria-label` y el mismo orden de
+            las etapas: aquí no cambia ninguna semántica comercial, solo cómo se
+            lee (FR-7.3). El conector entre etapas se mantiene como pista de
+            progreso, pero la línea es discontinua para no competir con el texto. */}
         {stages.length > 0 && leadId && (
           <section className="border-b p-4">
-            <p className="mb-3 text-[11px] font-semibold uppercase tracking-wide text-text-3">
+            <p className="mb-2.5 text-[11px] font-semibold uppercase tracking-wide text-text-3">
               Etapa del pipeline
             </p>
-            <ol>
+            <ol className="flex flex-wrap items-center gap-1.5">
               {stages.map((s, i) => {
                 const done = currentIndex >= 0 && i < currentIndex;
                 const current = s.id === currentStageId;
                 return (
-                  <li key={s.id} className="relative flex gap-3 pb-4 last:pb-0">
-                    {i < stages.length - 1 && (
+                  <li key={s.id} className="flex items-center gap-1.5">
+                    {i > 0 && (
                       <span
+                        aria-hidden
                         className={cn(
-                          "absolute left-[7px] top-4 h-full w-px",
-                          done ? "bg-brand" : "bg-border-strong"
+                          "h-px w-3 shrink-0",
+                          done || current ? "bg-brand" : "bg-border-strong"
                         )}
                       />
                     )}
                     <button
                       onClick={() => void moveToStage(s.id)}
                       aria-label={`Mover a ${s.name}`}
+                      aria-current={current ? "step" : undefined}
+                      title={s.name}
                       className={cn(
-                        "relative z-10 mt-0.5 flex h-[15px] w-[15px] shrink-0 items-center justify-center rounded-full transition-colors",
-                        done && "bg-brand text-white",
-                        current && "bg-brand ring-4 ring-brand-soft",
-                        !done && !current && "border border-border-strong bg-background hover:border-brand"
+                        "flex items-center gap-1.5 whitespace-nowrap rounded-full border px-2.5 py-[5px] text-[12px] transition-colors",
+                        current
+                          ? "border-brand bg-brand font-semibold text-white"
+                          : done
+                            ? "border-brand-soft bg-brand-soft text-brand-text hover:brightness-105"
+                            : "bg-background text-text-3 hover:bg-accent hover:text-foreground"
                       )}
                     >
-                      {done && <Check className="h-2.5 w-2.5" strokeWidth={3} />}
-                    </button>
-                    <button
-                      onClick={() => void moveToStage(s.id)}
-                      className={cn(
-                        "text-left text-[13px]",
-                        current ? "font-[650] text-brand-text" : "text-text-2 hover:text-foreground"
-                      )}
-                    >
+                      {done && <Check className="h-3 w-3 shrink-0" strokeWidth={3} />}
                       {s.name}
                     </button>
                   </li>

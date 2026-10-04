@@ -726,3 +726,38 @@ PostgreSQL opt-in de 011 (`tests/unit/commercial-resource-postgres.test.ts`: 3 d
 (`attention-migration.test.ts`) **sí** quedó verde en CUT 5: 11/11 contra
 PostgreSQL real. **Constitución IX cumplida para 013**: CUT 5 ejecutó el E2E real
 con mocks, los doce casos, en tres corridas seguidas con 120/120.
+
+---
+
+## Addendum — 014 CUT 7 cambió un observable de 013 (2026-10-04)
+
+El rediseño práctico de 014 tocó **una** de las decisiones que este spec dejó
+escritas, así que se deja rastro aquí en vez de dejar el corte 4 diciendo algo
+que ya no es exactamente cierto.
+
+**Qué cambió.** En `app-nav.tsx`, 013 C4 (T403).documentó que el nav llevaba dos
+contadores — el de **no leídas** en la Bandeja y el de **vencidos** en la Agenda —
+y que "el número del nav y el chip 'Por atender' no pueden discrepar por
+construcción". El badge de la Bandeja ahora cuenta **la cola** (`por_atender`) en
+lugar de las no leídas.
+
+**Por qué no rompe nada de este spec:**
+
+- El invariante de 013 se cumple **más fuerte**, no menos. Antes el nav contaba
+  no leídas y el chip contaba la cola: eran dos números distintos sobre la misma
+  lista, y la coherencia era una promesa de diseño. Ahora ambos salen de
+  `necesitaAtencionAhora` sobre la misma respuesta de `/api/conversations`, así
+  que la coincidencia es por construcción, igual que ya lo era con `vencidos`.
+- La fila, la cabecera del hilo y el bloque del panel **siguen diciendo lo mismo**
+  (FR-4.4): la etiqueta se movió a un módulo único (`inbox/estado-chip.tsx`) y las
+  tres superficies la importan. El vocabulario no cambió.
+- El orden de los cuatro filtros de la Bandeja, las cinco etapas, las cinco
+  definiciones de `bandeja-filtros.ts`, la Agenda y el motor de follow-ups quedan
+  **intactos**: `git diff` de este corte no toca `src/lib/operational-state.ts`,
+  `src/components/inbox/bandeja-filtros.ts` ni `src/lib/sales-ui.ts`.
+- Lo que se pierde no es información: las no leídas siguen visibles como chip
+  "No leídas" dentro de la propia Bandeja.
+
+**Verificación.** E2E `026` **121/121**, `025` **84/84**, `023` **35/35**, con un
+check nuevo que compara badge del nav, chip de la lista y API en la misma corrida.
+Detalle completo en `specs/014-espacio-connect-rebrand/tasks.md` (CUT 7).

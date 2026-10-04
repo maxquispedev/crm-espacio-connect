@@ -2,7 +2,13 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { Archive, ArchiveRestore, MessageSquareText, Search } from "lucide-react";
+import {
+  Archive,
+  ArchiveRestore,
+  MessageSquareText,
+  Search,
+  Users,
+} from "lucide-react";
 import type { ContactDto } from "@/lib/types";
 import { formatPhone } from "@/lib/utils";
 import { ContactAvatar } from "@/components/avatar";
@@ -10,6 +16,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
+import { PageHeader } from "@/components/page-header";
 
 export function ContactsClient() {
   const [contacts, setContacts] = useState<ContactDto[]>([]);
@@ -63,35 +70,44 @@ export function ContactsClient() {
 
   return (
     <div className="flex h-full flex-col">
-      <header className="flex items-center justify-between gap-4 border-b px-6 py-4">
-        <h2 className="font-semibold">Contactos</h2>
-        <div className="flex items-center gap-3">
-          <label className="flex items-center gap-2 text-xs text-muted-foreground">
-            <input
-              type="checkbox"
-              checked={showArchived}
-              onChange={(e) => setShowArchived(e.target.checked)}
-              className="accent-primary"
-            />
-            Ver archivados
-          </label>
-          {stages.length > 0 && (
-            <select
-              value={stage}
-              onChange={(e) => setStage(e.target.value)}
-              aria-label="Filtrar por etapa del embudo"
-              className="h-9 rounded-md border border-input bg-card px-2 text-sm"
-            >
-              <option value="all">Toda etapa</option>
-              {stages.map((s) => (
-                <option key={s} value={s}>
-                  {s}
-                </option>
-              ))}
-            </select>
-          )}
+      <PageHeader
+        title="Contactos"
+        icon={Users}
+        count={contacts.length}
+        hint="Contactos del negocio, con su etapa y sus notas."
+        actions={
+          <>
+            <label className="flex items-center gap-2 text-xs text-text-3">
+              <input
+                type="checkbox"
+                checked={showArchived}
+                onChange={(e) => setShowArchived(e.target.checked)}
+                className="accent-primary"
+              />
+              Ver archivados
+            </label>
+            {stages.length > 0 && (
+              <select
+                value={stage}
+                onChange={(e) => setStage(e.target.value)}
+                aria-label="Filtrar por etapa del embudo"
+                className="h-9 rounded-md border border-input bg-card px-2 text-sm"
+              >
+                <option value="all">Toda etapa</option>
+                {stages.map((s) => (
+                  <option key={s} value={s}>
+                    {s}
+                  </option>
+                ))}
+              </select>
+            )}
+          </>
+        }
+      />
+      <div className="min-h-0 flex-1 overflow-y-auto">
+        <div className="flex items-center gap-2 px-6 py-3">
           <div className="relative">
-            <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
+            <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-text-3" />
             <Input
               ref={inputRef}
               placeholder="Buscar por nombre o teléfono…"
@@ -102,86 +118,91 @@ export function ContactsClient() {
             />
           </div>
         </div>
-      </header>
-
-      <div className="flex-1 overflow-y-auto p-6">
-        {contacts.length === 0 ? (
-          <div className="flex h-full flex-col items-center justify-center gap-2 text-center">
-            {query.trim() || stage !== "all" ? (
-              <>
-                <p className="text-sm font-medium">Sin resultados</p>
-                <p className="max-w-sm text-xs text-muted-foreground">
-                  Nadie coincide con
-                  {query.trim() ? ` «${query.trim()}»` : ""}
-                  {query.trim() && stage !== "all" ? " en" : ""}
-                  {stage !== "all" ? ` la etapa «${stage}»` : ""}.
-                </p>
-              </>
-            ) : (
-              <>
-                <p className="text-sm font-medium">Sin contactos</p>
-                <p className="max-w-sm text-xs text-muted-foreground">
-                  Cada persona que escriba a tu WhatsApp quedará registrada aquí
-                  automáticamente.
-                </p>
-              </>
-            )}
-          </div>
-        ) : (
-          <ul className="space-y-2">
-            {contacts.map((c) => (
-              <li
-                key={c.id}
-                className="flex items-center gap-4 rounded-lg border bg-card px-4 py-3"
-              >
-                <ContactAvatar name={c.name} seed={c.id} />
-                <div className="min-w-0 flex-1">
-                  <div className="flex items-center gap-2">
-                    <span className="truncate text-sm font-medium">
-                      {c.name}
-                    </span>
-                    {c.stageName && (
-                      <Badge variant="outline">{c.stageName}</Badge>
-                    )}
-                    {c.archivedAt && (
-                      <Badge variant="secondary">Archivado</Badge>
-                    )}
-                  </div>
-                  <p className="text-xs text-muted-foreground">
-                    {formatPhone(c.phone)}
-                    {c.notes ? ` · ${c.notes.slice(0, 60)}` : ""}
+        <div className="px-6 pb-6">
+          {contacts.length === 0 ? (
+            <div className="flex h-full flex-col items-center justify-center gap-2 text-center">
+              {query.trim() || stage !== "all" ? (
+                <>
+                  <p className="text-sm font-medium">Sin resultados</p>
+                  <p className="max-w-sm text-xs text-muted-foreground">
+                    Nadie coincide con
+                    {query.trim() ? ` «${query.trim()}»` : ""}
+                    {query.trim() && stage !== "all" ? " en" : ""}
+                    {stage !== "all" ? ` la etapa «${stage}»` : ""}.
                   </p>
-                </div>
-                <div className="flex shrink-0 items-center gap-1.5">
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => setEditing(c)}
-                  >
-                    Editar
-                  </Button>
-                  <Link href={`/inbox?contact=${c.id}`}>
-                    <Button variant="ghost" size="icon" aria-label="Abrir conversación">
-                      <MessageSquareText className="h-4 w-4" />
+                </>
+              ) : (
+                <>
+                  <p className="text-sm font-medium">Sin contactos</p>
+                  <p className="max-w-sm text-xs text-muted-foreground">
+                    Cada persona que escriba a tu WhatsApp quedará registrada
+                    aquí automáticamente.
+                  </p>
+                </>
+              )}
+            </div>
+          ) : (
+            <ul className="space-y-2">
+              {contacts.map((c) => (
+                <li
+                  key={c.id}
+                  className="flex items-center gap-4 rounded-lg border bg-card px-4 py-3"
+                >
+                  <ContactAvatar name={c.name} seed={c.id} />
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-2">
+                      <span className="truncate text-sm font-medium">
+                        {c.name}
+                      </span>
+                      {c.stageName && (
+                        <Badge variant="outline">{c.stageName}</Badge>
+                      )}
+                      {c.archivedAt && (
+                        <Badge variant="secondary">Archivado</Badge>
+                      )}
+                    </div>
+                    <p className="text-xs text-muted-foreground">
+                      {formatPhone(c.phone)}
+                      {c.notes ? ` · ${c.notes.slice(0, 60)}` : ""}
+                    </p>
+                  </div>
+                  <div className="flex shrink-0 items-center gap-1.5">
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => setEditing(c)}
+                    >
+                      Editar
                     </Button>
-                  </Link>
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    aria-label={c.archivedAt ? "Desarchivar" : "Archivar"}
-                    onClick={() => void patch(c.id, { archived: !c.archivedAt })}
-                  >
-                    {c.archivedAt ? (
-                      <ArchiveRestore className="h-4 w-4" />
-                    ) : (
-                      <Archive className="h-4 w-4" />
-                    )}
-                  </Button>
-                </div>
-              </li>
-            ))}
-          </ul>
-        )}
+                    <Link href={`/inbox?contact=${c.id}`}>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        aria-label="Abrir conversación"
+                      >
+                        <MessageSquareText className="h-4 w-4" />
+                      </Button>
+                    </Link>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      aria-label={c.archivedAt ? "Desarchivar" : "Archivar"}
+                      onClick={() =>
+                        void patch(c.id, { archived: !c.archivedAt })
+                      }
+                    >
+                      {c.archivedAt ? (
+                        <ArchiveRestore className="h-4 w-4" />
+                      ) : (
+                        <Archive className="h-4 w-4" />
+                      )}
+                    </Button>
+                  </div>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
       </div>
 
       {editing && (

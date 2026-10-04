@@ -11,6 +11,7 @@ import { ConversationList } from "./conversation-list";
 import { MessageThread } from "./message-thread";
 import { Composer } from "./composer";
 import { ContactPanel } from "./contact-panel";
+import { EstadoOperacionalChip } from "./estado-chip";
 import { applyContactNamePatch } from "./conversation-patch";
 
 export function InboxClient() {
@@ -187,23 +188,33 @@ export function InboxClient() {
       <section className="flex min-w-0 flex-1 flex-col">
         {selected ? (
           <>
-            <header className="flex items-center justify-between border-b bg-background px-4 py-2.5">
-              <div className="flex items-center gap-3">
+            <header className="flex items-center justify-between gap-3 border-b bg-background px-4 py-2.5">
+              <div className="flex min-w-0 items-center gap-3">
                 <ContactAvatar
                   name={selected.contact.name}
                   seed={selected.contact.id}
                   size="md"
                 />
-                <div>
-                  <p className="text-[15px] font-[650] leading-tight">
-                    {selected.contact.name}
+                <div className="min-w-0">
+                  {/* 014 C7 — El nombre manda y el estado lo acompaña. Con el panel
+                      de detalles plegado, el estado de la conversación abierta era
+                      invisible: había que abrirlo para saber si había trabajo
+                      pendiente. Ahora se lee en la cabecera, con la misma etiqueta y
+                      el mismo `data-estado` que la fila de la lista (FR-7.7). */}
+                  <p className="flex items-center gap-2">
+                    <span className="truncate text-[15px] font-[650] leading-tight">
+                      {selected.contact.name}
+                    </span>
+                    <EstadoOperacionalChip
+                      conversacion={selected}
+                      testId="hilo-estado"
+                    />
                   </p>
                   <p
-                    className={
-                      selected.windowOpen
-                        ? "text-xs font-medium text-success"
-                        : "text-xs text-text-3"
-                    }
+                    className={cn(
+                      "mt-0.5 text-xs",
+                      selected.windowOpen ? "font-medium text-success" : "text-text-3"
+                    )}
                   >
                     {selected.windowOpen
                       ? "ventana abierta"
