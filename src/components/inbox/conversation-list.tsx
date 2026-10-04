@@ -81,11 +81,20 @@ export function ConversationList({
   selectedId,
   onSelect,
   onSeeded,
+  error,
+  onRetry,
 }: {
   conversations: ConversationDto[] | null;
   selectedId: string | null;
   onSelect: (id: string) => void;
   onSeeded: () => void;
+  /**
+   * 014 C8 — Fallo de la carga, con su mensaje y su salida. Opcionales a
+   * propósito: quien los llama sin ellos (los tests que pintan la lista suelta)
+   * sigue viendo la lista de siempre, y sin `error` se comporta igual que antes.
+   */
+  error?: string | null;
+  onRetry?: () => void;
 }) {
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState<FiltroBandeja>("all");
@@ -257,9 +266,37 @@ export function ConversationList({
         )}
       </div>
 
-      <div className="flex-1 overflow-y-auto">
-        {loading ? (
+      <div
+        className="flex-1 overflow-y-auto"
+        // 014 C8 — La lista anuncia qué hay: sin esto, cambiar de chip o escribir
+        // en la búsqueda reposiciona el listado en silencio y quien navega con
+        // lector de pantalla no se entera de que cambió la lista. `aria-busy`
+        // mientras carga, para que "Cargando…" no se lea como lista vacía.
+        aria-busy={loading}
+        data-testid="bandeja-resultados"
+      >
+        {loading && !error ? (
           <p className="p-6 text-center text-xs text-text-3">Cargando…</p>
+        ) : error ? (
+          // 014 C8 — El fallo se DICE y tiene salida. Antes, un `fetch` fallido
+          // dejaba `conversations` en `null` para siempre y esta caja se quedaba
+          // en "Cargando…" eternamente: una espera que no termina nunca. Aquí hay
+          // que decir qué pasó y ofrecer reintentar.
+          <div
+            role="alert"
+            data-testid="bandeja-error"
+            className="flex h-full flex-col items-center justify-center gap-3 p-6 text-center"
+          >
+            <p className="text-sm font-medium text-danger-text">{error}</p>
+            <p className="text-xs text-text-3">
+              La bandeja no se pudo cargar. Tus conversaciones no se han perdido.
+            </p>
+            {onRetry && (
+              <Button size="sm" variant="outline" onClick={onRetry}>
+                Reintentar
+              </Button>
+            )}
+          </div>
         ) : conversations.length === 0 ? (
           <EmptyState onSeeded={onSeeded} />
         ) : visibles.length === 0 ? (
@@ -321,7 +358,17 @@ export function ConversationList({
                         <span
                           className={cn(
                             "shrink-0 text-[11.5px]",
-                            unread ? "font-semibold text-brand" : "text-text-3"
+                            // 014 C8 — `text-brand-text` y no `text-brand`, medido:
+                            // `text-brand` es `--accent`, un color de SUPERFICIE,
+                            // y como texto en oscuro daba 2.57:1 sobre `--bg` y
+                            // 2.20:1 sobre la fila seleccionada (`--accent-tint`)
+                            // — el reloj de lo no leído, que es justo lo que hay
+                            // que leer, era casi invisible en tema oscuro. Con
+                            // `--accent-text`, el token que el propio proyecto usa
+                            // para texto de marca en todo el resto de la app, sube
+                            // a 12.38:1 y 10.62:1. En claro también mejora: 7.28:1
+                            // → 10.66:1.
+                            unread ? "font-semibold text-brand-text" : "text-text-3"
                           )}
                         >
                           {formatTime(c.lastMessageAt)}
@@ -369,7 +416,11 @@ export function ConversationList({
                           if (!eti || !tit) return null;
                           return (
                             <span className="inline-flex max-w-full items-center gap-1 truncate rounded-full border bg-background px-2 py-0.5 text-[11px] text-text-3">
-                              <Megaphone className="h-3 w-3 shrink-0 text-text-4" strokeWidth={1.7} />
+                              {/* 014 C8 — De `--text-4` a `--text-3`: un icono es
+                                  contenido NO textual, y la norma que lo rige pide
+                                  3:1, no 4.5:1. `--text-4` daba 2.20:1 en claro;
+                                  `--text-3` da 3.33:1 y 5.47:1 en oscuro. */}
+                              <Megaphone className="h-3 w-3 shrink-0 text-text-3" strokeWidth={1.7} />
                               <span className="truncate">
                                 {eti} · {tit}
                               </span>

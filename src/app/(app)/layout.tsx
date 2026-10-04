@@ -3,7 +3,7 @@ import { headers } from "next/headers";
 import { getAuth } from "@/lib/auth";
 import { getSessionOrNull } from "@/lib/auth/session";
 import { getBranding } from "@/server/branding";
-import { AppNav } from "@/components/app-nav";
+import { AppShell } from "@/components/app-shell";
 
 export default async function AppLayout({
   children,
@@ -16,14 +16,15 @@ export default async function AppLayout({
   });
 
   return (
-    <div className="flex h-screen overflow-hidden bg-background">
-      <AppNav
-        branding={branding}
-        organizationId={session.organizationId}
-        userName={authSession?.user.name ?? "Usuario"}
-        role={session.role}
-      />
-      <main className="min-w-0 flex-1 overflow-hidden">{children}</main>
-    </div>
+    // 014 C8 — El shell (fila en escritorio, columna con cajón en móvil) vive en
+    // `AppShell`: aquí solo se resuelve la sesión y se le pasan los datos.
+    <AppShell
+      branding={branding}
+      organizationId={session.organizationId}
+      userName={authSession?.user.name ?? "Usuario"}
+      role={session.role}
+    >
+      {children}
+    </AppShell>
   );
 }

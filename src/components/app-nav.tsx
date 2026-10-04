@@ -189,7 +189,9 @@ export function AppNav({
   });
 
   return (
-    <aside className="flex w-56 shrink-0 flex-col border-r bg-subtle px-3 pb-3.5 pt-4">
+    // 014 C8 — `w-full` y no `w-56`: el ancho lo pone ahora el cajón de `AppShell`
+    // en móvil y la columna fija en escritorio. Aquí el aside solo se llena.
+    <aside className="flex h-full w-full flex-col border-r bg-subtle px-3 pb-3.5 pt-4 md:w-56">
       {/* Brand white-label + selector de organización */}
       <div className="mb-4 px-2">
         <div className="flex items-center gap-2.5">
@@ -214,8 +216,17 @@ export function AppNav({
         {GRUPOS.map((grupo) => (
           <div key={grupo.id} className="flex flex-col gap-0.5">
             {/* 014 C7 — La etiqueta del grupo subordina la lista: se lee de un
-                vistazo y no compite con los números, que son lo que hay que ver. */}
-            <p className="px-2.5 pb-1 pt-0.5 text-[10px] font-semibold uppercase tracking-[0.09em] text-text-4">
+                vistazo y no compite con los números, que son lo que hay que ver.
+                014 C8 — De `--text-4` a `--text-3`, medido: `--text-4` da 2.13:1
+                sobre `--bg-subtle` en claro (y 3.48:1 en oscuro), por debajo del
+                4.5:1 que exige un texto de 10 px. `--text-3` es el mismo tono que
+                usan los items de la lista, así que la etiqueta deja de hundirse por
+                debajo del contenido que anuncia. Pasa a 5.28:1 en oscuro; en claro
+                queda en 3.22:1, la misma limitación de la rampa neutra del tema
+                claro que arrastran los items (`--text-3`, 3.33:1): corregirla es
+                re-tunear la rampa, una decisión de diseño que este corte no
+                toma por su cuenta. Ver `docs/CURRENT_STATE.md` (Corte 8). */}
+            <p className="px-2.5 pb-1 pt-0.5 text-[10px] font-semibold uppercase tracking-[0.09em] text-text-3">
               {grupo.label}
             </p>
             {NAV.filter((item) => item.grupo === grupo.id).map((item) => {

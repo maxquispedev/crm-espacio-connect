@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Bell, CalendarClock, Loader2, X } from "lucide-react";
 import type { AttentionDto } from "@/lib/types";
 import { Button } from "@/components/ui/button";
@@ -45,6 +45,15 @@ export function ReminderSchedule({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState<string | null>(null);
+  // 014 C8 — Al abrir el formulario, el foco va al campo que hay que rellenar.
+  // Antes, "Elegir fecha" solo desplegaba el formulario: el foco se quedaba en el
+  // botón, y quien navega con Tab tenía que recorrer el resto del panel para
+  // llegar a la fecha sin saber que ya estaba abierta.
+  const dueRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (open) dueRef.current?.focus();
+  }, [open]);
 
   const scheduled = attention?.state === "deferred" ? attention : null;
   // El vencimiento NO se recalcula aquí: `needsAttentionNow` ya viene derivado
@@ -155,8 +164,14 @@ export function ReminderSchedule({
             variant="outline"
             onClick={() => {
               setDone(null);
+              setError(null);
               setOpen((v) => !v);
             }}
+            // 014 C8 — El botón declara si DEJO algo abierto: sin `aria-expanded`
+            // no hay forma de saber si el formulario de la fecha está desplegado
+            // o no, y con teclado hay que adivinarlo por si aparece la fecha.
+            aria-expanded={open}
+            aria-controls="reminder-form"
             data-testid="reminder-open"
           >
             <CalendarClock className="h-3.5 w-3.5" strokeWidth={1.7} />
@@ -172,10 +187,11 @@ export function ReminderSchedule({
       )}
 
       {open && (
-        <div className="mt-2.5 flex flex-col gap-2 border-t pt-2.5">
+        <div id="reminder-form" className="mt-2.5 flex flex-col gap-2 border-t pt-2.5">
           <label className="flex flex-col gap-1 text-[11px] text-text-2">
             Fecha y hora
             <Input
+              ref={dueRef}
               type="datetime-local"
               value={localDate}
               onChange={(e) => setLocalDate(e.target.value)}
@@ -213,13 +229,30 @@ export function ReminderSchedule({
         </div>
       )}
 
+      {/* 014 C8 — Igual que en el bloque de atención: el resultado se anuncia.
+          "Recordatorio guardado" salía de una acción asíncrona que no mueve el
+          foco, así que sin región viva nadie se enteraba. */}
       {error && (
-        <p className="mt-2 text-[11px] text-danger-text" data-testid="reminder-error">
+        <p
+          role="alert"
+          className="mt-2 text-[11px] text-danger-text"
+          data-testid="reminder-error"
+        >
           {error}
         </p>
       )}
       {done && (
-        <p className="mt-2 text-[11px] text-brand" data-testid="reminder-done">
+        // 014 C8 — Y de `text-brand` a `text-brand-text`, medido: `text-brand` es
+        // `--accent` (color de superficie) y como texto daba 2.33:1 sobre
+        // `--bg-panel` en oscuro: la confirmación de que el recordatorio se guardó
+        // era casi invisible en tema oscuro. `text-brand-text` sube a 11.24:1, y
+        // es el token que el proyecto ya usa para texto de marca en el resto de
+        // la app. En claro también mejora: 6.86:1 → 10.04:1.
+        <p
+          role="status"
+          className="mt-2 text-[11px] text-brand-text"
+          data-testid="reminder-done"
+        >
           {done}
         </p>
       )}

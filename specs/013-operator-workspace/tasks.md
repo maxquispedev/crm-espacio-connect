@@ -339,20 +339,66 @@ vencido mandan nada, y `sales_follow_up_job` queda intacta.
 Los doce se ejecutaron en la **misma corrida** de `E2E_SECTION=026` (120/120
 checks, `exit=0`). La columna E2E dice qué lo verificó en esa corrida.
 
+**Reejecutados por 014 CUT 8** (el 2026-10-04) **después** de los cambios de
+responsive, accesibilidad y estados de ese corte: `E2E_SECTION=026` →
+**121/121 checks OK**, `exit=0` (un check más que en CUT 5: el que añadió CUT 7).
+Los doce siguen **EJECUTADO**, esta vez sobre el código final de los dos bloques,
+y no heredados. Se ejecutaron además `025` (84/84), `024` (49/49) y `023` (35/35),
+más la sección nueva `027` de 014 (53/53). Detalle en
+`specs/014-espacio-connect-rebrand/tasks.md` → §Evidencia → CUT 8.
+
 | Caso | CUT | E2E | Unitario |
 |---|---|---|---|
-| handoff → Por atender | 2/5 | **EJECUTADO** (026: handoff REAL por webhook, no sembrado) | **verde** (`attention-hooks`, `attention-queue`) |
-| abrir no equivale a resolver | 1/2/5 | **EJECUTADO** (026: abrir y cerrar no baja la cola) | **verde** (`attention-state`, `attention-hooks`) |
-| reply manual → estado coherente | 1/4/5 | **EJECUTADO** (026: `waiting_client`, 3 → 2) | **verde** (`attention-hooks`, `operational-flow`) |
-| recordatorio futuro → Agenda, fuera de Por atender | 3/4/5 | **EJECUTADO** (026: 2 → 1 en la cola, Comprometidos 1 → 2) | **verde** (`attention-queue`, `operational-flow`) |
-| inbound antes de vencimiento → Por atender | 3/4/5 | **EJECUTADO** (026: de inmediato, 1 → 2) | **verde** (`attention-queue`, `attention-hooks`) |
-| recordatorio vencido → Por atender | 3/2/4/5 | **EJECUTADO** (026: sigue `deferred` en BD, la UI lo deriva) | **verde** (`attention-queue`, `operational-flow`) |
-| programar otro recordatorio | 3/4/5 | **EJECUTADO** (026: 2º compromiso + cancelar y volver a programar) | **verde** (`operational-flow`) |
-| reactivar IA | 1/4/5 | **EJECUTADO** (026: `handoff_at` limpio, sale de Comprometidos y Agenda) | **verde** (`attention-hooks`, `operational-flow`) |
-| Cliente / Perdido | 1/5 | **EJECUTADO** (026: `PATCH /api/pipeline/leads/{id}` real) | **verde** (`attention-hooks`) |
-| aislamiento tenant | 1/2/5 | **EJECUTADO** (026: dos orgs, API y UI, 404 en lead ajeno) | **verde** (`attention-state`, `attention-hooks`, `attention-queue`) |
-| cero Graph en recordatorio humano | 1/4/5 | **EJECUTADO** (026: outbox +1, cero jobs, cero `origin IN (ai,template)`) | **verde** (`attention-no-send`, `agenda-no-send`) |
-| follow-ups automáticos sin regresión | 1/5 | **EJECUTADO** (026: programar → `wait` → cancelar; 409 `handoff_active` y `human_lane`) | **verde** (sin tocar expectativas) |
+| handoff → Por atender | 2/5 | **EJECUTADO** (026: handoff REAL por webhook, no sembrado; reejecutado en C8) | **verde** (`attention-hooks`, `attention-queue`) |
+| abrir no equivale a resolver | 1/2/5 | **EJECUTADO** (026: abrir y cerrar no baja la cola; reejecutado en C8) | **verde** (`attention-state`, `attention-hooks`) |
+| reply manual → estado coherente | 1/4/5 | **EJECUTADO** (026: `waiting_client`, 3 → 2; reejecutado en C8) | **verde** (`attention-hooks`, `operational-flow`) |
+| recordatorio futuro → Agenda, fuera de Por atender | 3/4/5 | **EJECUTADO** (026: 2 → 1 en la cola, Comprometidos 1 → 2; reejecutado en C8) | **verde** (`attention-queue`, `operational-flow`) |
+| inbound antes de vencimiento → Por atender | 3/4/5 | **EJECUTADO** (026: de inmediato, 1 → 2; reejecutado en C8) | **verde** (`attention-queue`, `attention-hooks`) |
+| recordatorio vencido → Por atender | 3/2/4/5 | **EJECUTADO** (026: sigue `deferred` en BD, la UI lo deriva; reejecutado en C8) | **verde** (`attention-queue`, `operational-flow`) |
+| programar otro recordatorio | 3/4/5 | **EJECUTADO** (026: 2º compromiso + cancelar y volver a programar; reejecutado en C8) | **verde** (`operational-flow`) |
+| reactivar IA | 1/4/5 | **EJECUTADO** (026: `handoff_at` limpio, sale de Comprometidos y Agenda; **027 añade el camino infeliz**: un PATCH en 500 ahora avisa en pantalla con `role="alert"` y no finge éxito) | **verde** (`attention-hooks`, `operational-flow`) |
+| Cliente / Perdido | 1/5 | **EJECUTADO** (026: `PATCH /api/pipeline/leads/{id}` real; reejecutado en C8) | **verde** (`attention-hooks`) |
+| aislamiento tenant | 1/2/5 | **EJECUTADO** (026: dos orgs, API y UI, 404 en lead ajeno; reejecutado en C8) | **verde** (`attention-state`, `attention-hooks`, `attention-queue`) |
+| cero Graph en recordatorio humano | 1/4/5 | **EJECUTADO** (026: outbox +1, cero jobs, cero `origin IN (ai,template)`; reejecutado en C8 y **027 lo repite**: outbox sin crecer tras las tres acciones) | **verde** (`attention-no-send`, `agenda-no-send`) |
+| follow-ups automáticos sin regresión | 1/5 | **EJECUTADO** (026: programar → `wait` → cancelar; 409 `handoff_active` y `human_lane`; reejecutado en C8, que **no tocó** motor, worker, cadencias ni plantillas) | **verde** (sin tocar expectativas) |
+
+## Estado de cierre del bloque 013 (tras 014 CUT 8)
+
+El bloque 013 (cortes 1–5) queda **cerrado**: sus doce casos están EJECUTADOS
+contra la app real sobre el código final, y su unitario está verde. Lo que sigue
+abierto no es de 013 sino heredado, y queda escrito:
+
+1. **`commercial-resource-postgres.test.ts` (de 011): 3 de 4 verdes.**
+   **Reejecutado por primera vez con PostgreSQL disponible en la sesión del
+   corte 8** (BD dedicada `commercial_resources_test_cut8` en `127.0.0.1:55432`),
+   y el resultado **reproduce exactamente** lo que CUT 5 dejó anotado: los tres
+   primeros checks del test `"SQL directo rechaza media ajena, slot abierto,
+   shape inválido y duplicado"` pasan contra PostgreSQL real (`23503` media
+   ajena, `23514` slot abierto, `23514` shape y claves) y el cuarto revienta
+   con `TypeError [ERR_INVALID_ARG_TYPE]` en lugar del `23505` del `INSERT`
+   duplicado.
+   **Causa confirmada de primera mano, no por cita**: el mismo `INSERT` con el
+   mismo `client.json()`, ejecutado **fuera** de vitest contra esa misma BD,
+   **sí** devuelve `23505`, y `client.json()` funciona sin error. Es decir: no
+   es el schema, no es `upsertCommercialResource` y no es la BD — es la
+   serialización del parámetro `jsonb` **dentro del entorno de vitest**.
+   **Sigue sin Owner y sin arreglarse aquí**: es de 011, y un corte es un
+   objetivo.
+2. **Suite opt-in de 013 `attention-migration.test.ts`: EJECUTADA y VERDE.**
+   CUT 5 la dejó en 11/11; el corte 8 la volvió a ejecutar contra la BD
+   dedicada `attention_test_cut8` y confirma **11/11**. Con PostgreSQL
+   disponible, las 2 suites opt-in dejan de estar "skipped por falta de
+   servidor": una verde, una con el defecto de 011.
+3. **Secciones históricas 020/021/022: PENDIENTES**, sin cambios. El corte 8 no
+   las ejecutó y no las toca.
+4. **FK compuesta de `conversation_attention`: ABIERTA y sin Owner** (heredada
+   de CUT 1). La garantía vive hoy en la aplicación —`markAttentionPending`
+   resuelve la conversación por `scoped()`—, no en la base. Cerrarla exige
+   migración propia.
+5. **Lección de entorno, no de producto (sigue vigente)**: `pnpm build` **pisa
+   el `.next` del `next dev`** que esté corriendo. En este corte los gates y el
+   E2E se lanzaron cada uno con su app, por eso no afectó; quien los lance en el
+   mismo `pnpm` tiene que reiniciar la app de pruebas después del build.
 
 ## Evidencia
 

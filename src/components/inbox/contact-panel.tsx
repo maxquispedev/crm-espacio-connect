@@ -52,7 +52,7 @@ export function ContactPanel({
   onPatchConversation: (patch: {
     aiEnabled?: boolean;
     reactivate?: boolean;
-  }) => Promise<void>;
+  }) => Promise<string | null>;
   /**
    * Notifica al padre que el `contact.name` cambió en el servidor tras un
    * guardado exitoso del editor inline. El padre sincroniza las tres

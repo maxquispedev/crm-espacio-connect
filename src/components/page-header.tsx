@@ -44,7 +44,12 @@ export function PageHeader({
   return (
     <header
       className={cn(
-        "flex shrink-0 items-center justify-between gap-4 border-b px-6 py-4",
+        // 014 C8 — `flex-wrap` y padding que cede en pantallas estrechas: con
+        // `justify-between` y las acciones con `shrink-0`, un móvil de 375 px
+        // empujaba "Gestionar etapas" contra el título y los dos se comían.
+        // Al envolver, las acciones bajan a su propia línea y el título conserva
+        // el suyo entero. En `sm+` el resultado es idéntico al de CUT 7.
+        "flex shrink-0 flex-wrap items-center justify-between gap-x-4 gap-y-2 border-b px-4 py-3.5 sm:px-6 sm:py-4",
         className
       )}
     >

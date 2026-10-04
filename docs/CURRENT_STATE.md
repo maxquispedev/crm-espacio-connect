@@ -1,3 +1,141 @@
+# Checkpoint 2026-10-04 — Spec 014, CUT 8: pulido y regresión (CIERRE DE LOS DOS BLOQUES)
+
+**LOS DOS BLOQUES CERRADOS. GATES EN VERDE, 342/342 CHECKS E2E EN LA APP REAL.**
+Commit único: `test(ui): cerrar workspace de Espacio Connect`. Base limpia
+`aac083c` (cierre de 014 CUT 7). Árbol limpio.
+
+Cierra a la vez el **spec 013** (cortes 1–5, el workspace operativo) y el
+**spec 014** (cortes 6–8, el rebrand y el rediseño). No añade funcionalidad:
+revisa lo que dejaron los ocho cortesPrevious y lo deja presentable y operable.
+
+**Objetivo.** Que lo que ya funcionaba se pueda **usar entero**: en un móvil, con
+teclado, y sin que un fallo de red diga una mentira.
+
+**Los cuatro fallos reales que encontró esta revisión** (los tres primeros, el
+gate no los ve; el cuarto, los encontró el E2E al ejecutarse):
+
+1. **La Bandeja se quedaba en "Cargando…" PARA SIEMPRE si el `fetch` fallaba.**
+   `refetchConversations` no distinguía "falló" de "todavía no", y `conversations
+   === null` es el estado de carga: una espera que no termina nunca. Ahora hay
+   estado de error con su mensaje, `role="alert"` y un "Reintentar" que funciona.
+2. **El Pipeline afirmaba un hecho FALSO si el tablero no cargaba.** Con
+   `stages === []` pintaba "Este pipeline todavía no tiene etapas" y ofrecía
+   "Gestionar etapas": le echaba la culpa a la configuración del negocio cuando
+   lo que había pasado era que no se pudo preguntar. Ahora se declara como fallo
+   de red, con su reintento.
+3. **"Reactivar IA" fallaba en silencio.** El resultado del `PATCH` se
+   descartaba: si fallaba, el botón se quedaba pulsado, no pasaba nada y no se
+   decía nada. Una acción que falla callada parece que funcionó.
+4. **En móvil no había forma de llegar al panel de detalles.** Con el panel
+   "abierto" por defecto, el botón solo se pintaba plegado, así que al abrir una
+   conversación en un móvil los detalles quedaban fuera de pantalla **sin
+   ninguna puerta de entrada**. Callejón sin salida, con los cuatro gates en
+   verde. Lo encontró la sección 027 al ejecutarse, no al escribirse.
+
+**Qué se hizo.**
+
+- **Responsive (FR-8.1).** Nuevo `src/components/app-shell.tsx`: columna en móvil
+  y fila en `md+`, con el nav como cajón (velo, Escape que devuelve el foco,
+  cierre al navegar). La Bandeja pasa a maestro/detalle: lista a pantalla
+  completa → hilo con "atrás" → detalles a pantalla completa. En `md+` todo es
+  igual que antes. `PageHeader`, Agenda, Contactos, Pipeline y Laboratorio
+  en vez de fijar píxeles.
+- **Accesibilidad (FR-8.2).** **No existía ninguna regla `:focus-visible`**: solo
+  `Button`/`Input`/`Textarea` tenían anillo, y el resto heredaba el del
+  navegador, que se dibuja fuera de la caja y lo recorta cualquier ancestro con
+  `overflow` —que es la lista y la Agenda—. Ahora hay un anillo global
+  `:where(...)`, **dentro** de la caja, con el token `--accent` (sin colores
+  nuevos). Los avisos de las tres acciones de 013 se **anuncian**
+  (`role="status"`/`role="alert"`), "Elegir fecha" declara si dejó el formulario
+  abierto y al abrirlo el foco cae en la fecha.
+- **Contraste: medido, no estimado.** `tests/unit/cut8-polish.test.ts` **calcula**
+  las ratios leyendo los tokens de `globals.css`, así que no puede mentir. La
+  causa común de los seis fallos era la misma: `--accent` es un color de
+  **superficie** y se usaba como **texto** — en oscuro eso se hunde (2.57:1,
+  2.33:1, 2.20:1). Con `--accent-text`, el token que el proyecto ya usaba para
+  texto de marca: 10–12:1.
+- **Estados (FR-8.3).** Los dos fallos de carga de arriba, más `aria-busy` en la
+  lista y en la Agenda, y la Agenda vacía verificada como estado vacío de verdad
+  (explica qué es y qué hacer).
+
+**Gates.** `typecheck` OK · `lint` **0 errores** (3 warnings preexistentes) ·
+`build` compiló · `test` **115 archivos / 1335 tests** verdes (+15 nuevos).
+
+**E2E con UI real (Playwright, app + PostgreSQL + mocks), los cinco en verde y
+`exit=0`:**
+
+| Sección | Guion | Resultado |
+|---|---|---|
+| `027` — pulido y regresión de este corte (nueva) | `tests/e2e/027-polish-cierre.md` | **53/53** |
+| `026` — los 12 casos del workspace | `013-workspace-verificacion.md` | **121/121** |
+| `025` — flujo operativo | `013-flujo-operativo.md` | **84/84** |
+| `024` — Agenda | `013-agenda-recordatorios.md` | **49/49** |
+| `023` — cola "Por atender" | `013-bandeja-por-atender.md` | **35/35** |
+
+Los **doce** casos mínimos de 013 se **volvieron a ejecutar** sobre el código
+final, no se heredaron del corte 5. Ver la tabla en
+`specs/013-operator-workspace/tasks.md`.
+
+**Suites opt-in de PostgreSQL: por fin ejecutadas.** Con PostgreSQL disponible en
+esta sesión, las dos dejaron de estar "skipped por falta de servidor":
+`attention-migration.test.ts` contra `attention_test_cut8` → **11/11 verde**;
+`commercial-resource-postgres.test.ts` (de 011) contra
+`commercial_resources_test_cut8` → **3 de 4**, reproduciendo exactamente el
+defecto que 013 C5 había anotado. **Causa confirmada de primera mano**: el mismo
+`INSERT` con el mismo `client.json()`, **fuera** de vitest contra esa misma BD,
+**sí** da `23505`. No es el schema ni la BD: es la serialización del parámetro
+`jsonb` dentro del entorno de vitest. Sigue sin Owner (es de 011).
+
+**Nada del motor se tocó.** Ni follow-ups, ni worker, ni cadencias, ni plantillas,
+ni ningún DTO, endpoint o tabla. `pnpm test` con la lista de
+`sales_follow_up_job` intacta y el outbox del mock sin crecer son checks de las
+cinco secciones, no promesas. El sandbox del Laboratorio sigue intacto.
+
+**Pendientes honestos.** No se declara READY punta a punta:
+
+1. **Rampa neutra del tema claro por debajo de 4.5:1 para texto pequeño.**
+   `--text-3` se queda en 3.22–3.33:1 en claro. Es deuda **preexistente de toda la
+   app** (los items del nav y el buscador ya lo usaban), no algo introducido
+   aquí: este corte **dejó de añadir casos nuevos** por debajo de ese suelo.
+   Cerrarla es re-tunear la rampa neutra —decisión de diseño que afecta a toda la
+   superficie visible— y queda **escrito**, con un test dedicado que afirma el
+   suelo, en vez de disimulado bajando un umbral.
+2. **`commercial-resource-postgres.test.ts`: 3 de 4 verdes** (de 011, causa
+   arriba). Sin Owner.
+3. **Secciones históricas E2E 020/021/022: PENDIENTES.** No las ejecutó este
+   corte y no las toca.
+4. **FK compuesta de `conversation_attention`: ABIERTA y sin Owner** (heredada de
+   013 C1). Hoy la garantiza la aplicación (`scoped()`), no la base.
+5. **Enmienda de la constitución: PENDIENTE FORMAL** (T611, heredado de CUT 6).
+6. **Capturas de `docs/screenshots/*.png`**: no re-generadas. La verificación de
+   este corte es numérica y por test, no por captura.
+7. **Lección de entorno, sigue vigente**: `pnpm build` **pisa el `.next` del
+   `next dev`** que esté corriendo. Gates y E2E, cada uno con su app.
+
+**Archivos clave de este corte.** `src/components/app-shell.tsx` (nuevo, el
+shell) · `src/app/globals.css` (anillo de foco global) ·
+`src/components/inbox/inbox-client.tsx` (maestro/detalle, error de lista,
+`patchConversation` con retorno) · `src/components/inbox/conversation-list.tsx`
+(error + reintento + contraste) · `src/components/inbox/attention-block.tsx`
+(avisos anunciados, "Reactivar IA" con ciclo de vida) ·
+`src/components/inbox/reminder-schedule.tsx` (foco, `aria-expanded`, contraste) ·
+`src/components/pipeline/pipeline-client.tsx` (error ≠ vacío) ·
+`src/components/agenda/agenda-client.tsx` · `src/components/app-nav.tsx` ·
+`src/components/page-header.tsx` · `tests/unit/cut8-polish.test.ts` (nuevo, 15
+tests) · `scripts/e2e-cut8-polish.mjs` (nuevo, sección 027) ·
+`tests/e2e/027-polish-cierre.md` (nuevo, guion legible).
+
+**Siguiente paso exacto para una sesión futura.** Los ocho cortes están cerrados y
+el producto es operable en escritorio y en móvil. Lo siguiente **no es un corte de
+este bloque**: es (a) ejecutar las secciones históricas 020/021/022, que llevan
+pendientes desde antes de 013 y nadie ha ejecutado; (b) decidir dueño para los
+tres pendientes sin Owner (`commercial-resource-postgres` de 011, la FK compuesta
+de 013 y la enmienda formal de la constitución); y (c) si se quiere cerrar la
+deuda de contraste, abrir un corte propio de **sistema de diseño** para re-tunear
+la rampa neutra del tema claro, midiendo como este corte midió.
+
+---
+
 # Checkpoint 2026-10-04 — Spec 014, CUT 7: rediseño práctico (CIERRE)
 
 **REDISEÑO PRÁCTICO CERRADO. GATES EN VERDE Y UI REAL VERIFICADA: 240/240 checks

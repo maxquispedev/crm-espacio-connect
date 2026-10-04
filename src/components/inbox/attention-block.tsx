@@ -63,7 +63,15 @@ export function AttentionBlock({
   onChanged,
 }: {
   conversation: ConversationDto;
-  onPatchConversation: (patch: { reactivate?: boolean }) => void | Promise<void>;
+  /**
+   * 014 C8 — `Promise<string | null> | void`: el PATCH puede FALLAR y el bloque
+   * tiene que poder decirlo. Antes devolvía `void` y el resultado del `fetch` se
+   * descartaba, así que "Reactivar IA" fallaba en silencio: el botón se quedaba
+   * ahí, la conversación seguía con la IA apagada y no había ni un mensaje.
+   */
+  onPatchConversation: (
+    patch: { reactivate?: boolean }
+  ) => void | Promise<string | null>;
   onChanged?: () => void;
 }) {
   const [busy, setBusy] = useState(false);
@@ -74,6 +82,26 @@ export function AttentionBlock({
   // mismo tanto si la conversación es del humano como si no lo es.
   if (!esConversacionHumana(conversation)) return null;
   const estado = estadoOperativo(conversation);
+
+  /** 014 C8 — "Reactivar IA" con su propio ciclo de vida: avisa en los dos sentidos. */
+  const reactivateAi = async () => {
+    setBusy(true);
+    setError(null);
+    setDone(null);
+    try {
+      const fallo = await onPatchConversation({ reactivate: true });
+      if (fallo) {
+        setError(fallo);
+        return;
+      }
+      setDone("IA reactivada · vuelve a responder sola");
+      onChanged?.();
+    } catch {
+      setError("No se pudo reactivar la IA. Revisa tu conexión.");
+    } finally {
+      setBusy(false);
+    }
+  };
 
   const markAttended = async () => {
     setBusy(true);
@@ -164,7 +192,7 @@ export function AttentionBlock({
         <Button
           size="sm"
           variant="outline"
-          onClick={() => void onPatchConversation({ reactivate: true })}
+          onClick={() => void reactivateAi()}
           disabled={busy}
           data-testid="attention-reactivate"
         >
@@ -173,13 +201,29 @@ export function AttentionBlock({
         </Button>
       </div>
 
+      {/*
+        014 C8 — Los dos mensajes se ANUNCIAN. `role="status"` es una región viva
+        (WCAG 4.1.3): sin ella, "Atendida · esperando respuesta del cliente" y el
+        error aparecían en pantalla sin que un lector de pantalla dijera nada, y
+        la acción —que es asíncrona y no cambia el foco— pasaba desapercibida.
+        `role="status"` en el éxito y `role="alert"` en el error: el error
+        interrumpe porque algo está roto, el éxito no.
+      */}
       {error && (
-        <p className="mt-2 text-[11px] text-danger-text" data-testid="attention-error">
+        <p
+          role="alert"
+          className="mt-2 text-[11px] text-danger-text"
+          data-testid="attention-error"
+        >
           {error}
         </p>
       )}
       {done && (
-        <p className="mt-2 text-[11px] opacity-80" data-testid="attention-done">
+        <p
+          role="status"
+          className="mt-2 text-[11px] opacity-80"
+          data-testid="attention-done"
+        >
           {done}
         </p>
       )}

@@ -45,6 +45,13 @@ export function PipelineClient() {
   const [leads, setLeads] = useState<BoardLead[]>([]);
   const [activeLead, setActiveLead] = useState<BoardLead | null>(null);
   const [managing, setManaging] = useState(false);
+  // 014 C8 — Fallo de la carga del tablero. Antes `refetch` hacía `return` a
+  // secas: con la red caída, `stages` se quedaba en `[]` y la pantalla decía
+  // "Este pipeline todavía no tiene etapas" — un mensaje que affirmaba un hecho
+  // FALSO sobre el negocio y además ofrecía "Gestionar etapas" como si el arreglo
+  // fuera de configuración. Decir "no tienes etapas" cuando en realidad no se
+  // pudo preguntar es peor que no decir nada (FR-8.3).
+  const [error, setError] = useState<string | null>(null);
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 6 } })
@@ -52,10 +59,18 @@ export function PipelineClient() {
 
   const refetch = useCallback(async () => {
     const res = await fetch("/api/pipeline/board").catch(() => null);
-    if (!res?.ok) return;
+    if (!res) {
+      setError("Sin conexión con el servidor");
+      return;
+    }
+    if (!res.ok) {
+      setError("No se pudo cargar el pipeline");
+      return;
+    }
     const data = (await res.json()) as { stages: StageDto[]; leads: BoardLead[] };
     setStages(data.stages);
     setLeads(data.leads);
+    setError(null);
   }, []);
 
   useEffect(() => {
@@ -102,7 +117,26 @@ export function PipelineClient() {
         }
       />
 
-      {stages.length === 0 ? (
+      {error ? (
+        /* 014 C8 — El fallo de red se declara como fallo de red, con su salida.
+           Es la diferencia entre "tu pipeline está vacío" (un hecho sobre el
+           negocio que se puede corregir creando una etapa) y "no he podido
+           preguntarlo" (un hecho sobre la conexión que se corrige reintentando). */
+        <div
+          role="alert"
+          data-testid="pipeline-error"
+          className="flex flex-1 flex-col items-center justify-center gap-3 p-6 text-center"
+        >
+          <p className="text-sm font-medium text-danger-text">{error}</p>
+          <p className="max-w-sm text-xs text-text-3">
+            Los leads y las etapas no se han perdido. Vuelve a intentarlo para
+            verlos.
+          </p>
+          <Button variant="outline" size="sm" onClick={() => void refetch()}>
+            Reintentar
+          </Button>
+        </div>
+      ) : stages.length === 0 ? (
         /* 014 C7 — Un tablero sin columnas no es un tablero vacío: es una pantalla
            rota que no dice qué hacer. Ahora dice qué falta y ofrece la misma acción
            que el botón de arriba, en el sitio donde se mira (FR-7.8: esto NO es un
@@ -181,8 +215,15 @@ function StageColumn({ stage, leads }: { stage: StageDto; leads: BoardLead[] }) 
       <div className="flex-1 space-y-2 overflow-y-auto p-2">
         {leads.length === 0 ? (
           /* Una columna sin leads es información ("nadie está aquí"), no un hueco
-             vacío que hay que interpretar. No compite con nada: `text-text-4`. */
-          <p className="px-1 py-2 text-center text-[11px] text-text-4">
+             vacío que hay que interpretar. 014 C8 — De `--text-4` a `--text-3`,
+             medido: `--text-4` daba 2.20:1 sobre `--bg` en claro (y 3.60:1 en
+             oscuro), por debajo del 4.5:1 de un texto de 11 px. `--text-3` da
+             3.33:1 y 5.47:1, y sigue siendo el tono más tenue de la tarjeta, así
+             que no compite con el nombre del lead. La parte que queda en claro
+             por debajo de 4.5:1 es la limitación de la rampa neutra del tema
+             claro, compartida con el resto de la app (ver `docs/CURRENT_STATE.md`,
+             Corte 8). */
+          <p className="px-1 py-2 text-center text-[11px] text-text-3">
             Nadie en esta etapa
           </p>
         ) : (

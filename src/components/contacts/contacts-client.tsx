@@ -105,8 +105,11 @@ export function ContactsClient() {
         }
       />
       <div className="min-h-0 flex-1 overflow-y-auto">
-        <div className="flex items-center gap-2 px-6 py-3">
-          <div className="relative">
+        <div className="flex items-center gap-2 px-4 py-3 sm:px-6">
+          {/* 014 C8 — El buscador ocupaba 288 px fijos: en un móvil de 375 px no
+              cabía junto a nada y empujaba el contenido. A ancho completo en
+              pequeño, con su columna desde `sm`. */}
+          <div className="relative w-full sm:w-auto">
             <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-text-3" />
             <Input
               ref={inputRef}
@@ -114,11 +117,11 @@ export function ContactsClient() {
               aria-label="Buscar contacto"
               defaultValue=""
               onChange={(e) => setQuery(e.target.value)}
-              className="w-72 pl-8"
+              className="w-full pl-8 sm:w-72"
             />
           </div>
         </div>
-        <div className="px-6 pb-6">
+        <div className="px-4 pb-6 sm:px-6">
           {contacts.length === 0 ? (
             <div className="flex h-full flex-col items-center justify-center gap-2 text-center">
               {query.trim() || stage !== "all" ? (

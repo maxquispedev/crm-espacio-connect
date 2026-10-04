@@ -266,7 +266,7 @@ export function LabClient() {
         </div>
       )}
 
-      <div className="grid gap-6 p-6 lg:grid-cols-[280px_1fr]">
+      <div className="grid gap-6 p-4 sm:p-6 lg:grid-cols-[280px_1fr]">
         <HistoryList
           runs={runs}
           selectedRunId={selectedRunId}

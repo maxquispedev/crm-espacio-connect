@@ -114,6 +114,31 @@
     @apply bg-background text-foreground antialiased;
     letter-spacing: -0.01em;
   }
+
+  /*
+   * 014 C8 — FOCO VISIBLE, y visible de verdad (FR-8.2).
+   *
+   * Solo `Button`, `Input` y `Textarea` declaraban anillo de foco. Todo lo demás
+   * —los enlaces del nav, los chips de la Bandeja, las filas de conversación, los
+   * enlaces de la Agenda, el botón de "Marcar atendido", el toggle de
+   * "Recordarme" y el de "Reactivar IA", o sea las tres acciones que 013 añadió
+   * para operar— son `<button>`/`<a>` crudos que se relied en el anillo por
+   * defecto del navegador. Ese anillo se dibuja FUERA de la caja del elemento, y
+   * casi todas estas superficies viven dentro de un contenedor con `overflow`
+   * (el `overflow-y-auto` de la lista, el de la Agenda): se recorta. El resultado
+   * era que pulsar Tab movía el foco sin que se viera por dónde iba.
+   *
+   * El anillo va DENTRO (`outline-offset` negativo) a propósito: nunca lo recorta
+   * un ancestro con `overflow`, que es el caso real de este shell.
+   *
+   * `:where()` deja la especificidad en 0 a propósito, para que este sea el suelo
+   * y no una imposición: cualquier utilidad `focus-visible:*` de un componente
+   * (como el anillo propio de `Button`) sigue mandando sobre ella.
+   */
+  :where(a, button, input, select, textarea, summary, [tabindex]):focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: -2px;
+  }
   ::-webkit-scrollbar {
     width: 8px;
     height: 8px;

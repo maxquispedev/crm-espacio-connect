@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
-import { PanelRight } from "lucide-react";
+import { ChevronLeft, PanelRight } from "lucide-react";
 import { cn, formatPhone } from "@/lib/utils";
 import { ContactAvatar } from "@/components/avatar";
 import type { ConversationDto, MessageDto } from "@/lib/types";
@@ -24,6 +24,9 @@ export function InboxClient() {
   // Se incrementa con cada evento SSE que puede cambiar la etapa/lead o el
   // estado del agente: el panel de detalles lo observa y refetch en vivo.
   const [detailRev, setDetailRev] = useState(0);
+  // 014 C8 — Fallo de la carga de la lista, con su mensaje. Antes solo existía
+  // `conversations === null` (cargando), que un error dejaba Definitivamente.
+  const [listError, setListError] = useState<string | null>(null);
 
   useEffect(() => {
     setPanelOpen(localStorage.getItem("vocero.panelOpen") !== "false");
@@ -38,9 +41,22 @@ export function InboxClient() {
 
   const refetchConversations = useCallback(async () => {
     const res = await fetch("/api/conversations").catch(() => null);
-    if (!res?.ok) return;
+    // 014 C8 — Un fallo de red aquí ya no es invisible. Antes `return` a secas y
+    // `conversations` se quedaba en `null`, así que la lista pintaba "Cargando…"
+    // PARA SIEMPRE: la pantalla se quedaba en un estado de carga eterno que no
+    // acababa nunca, sin un solo palabra de por qué. Un estado de carga que no
+    // termina no es "cargando", es un fallo (FR-8.3).
+    if (!res) {
+      setListError("Sin conexión con el servidor");
+      return;
+    }
+    if (!res.ok) {
+      setListError("No se pudo cargar la bandeja");
+      return;
+    }
     const data = (await res.json()) as { conversations: ConversationDto[] };
     setConversations(data.conversations);
+    setListError(null);
     lastFetchRef.current = new Date().toISOString();
   }, []);
 
@@ -61,6 +77,7 @@ export function InboxClient() {
     (id: string) => {
       setSelectedId(id);
       setMessages([]);
+      setVista("hilo");
       void refetchMessages(id);
       void fetch(`/api/conversations/${id}`, {
         method: "PATCH",
@@ -74,11 +91,37 @@ export function InboxClient() {
   // Enlace directo desde Contactos/Pipeline: /inbox?contact=<id>
   const searchParams = useSearchParams();
   const contactParam = searchParams.get("contact");
+  // 014 C8 — La apertura automática ocurre UNA vez por enlace. Sin este registro,
+  // en móvil el botón "volver" (que solo despeja la vista, sin deseleccionar de
+  // verdad) se deshacía solo: el siguiente refetch por SSE volvía a abrir el hilo
+  // y el usuario quedaba atrapado en la conversación que acababa de cerrar.
+  const autoAbiertoRef = useRef<string | null>(null);
   useEffect(() => {
     if (!contactParam || selectedIdRef.current) return;
+    if (autoAbiertoRef.current === contactParam) return;
     const match = conversations?.find((c) => c.contact.id === contactParam);
-    if (match) select(match.id);
+    if (!match) return;
+    autoAbiertoRef.current = contactParam;
+    select(match.id);
   }, [contactParam, conversations, select]);
+
+  /**
+   * 014 C8 — Qué se ve en MÓVIL, que son tres pantallas y no caben de lado. En
+   * escritorio las tres conviven y este estado no se mira: es lo que permite que
+   * un móvil de 375 px tenga la Bandeja completa en vez de 360 px de lista y 15 px
+   * de hilo. Es SOLO vista: no marca leído, no deselecciona y no toca nada, que
+   * es lo que espera quien pulsa "atrás".
+   */
+  const [vista, setVista] = useState<"lista" | "hilo" | "detalle">("lista");
+  const volverALista = useCallback(() => setVista("lista"), []);
+  const abrirDetalles = useCallback(() => {
+    togglePanel(true);
+    setVista("detalle");
+  }, [togglePanel]);
+  const cerrarDetalles = useCallback(() => {
+    togglePanel(false);
+    setVista("hilo");
+  }, [togglePanel]);
 
   useEvents({
     onMessageNew: ({ conversationId, message }) => {
@@ -150,15 +193,31 @@ export function InboxClient() {
     [refetchMessages, refetchConversations]
   );
 
+  /**
+   * 014 C8 — Devuelve el mensaje de error o `null` si salió bien. Antes devolvía
+   * `void` y se tragaba el resultado del PATCH: si "Reactivar IA" fallaba, el
+   * botón se quedaba pulsado, no cambiaba nada y la persona no se enteraba. Una
+   * acción que falla en silencio es peor que una que avisa, porque parece que
+   * funcionó. `null` = correcto, texto = qué pasó (el que lo llama decide dónde
+   * mostrarlo: el bloque de atención ya tiene su línea de error).
+   */
   const patchConversation = useCallback(
-    async (patch: { aiEnabled?: boolean; reactivate?: boolean }) => {
-      if (!selectedIdRef.current) return;
-      await fetch(`/api/conversations/${selectedIdRef.current}`, {
+    async (patch: { aiEnabled?: boolean; reactivate?: boolean }): Promise<string | null> => {
+      if (!selectedIdRef.current) return "Sin conversación seleccionada";
+      const res = await fetch(`/api/conversations/${selectedIdRef.current}`, {
         method: "PATCH",
         headers: { "content-type": "application/json" },
         body: JSON.stringify(patch),
       }).catch(() => null);
+      if (!res) return "Sin conexión con el servidor";
+      if (!res.ok) {
+        const data = (await res.json().catch(() => null)) as {
+          error?: { message?: string };
+        } | null;
+        return data?.error?.message ?? "No se pudo actualizar la conversación";
+      }
       void refetchConversations();
+      return null;
     },
     [refetchConversations]
   );
@@ -176,20 +235,47 @@ export function InboxClient() {
 
   return (
     <div className="flex h-full">
-      <section className="w-[360px] shrink-0 overflow-hidden border-r">
+      {/* 014 C8 — En móvil, la lista ocupa la pantalla entera (`w-full`); desde
+          `md` recupera su columna de 360 px y el hilo vuelve a estar al lado. */}
+      <section
+        data-testid="bandeja-lista"
+        className={cn(
+          "shrink-0 overflow-hidden border-r md:w-[360px]",
+          vista === "lista" ? "flex w-full flex-col" : "hidden md:flex md:flex-col"
+        )}
+      >
         <ConversationList
           conversations={conversations}
           selectedId={selectedId}
           onSelect={select}
           onSeeded={() => void refetchConversations()}
+          error={listError}
+          onRetry={() => void refetchConversations()}
         />
       </section>
 
-      <section className="flex min-w-0 flex-1 flex-col">
+      <section
+        data-testid="bandeja-hilo"
+        className={cn(
+          "min-w-0 flex-1 flex-col",
+          vista === "lista" ? "hidden md:flex" : "flex"
+        )}
+      >
         {selected ? (
           <>
             <header className="flex items-center justify-between gap-3 border-b bg-background px-4 py-2.5">
               <div className="flex min-w-0 items-center gap-3">
+                {/* 014 C8 — "Atrás" solo en móvil: en escritorio el hilo está al
+                    lado de la lista y volver sería un botón sin destino. */}
+                <button
+                  type="button"
+                  onClick={volverALista}
+                  data-testid="hilo-volver"
+                  aria-label="Volver a la lista de conversaciones"
+                  className="-ml-1 shrink-0 rounded-sm p-1.5 text-text-3 transition-colors hover:bg-accent hover:text-foreground md:hidden"
+                >
+                  <ChevronLeft className="h-4 w-4" strokeWidth={1.7} />
+                </button>
                 <ContactAvatar
                   name={selected.contact.name}
                   seed={selected.contact.id}
@@ -222,11 +308,30 @@ export function InboxClient() {
                   </p>
                 </div>
               </div>
-              {!panelOpen && (
+              {/* 014 C8 — El botón de detalles aparece en los dos casos en los que
+                  los detalles NO se ven: cuando el panel está plegado (escritorio y
+                  móvil) y cuando se está viendo el hilo en móvil con el panel
+                  "abierto" pero fuera de pantalla.
+
+                  Ese segundo caso es un callejón sin salida que este corte
+                  encontró ejecutando el E2E: `panelOpen` nace en `true`, así que el
+                  botón solo se pintaba con `!panelOpen` y, en un móvil, la
+                  conversación se abría sin ninguna manera de llegar a los
+                  detalles. Con `md:hidden` cuando el panel ya está abierto, el
+                  mismo botón cubre los dos casos y desaparece solo donde no
+                  hace falta. Es CSS, no un `matchMedia`: el estado de la vista no
+                  puede depender de medir la pantalla durante el render. */}
+              {(!panelOpen || vista === "hilo") && (
                 <button
-                  onClick={() => togglePanel(true)}
+                  onClick={abrirDetalles}
                   aria-label="Mostrar detalles"
-                  className="rounded-sm border p-1.5 text-text-3 hover:bg-accent hover:text-foreground"
+                  // Si el botón se está viendo es porque los detalles están
+                  // plegados: nunca puede ser `true` mientras exista.
+                  aria-expanded={false}
+                  className={cn(
+                    "rounded-sm border p-1.5 text-text-3 hover:bg-accent hover:text-foreground",
+                    panelOpen && "md:hidden"
+                  )}
                 >
                   <PanelRight className="h-4 w-4" strokeWidth={1.7} />
                 </button>
@@ -251,20 +356,29 @@ export function InboxClient() {
       </section>
 
       <section
+        data-testid="bandeja-detalles"
         className={cn(
           "shrink-0 overflow-hidden border-l transition-[width] duration-[220ms]",
-          panelOpen && selected ? "w-[320px]" : "w-0 border-l-0"
+          vista === "detalle"
+            ? "w-full md:w-[320px]"
+            : panelOpen && selected
+              ? "w-[320px]"
+              : "w-0 border-l-0",
+          // En móvil el panel tapaba el hilo: 320 px de detalles sobre 375 px de
+          // pantalla dejaban la conversación fuera de pantalla.
+          vista === "detalle" ? "flex" : "hidden md:block",
+          !panelOpen && vista !== "detalle" && "border-l-0"
         )}
       >
         {selected && (
-          <div className="h-full w-[320px]" key={selected.contact.id}>
+          <div className="h-full w-full md:w-[320px]" key={selected.contact.id}>
             <ContactPanel
               conversation={selected}
               refreshKey={detailRev}
               onPatchConversation={patchConversation}
               onContactUpdated={onContactUpdated}
               onAttentionChanged={() => void refetchConversations()}
-              onClose={() => togglePanel(false)}
+              onClose={cerrarDetalles}
             />
           </div>
         )}

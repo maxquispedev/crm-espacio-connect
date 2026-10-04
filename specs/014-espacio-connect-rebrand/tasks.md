@@ -289,24 +289,164 @@ la cola— se ejerció contra la app real, en los dos temas (IX).
 
 ## CUT 8 — Polish y regresión final
 
-- [ ] T801 Responsive razonable (escritorio primero)
-- [ ] T802 Accesibilidad básica: foco visible, `aria`, contraste, teclado
-- [ ] T803 Empty / loading / error states completos
-- [ ] T804 Regresión Inbox
-- [ ] T805 Regresión Pipeline
-- [ ] T806 Regresión Contactos
-- [ ] T807 Regresión Agente
-- [ ] T808 E2E actualizado y ejecutado (o PENDIENTE con causa)
-- [ ] T809 `docs/CURRENT_STATE.md` final
-- [ ] T810 `specs/013-operator-workspace/tasks.md` actualizado
-- [ ] T811 `specs/014-espacio-connect-rebrand/tasks.md` actualizado
-- [ ] T812 Pendientes honestos; sin "READY" sin evidencia
-- [ ] T813 Gate completo final
-- [ ] T814 Un commit, árbol limpio
+- [x] T801 Responsive razonable (escritorio primero)
+- [x] T802 Accesibilidad básica: foco visible, `aria`, contraste, teclado
+- [x] T803 Empty / loading / error states completos
+- [x] T804 Regresión Inbox
+- [x] T805 Regresión Pipeline
+- [x] T806 Regresión Contactos
+- [x] T807 Regresión Agente
+- [x] T808 E2E actualizado y ejecutado (o PENDIENTE con causa)
+- [x] T809 `docs/CURRENT_STATE.md` final
+- [x] T810 `specs/013-operator-workspace/tasks.md` actualizado
+- [x] T811 `specs/014-espacio-connect-rebrand/tasks.md` actualizado
+- [x] T812 Pendientes honestos; sin "READY" sin evidencia
+- [x] T813 Gate completo final
+- [x] T814 Un commit, árbol limpio
+
+**Ver nota de cierre al final de esta sección: T809–T814 son la propia
+documentación de este corte; su evidencia está en §Evidencia → CUT 8.**
 
 ---
 
 ## Evidencia
+
+### CUT 8 — Polish y regresión final (2026-10-04)
+
+Este corte no añade funcionalidad: revisa lo que dejaron los cortes 1–7 y lo deja
+presentable y operable. Lo que se encontró al revisar no era hipotético —tres
+defectos reales que el gate no ve— y se corrigió con su test.
+
+**Gates, en verde:**
+
+| Gate | Resultado |
+|---|---|
+| `pnpm typecheck` | OK, sin salida |
+| `pnpm lint` | **0 errores**, 3 warnings preexistentes (los mismos de CUT 5/6/7) |
+| `pnpm build` | compiló (Next 15.5.20) |
+| `pnpm test` | **115 ficheros / 1335 tests verdes**, 1 fichero skipped (opt-in sin variable), 9 tests skipped. **+15** respecto a CUT 7: `tests/unit/cut8-polish.test.ts` |
+
+**E2E con UI real, app + PostgreSQL + mocks.** BD dedicada
+`operator_workspace_test_cut8` en `127.0.0.1:55432`, app en `:3021`, Chromium
+real vía Playwright:
+
+| Sección | Guion | Resultado |
+|---|---|---|
+| `E2E_SECTION=027` (este corte) | `tests/e2e/027-polish-cierre.md` | **53/53 checks OK**, `exit=0` |
+| `E2E_SECTION=026` (los 12 casos del workspace) | `013-workspace-verificacion.md` | **121/121 checks OK**, `exit=0` |
+| `E2E_SECTION=025` (flujo operativo) | `013-flujo-operativo.md` | **84/84 checks OK**, `exit=0` |
+| `E2E_SECTION=024` (Agenda) | `013-agenda-recordatorios.md` | **49/49 checks OK**, `exit=0` |
+| `E2E_SECTION=023` (cola "Por atender") | `013-bandeja-por-atender.md` | **35/35 checks OK**, `exit=0` |
+
+Los cinco en verde y con `exit=0`: los 12 casos del bloque 013 se **volvieron a
+ejecutar** después de estos cambios, no se heredaron.
+
+**Tres defectos reales que encontró la revisión (y que el gate no ve):**
+
+1. **La Bandeja se quedaba en "Cargando…" PARA SIEMPRE si el `fetch` fallaba.**
+   `refetchConversations` hacía `return` a secas sin distinguir fallo de "todavía
+   no", y `conversations === null` es exactamente el estado de carga: una espera
+   que nunca termina. Ahora hay estado de error con su mensaje, `role="alert"` y
+   un "Reintentar" que funciona.
+2. **El Pipeline afirmaba un hecho FALSO si el tablero no cargaba.** Con
+   `stages === []` pintaba "Este pipeline todavía no tiene etapas" y ofrecía
+   "Gestionar etapas" — es decir, le echaba la culpa a la configuración del
+   negocio cuando lo que había pasado era que no se pudo preguntar. Ahora el
+   fallo de red se declara como fallo de red, con su reintento.
+3. **"Reactivar IA" fallaba en silencio.** `onPatchConversation` devolvía `void`
+   y descartaba la respuesta del `PATCH`: si fallaba, el botón se quedaba
+   pulsado, no pasaba nada y no se decía nada. Ahora devuelve el mensaje de error
+   y el bloque lo muestra.
+
+**Un cuarto defecto lo encontró el propio E2E 027 al ejecutarse** (no al
+escribirse): con el panel de detalles "abierto" por defecto, en móvil **no había
+ninguna manera de llegar a los detalles** —el botón solo se pintaba con
+`!panelOpen`, y en móvil los detalles quedan fuera de pantalla aunque `panelOpen`
+sea `true`. Callejón sin salida, con el gate completamente en verde. Corregido en
+`inbox-client.tsx`; los checks "el panel de detalles ocupa la pantalla" y "cerrar
+los detalles devuelve al hilo" lo cubren.
+
+**Cambios de código (12 ficheros):**
+
+| Fichero | Qué |
+|---|---|
+| `src/components/app-shell.tsx` | **nuevo**. Columna en móvil / fila en `md+`, barra mínima, cajón con velo, Escape + foco devuelto, cierre al navegar |
+| `src/app/(app)/layout.tsx` | delega el shell en `AppShell` |
+| `src/components/app-nav.tsx` | `w-full md:w-56` (el ancho lo pone el cajón); etiqueta de grupo de `--text-4` → `--text-3` |
+| `src/app/globals.css` | anillo de foco global `:where(...):focus-visible`, dentro de la caja |
+| `src/components/inbox/inbox-client.tsx` | maestro/detalle en móvil, error de la lista, "atrás" en el hilo, botón de detalles sin callejón, `patchConversation` devuelve el fallo |
+| `src/components/inbox/conversation-list.tsx` | estado de error + reintento, `aria-busy`, reloj de lo no leído a `--accent-text`, megáfono a `--text-3` |
+| `src/components/inbox/attention-block.tsx` | `role="status"`/`role="alert"`, y "Reactivar IA" con ciclo de vida propio |
+| `src/components/inbox/reminder-schedule.tsx` | foco en la fecha al abrir, `aria-expanded`/`aria-controls`, avisos anunciados, confirmación a `--accent-text` |
+| `src/components/pipeline/pipeline-client.tsx` | estado de error distinto del vacío, "Nadie en esta etapa" a `--text-3` |
+| `src/components/agenda/agenda-client.tsx` | `role="alert"`, `aria-busy`, padding y filas fluidas |
+| `src/components/page-header.tsx` | `flex-wrap` y padding responsive (lo demás idéntico) |
+| `src/components/contacts/contacts-client.tsx` · `src/components/lab/lab-client.tsx` | padding y buscador responsive |
+
+**Contraste: medido, no estimado.** `tests/unit/cut8-polish.test.ts` **calcula** las
+ratios leyendo los tokens de `src/app/globals.css`, así que no puede quedarse
+mintiendo si alguien re-tunea el tema. Lo que estaba por debajo del umbral y se
+corrigió:
+
+| Estado | Antes (claro / oscuro) | Ahora (claro / oscuro) | Token |
+|---|---|---|---|
+| Reloj de lo no leído (C7) | 7.28 / **2.57** | 10.66 / **12.38** | `--accent-text` |
+| … sobre la fila seleccionada | 7.28 / **2.20** | 9.83 / **10.62** | `--accent-text` |
+| Confirmación de "Recordarme" (C4) | 6.86 / **2.33** | 10.04 / **11.24** | `--accent-text` |
+| Etiqueta de grupo del nav (C7) | **2.13** / 3.48 | 3.22 / **5.28** | `--text-3` |
+| "Nadie en esta etapa" (C7) | **2.20** / 3.60 | 3.33 / **5.47** | `--text-3` |
+| Icono del megáfono (C7) | **2.20** / 3.60 | 3.33 / **5.47** | `--text-3` |
+
+La causa común: `--accent` es un color de **superficie** y se estaba usando como
+**texto**. En tema oscuro eso se hunde. `--accent-text` es el token que el
+proyecto ya usaba para texto de marca en el resto de la app; los tres cambios lo
+dejan de ser los dos únicos sitios que se salían la convención.
+
+**Ninguna expectativa existente se modificó en este corte.** `page-header.tsx` y
+`conversation-list.tsx` cambian, pero en responsive, en `aria` y en los tres
+tokens de la tabla de contraste; los 8 tests de `redesign-practico.test.ts`
+(CUT 7) y los 30 de `operational-flow.test.ts` (CUT 4) siguen verdes **sin
+tocarlos**. Sobre la Agenda se comprobó que los cinco grupos vacíos **deben**
+seguir viéndose, porque 013 C3 lo decidió así con un test
+(`agenda-view.test.ts`, "pinta los cinco grupos aunque estén vacíos") y es una
+decisión buena: el mensaje de vacío explica qué hacer y los cinco grupos
+explican qué es. Ocultarlos habría sido una "mejora" que rompía una intención.
+
+**Pendientes honestos de este corte (NO se declara READY punta a punta):**
+
+1. **Rampa neutra del tema claro por debajo de 4.5:1 para texto pequeño.**
+   `--text-3` se queda en 3.22–3.33:1 en claro. Es deuda **preexistente y de toda
+   la app** (los items del nav, el buscador y las etapas ya lo usaban), no algo
+   que este corte introdujera: lo que hace este corte es **dejar de añadir casos
+   nuevos** por debajo de ese suelo. Cerrarla es re-tunear la rampa neutra, una
+   decisión de diseño que afecta a toda la superficie visible, y por eso queda
+   escrita y **no** se disimula bajando un umbral en el test: hay un test
+   dedicado que afirma el suelo y escribe la deuda con sus números.
+2. **`commercial-resource-postgres.test.ts`: 3 de 4 verdes.** Reproducido de
+   primera mano (ver `013-operator-workspace/tasks.md`, pendientes históricos). No
+   se arregla aquí: es de 011, y un corte es un objetivo.
+3. **Secciones históricas 020/021/022**: sin cambios, siguen PENDIENTES. No las
+   ejecutó este corte.
+4. **FK compuesta de `conversation_attention`**: sigue abierta y sin Owner
+   (heredada de 013 C1). La garantía vive hoy en la aplicación, no en la base.
+5. **La revisión visual en modo oscuro y claro** (los PNGs de `scripts/screenshot-c7.mjs`)
+   no se repitió con capturas nuevas: la verificación de contraste de este corte
+   es **numérica y por test**, no por captura.
+6. **Enmienda de la constitución**: sigue PENDIENTE FORMAL (T611), heredado de CUT 6.
+
+**Constitution Check re-evaluado tras el corte (V, IX).** Sin violaciones. Cero
+dependencias de UI o de runtime nuevas, luego II intacto; sin secretos nuevos ni
+cambios de cifrado (I); el shell, el panel y los estados tocan la capa de
+presentación, no el scope ni `organization_id`, y ninguna tabla cambió (III); sin
+integraciones externas, y el sandbox del Laboratorio intacto (IV); gate completo
+**más** 342 checks de navegador con camino feliz e infeliz, incluidos los cuatro
+que fallaban y ahora están verificados (V); los artefactos SDD preceden al corte
+(VI); la auditoría queda grabada en este archivo, incluidas las cifras de
+contraste y los pendientes (VII); sin alcance nuevo ni panel nuevo: se corrigieron
+superficies que ya existían, y la causa de cada decisión está escrita junto al
+código (VIII); y el comportamiento observable —qué se ve al tabular, en un móvil,
+y cuando el servidor falla— se ejerció contra la app real y se midió (IX).
+
 
 ### CUT 6 — Rebrand Espacio Connect (2026-10-04)
 

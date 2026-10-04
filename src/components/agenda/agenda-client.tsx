@@ -105,9 +105,18 @@ export function AgendaClient() {
         }
       />
 
-      <div className="flex-1 overflow-y-auto px-6 py-4">
+      <div
+        className="flex-1 overflow-y-auto px-4 py-4 sm:px-6"
+        // 014 C8 — `aria-busy` mientras llega: sin él, "Cargando agenda…" y una
+        // agenda de verdad son indistinguibles para quien no ve la pantalla.
+        aria-busy={loading}
+      >
         {error && (
           <p
+            // 014 C8 — `role="alert"`: la Agenda caída es un fallo de la pantalla
+            // entera, y hasta ahora se pintaba en silencio. El mensaje avisa y el
+            // botón "Actualizar" de la cabecera da la salida (FR-8.3).
+            role="alert"
             className="mb-4 rounded-md border border-danger-border bg-danger-soft px-3 py-2 text-xs text-danger-text"
             data-testid="agenda-error"
           >
@@ -181,10 +190,14 @@ export function AgendaGroups({
                 {items.map((reminder) => (
                   <li
                     key={reminder.conversationId}
-                    className="flex items-center gap-3 rounded-md border px-3 py-2.5"
+                    // 014 C8 — `flex-wrap`: en un móvil los dos botones ("Abrir" y
+                    // "Cancelar", con `shrink-0`) se comían el ancho del contacto y
+                    // dejaban la línea de "vencido · en Por atender" ilegible. Al
+                    // envolver, el texto conserva su sitio y las acciones bajan.
+                    className="flex flex-wrap items-center gap-3 rounded-md border px-3 py-2.5"
                     data-testid={`agenda-item-${reminder.bucket}`}
                   >
-                    <div className="min-w-0 flex-1">
+                    <div className="min-w-0 flex-1 basis-40">
                       <p className="truncate text-[13px] font-medium">
                         {reminder.contact.name}
                       </p>
