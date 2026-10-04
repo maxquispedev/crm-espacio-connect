@@ -20,8 +20,10 @@ import {
   _countDraftsForPlaybook,
   _countPublishedForPlaybook,
 } from "@/lib/sales/playbook/store";
+import { getPublishedConfigForOrg, getDraftConfigForOrg, PlaybookInvalidConfigError } from "@/lib/sales/playbook/loader";
+import { upgradePaymentDraft } from "@/lib/sales/playbook/payment-extension";
 import { VENDE_VELOZ_PLAYBOOK_V1 } from "@/lib/sales/playbook/v1";
-import type { ConfigV1 } from "@/lib/sales/playbook/schema";
+import { ConfigV1Schema, type Config, type ConfigV1 } from "@/lib/sales/playbook/schema";
 
 /* ============================================================
  * In-memory store mock con índices parciales UNIQUE
@@ -392,11 +394,59 @@ function cloneV1(): ConfigV1 {
   return JSON.parse(JSON.stringify(VENDE_VELOZ_PLAYBOOK_V1));
 }
 
+function configColumns(config: Config = cloneV1()) {
+  return {
+    schemaVersion: config.schema_version, productJson: config.product,
+    offerJson: config.offer, policyJson: config.commercial_policy,
+    prioritiesJson: config.priorities, writerJson: config.writer,
+    jevQuestionsJson: config.jev_questions, prohibitionsJson: config.prohibitions,
+    handoffJson: config.handoff, urgencyRules: config.urgency_rules,
+  };
+}
+
 /* ============================================================
  * Tests
  * ============================================================ */
 
 describe("store del Sales Playbook — CRUD + invariantes", () => {
+  it("fixtures lifecycle incompletas ya eran inválidas bajo el contrato 1.0", () => {
+    expect(ConfigV1Schema.safeParse({ schema_version: "1.0" }).success).toBe(false);
+    expect(ConfigV1Schema.safeParse(cloneV1()).success).toBe(true);
+  });
+  it("rechaza draft 1.1 sin extensión antes de archivar Published 1.0", async () => {
+    const pb = seedOrgWithPlaybook("org_a");
+    const published = { ...configColumns(), id: "old", organizationId: "org_a", playbookId: pb, versionNumber: 1, status: "published" };
+    store.sales_playbook_version.push(published, { ...configColumns(), schemaVersion: "1.1", id: "new", organizationId: "org_a", playbookId: pb, versionNumber: 2, status: "draft" });
+    await expect(publishDraft("org_a", null, "user_1")).rejects.toThrow();
+    expect(published.status).toBe("published");
+  });
+
+  it("store/loader publican 1.1 y restauran histórico 1.0 sin reescribir config", async () => {
+    seedOrgWithPlaybook("org_a");
+    const legacy = await createDraft("org_a", { config: cloneV1(), notes: null, createdBy: "user_1" });
+    await publishDraft("org_a", null, "user_1");
+    const before = configColumns(cloneV1());
+    expect((await getPublishedConfigForOrg("org_a"))?.config).toEqual(cloneV1());
+    await createDraft("org_a", { config: upgradePaymentDraft(cloneV1()), notes: null, createdBy: "user_1" });
+    expect((await getDraftConfigForOrg("org_a"))?.schema_version).toBe("1.1");
+    const v11 = await publishDraft("org_a", null, "user_1");
+    expect((await getPublishedConfigForOrg("org_a"))?.config.writer).toHaveProperty("send_payment_instructions");
+    await rollbackToVersion("org_a", legacy.id, null, "user_1");
+    expect((await getPublishedConfigForOrg("org_a"))?.config).toEqual(cloneV1());
+    const restored = store.sales_playbook_version.find(v => v.id === legacy.id)!;
+    for (const [key, value] of Object.entries(before)) expect(restored[key]).toEqual(value);
+    expect(store.sales_playbook_version.find(v => v.id === v11.id)?.status).toBe("archived");
+    expect(await getPublishedConfigForOrg("org_b")).toBeNull();
+  });
+  it("loader rechaza 1.1 incompleto y versiones desconocidas sin modificar filas", async () => {
+    const pb = seedOrgWithPlaybook("org_a");
+    const row = { ...configColumns(), schemaVersion: "1.1", id: "bad", organizationId: "org_a", playbookId: pb, versionNumber: 1, status: "published" };
+    store.sales_playbook_version.push(row);
+    await expect(getPublishedConfigForOrg("org_a")).rejects.toBeInstanceOf(PlaybookInvalidConfigError);
+    row.schemaVersion = "2.0";
+    await expect(getPublishedConfigForOrg("org_a")).rejects.toBeInstanceOf(PlaybookInvalidConfigError);
+    expect(row.status).toBe("published");
+  });
   it("getPlaybookForOrg devuelve null para org sin playbook", async () => {
     const r = await getPlaybookForOrg("org_empty");
     expect(r).toBeNull();
@@ -497,6 +547,7 @@ describe("store del Sales Playbook — CRUD + invariantes", () => {
         status: "published",
       },
       {
+        ...configColumns(),
         id: "id_draft",
         organizationId: "org_a",
         playbookId,
@@ -530,6 +581,7 @@ describe("store del Sales Playbook — CRUD + invariantes", () => {
     const playbookId = seedOrgWithPlaybook("org_a");
     store.sales_playbook_version.push(
       {
+        ...configColumns(),
         id: "id_v1",
         organizationId: "org_a",
         playbookId,

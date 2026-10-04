@@ -3,7 +3,7 @@
 **Estado:** C1 implementado con gates técnicos verdes; BD real y E2E PENDIENTES.
 C2 implementado con gate técnico verde / E2E PENDIENTE; C3 implementado con
 gate técnico verde / E2E PENDIENTE; **pausa operativa CERRADA con OP1–OP4
-cumplidos y evidencia real registrada**; C4 sin iniciar. **No READY punta a
+cumplidos y evidencia real registrada**; C4 IMPLEMENTADO con gates técnicos verdes / E2E 022 PENDIENTE. **No READY punta a
 punta**: los self-tests E2E 020/021 y los 4 tests PostgreSQL opt-in siguen
 PENDIENTES (sin cambios respecto a C1–C3).
 Dependency order: bootstrap → C1 → C2 → C3 → pausa operativa → C4.
@@ -368,21 +368,89 @@ local automatizado: complementan la evidencia, no la sustituyen.
 
 ## Corte 4 — Acción explícita de instrucciones de pago
 
-**Estado:** PENDIENTE. **Commit previsto:** `feat(sales): entregar instrucciones de pago configuradas`.
+**Estado:** IMPLEMENTADO / GATES TÉCNICOS VERDES; E2E 022 PENDIENTE.
+**Commit único de este corte:** `feat(sales): entregar instrucciones de pago configuradas`.
 
-- [ ] T1141 Contrato 1.1/send_payment_instructions y V3 explícito compatible con V2/1.0.
-- [ ] T1142 Actualizar normalizer/resolver/writer/orquestador/playbook/editor y Lab.
-- [ ] T1143 Destinos por código solo desde recursos; fact tras entrega y handoff posterior.
-- [ ] T1144 Tests compatibilidad/negativas/seguridad y E2E pago/rollback; gates completos.
-- [ ] T1145 Actualizar tasks/CURRENT_STATE/docs relevantes, revisar diff, UN commit y árbol limpio.
+- [x] T1141 Contrato 1.1/send_payment_instructions y V3 explícito compatible con V2/1.0.
+- [x] T1142 Actualizar normalizer/resolver/writer/orquestador/playbook/editor y Lab.
+- [x] T1143 Destinos por código solo desde recursos; fact tras entrega y handoff posterior.
+- [ ] T1144 Tests unitarios/regresión/gates completos verdes; arnés E2E 022 preparado e intentado. **Ejecución E2E pago/UI/rollback PENDIENTE**, no marcar esta tarea completa.
+- [x] T1145 Documentación final, revisión del diff y cierre en UN commit atómico de C4. Sin otro corte, runner, deploy ni publish productivo.
 
-### Evidencia durable del corte
+### Evidencia final — recuperación 2026-10-04
 
-- HEAD inicial / commit final: pendiente.
-- Archivos y decisiones técnicas: pendiente.
-- Comandos/tests/gates y resultados: no ejecutados.
-- E2E happy/unhappy: no ejecutado; registrar causa si no disponible.
-- Pendientes y siguiente paso exacto: ejecutar solo este corte con su task.
+- Se continuó sobre el working tree parcial: HEAD base
+  `af6f1d9310127f4f03245fc459f8365ca0e90e88`, sin reset/checkout/clean/stash,
+  sin descartar trabajo previo. Este commit tiene ese padre único. Obtener hash
+  con `git log -1 --format='%H %s'`; verificar rango con
+  `git rev-list --count af6f1d9..HEAD` (debe ser 1). OP1–OP4 siguen cumplidos.
+- Reproducción exacta inicial: `pnpm --pm-on-fail=ignore exec vitest run
+  tests/unit/playbook-store.test.ts`: **14 pass / 2 fail**, exit 1.
+  Las dos fixtures lifecycle carecían de schemaVersion y bloques NOT NULL
+  (`src/lib/db/schema.ts:929`), imposibles como filas físicas y rechazadas
+  incluso por ConfigV1Schema anterior. Se añadieron exclusivamente los bloques
+  **1.0** al target draft/archivada, sin añadir campos de pago. Un test acredita
+  el rechazo del documento incompleto bajo 1.0. No se alteró ninguna fixture
+  canónica de V2, ni Published real, ni pricing.
+- Compatibilidad: WriterSchema 1.0 conserva su comportamiento original (metadata
+  adicional tolerada); solo writer 1.1 exige estrictamente la extensión de pago.
+  ConfigSchema selecciona estructura/criterios por discriminante. Store valida
+  antes de mutaciones, loader solo lee y rechaza desconocidas/1.1 incompleto.
+  Test con store/loader reales y BD en memoria acredita publicar 1.1 y rollback
+  a histórico 1.0 sin reescribir bloques. API exige upgrade explícito; nunca
+  auto-migra ni publica. Tests API con store simulado preservan edición y tenant.
+- Cambios: V3 derivada de V2; botón upgrade del draft; normalizer por set activo;
+  catálogos de Lab; `paymentDeliveryAuthorized` separado del handoff posterior.
+  Plantilla completa solo desde recurso scoped validado, sin LLM/KB/transcript.
+  Orden transferencia/Yape/link; mensaje máximo 4096, división entre métodos
+  sin truncar destinos. Fact únicamente tras todas las partes persistidas;
+  ausencia/corrupción/error/segunda parte fallida no marcan fact ni reintentan.
+  Handoff commercial posterior; HUMAN/disqualify conservados, sin won/cobro/
+  activación/voucher validado ni nuevos follow-ups. Sandbox local cero sender/
+  Graph/upload/jobs externos. Tests ejercen renderer, sender/store/FS reales
+  con BD en memoria y proveedores simulados; no equivalen a PostgreSQL físico.
+- Suite dirigida recuperada (store/schema/API/pago/demo/freeze): **108/108**,
+  6 archivos, exit 0; luego se añadieron 3 pruebas integradas (loader/lifecycle
+  y pago parcial), también verdes dentro de regresión/global.
+  Log `/tmp/commercial-c4-recovery-targeted.log`.
+- Regresión requerida, **291/291**, 24 archivos, exit 0:
+  `pnpm --pm-on-fail=ignore exec vitest run tests/unit/playbook-*.test.ts
+  tests/unit/sales-payment-action.test.ts tests/unit/sales-demo-delivery.test.ts
+  tests/unit/sales-orchestrator.test.ts tests/unit/sales-writer.test.ts
+  tests/unit/sales-resolve-plan.test.ts tests/unit/sales-questions-freeze.test.ts
+  tests/unit/media-send.test.ts tests/unit/send-media-kind-override.test.ts`.
+  Log `/tmp/commercial-c4-recovery-regression.log`. **Freeze V2 13/13**, intacto.
+- Gate completo solicitado: `pnpm --pm-on-fail=ignore typecheck &&
+  pnpm --pm-on-fail=ignore lint && pnpm --pm-on-fail=ignore build &&
+  pnpm --pm-on-fail=ignore test`: **exit 0**, 1120 pass / 4 skipped;
+  103 archivos verdes / 1 omitido. Lint 0 errores, 3 warnings preexistentes
+  (`anuncio-origen` img y 2 eslint-disable sin uso en build-state).
+  Primer intento global tuvo un fallo ambiental EPERM en el servidor localhost
+  de sales-launch-hardcoded; repetición autorizada del gate completo verde.
+  Log completo `/tmp/commercial-c4-recovery-gates.log`.
+- `node --check scripts/e2e-commercial-payment.mjs` y `scripts/e2e-selftest.mjs`
+  verdes. `git diff --check` y revisión del diff/staging incluidas en el cierre.
+- **E2E 022 PENDIENTE, no escenarios ejecutados.** Arnés integrado con dispatch
+  aislado en e2e-selftest: upgrade UI Playwright, publicación/rollback API,
+  pipeline/outbox/hilo/fact/handoff, vacío/rechazo/HUMAN y sandbox sin Graph,
+  Published 1.0 rechaza pago. Jev HTTP scripted no acredita inferencia real.
+  Comando completo en quickstart.md. Intento real `pnpm --pm-on-fail=ignore
+  test:e2e` con E2E_SECTION=022 y todas las URLs locales: exit 1 antes de setup,
+  primero EPERM, reintento autorizado **ECONNREFUSED 127.0.0.1:3000**.
+  Preflight sin postgres/psql/pg_ctl/docker/ffmpeg; app/BD no levantadas.
+  Logs `/tmp/commercial-c4-recovery-e2e{,-local}.log`. Sin WhatsApp real.
+- Constitution Check final: I–IV/VI–VIII preservados, V gates técnicos verdes;
+  **IX pendiente en vivo**. Persisten pendientes PostgreSQL/020/021 y ahora
+  022. **No READY punta a punta**. Sincronizar decisión comercial en Obsidian
+  sigue pendiente (sin copiarla ni acceder a Obsidian en este corte).
+- Archivos clave: playbook schema/store/loader/payment-extension, API y editor,
+  sales payment-resource/normalize/resolve-plan/orchestrator/writer, suites
+  playbook-store/API/sales-payment-action/sales-demo-delivery, arnés 022.
+- Siguiente paso exacto: preparar app+PG dedicada+mocks+Chromium según quickstart
+  y ejecutar E2E_SECTION=022 happy/unhappy/UI/rollback; registrar evidencia sin
+  marcar READY antes de verde. Ejecutar también pendientes 020/021/PostgreSQL.
+  Para operación, configurar cobro y actualizar/probar/publicar draft 1.1
+  explícitamente; no se hizo publicación productiva en esta sesión. STOP C4.
 
 ## Cierre de feature
 

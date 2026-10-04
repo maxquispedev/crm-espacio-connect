@@ -79,12 +79,18 @@ export const POST = withAuth(async (session, request: Request) => {
     session.organizationId
   );
 
-  const published = await rollbackToVersion(
+  let published;
+  try {
+    published = await rollbackToVersion(
     session.organizationId,
     target.id,
     parsed.data.notes,
     session.userId
-  );
+    );
+  } catch (err) {
+    if (err instanceof z.ZodError) return Response.json({ code: "validation_failed", message: "La versión no cumple su contrato", details: err.issues }, { status: 422 });
+    throw err;
+  }
 
   return Response.json(
     {

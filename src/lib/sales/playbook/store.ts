@@ -22,7 +22,7 @@ import { and, desc, eq, max, sql } from "drizzle-orm";
 import { getDb, schema } from "@/lib/db";
 import { newId } from "@/lib/db/ids";
 import { scoped } from "@/lib/db/tenant";
-import type { ConfigV1 } from "@/lib/sales/playbook/schema";
+import { ConfigSchema, type Config } from "@/lib/sales/playbook/schema";
 
 /* ============================================================
  * Tipos públicos
@@ -61,7 +61,7 @@ export class PlaybookVersionNotFoundError extends Error {
 export type CreateDraftInput = {
   notes: string | null;
   createdBy: string;
-  config: ConfigV1;
+  config: Config;
   /** Label del playbook (si se omite, mantiene el actual). */
   label?: string;
   /** Slug del playbook (si se omite, mantiene el actual). */
@@ -70,7 +70,7 @@ export type CreateDraftInput = {
 
 export type UpdateDraftPatch = {
   notes?: string | null;
-  config?: ConfigV1;
+  config?: Config;
   label?: string;
   slug?: string;
 };
@@ -98,10 +98,11 @@ export class NoPublishedVersionError extends Error {
 type DbClient = ReturnType<typeof getDb>;
 
 /**
- * Serializa un `ConfigV1` a las 9 columnas JSONB de la tabla de
+ * Serializa un `Config` a las 9 columnas JSONB de la tabla de
  * versiones. Mantiene `notes`/`urgency_rules` aparte.
  */
-function configToRow(config: ConfigV1) {
+function configToRow(input: Config) {
+  const config = ConfigSchema.parse(input);
   return {
     schemaVersion: config.schema_version,
     productJson: config.product,
@@ -324,6 +325,8 @@ export async function publishDraft(
       );
     }
 
+    assertVersionConfig(draft);
+
     // Archivar la publicada actual (si existe).
     const currentPublishedRows = await tx
       .select()
@@ -404,6 +407,8 @@ export async function rollbackToVersion(
     if (!target) {
       throw new PlaybookVersionNotFoundError();
     }
+
+    assertVersionConfig(target);
 
     // Si ya está publicada, no hay nada que hacer.
     if (target.status === "published") {
@@ -610,4 +615,13 @@ export async function _countPublishedForPlaybook(
       )
     );
   return rows[0]?.n ?? 0;
+}
+
+function assertVersionConfig(row: PlaybookVersionRow): void {
+  ConfigSchema.parse({
+    schema_version: row.schemaVersion, product: row.productJson, offer: row.offerJson,
+    commercial_policy: row.policyJson, priorities: row.prioritiesJson, writer: row.writerJson,
+    jev_questions: row.jevQuestionsJson, prohibitions: row.prohibitionsJson,
+    handoff: row.handoffJson, urgency_rules: row.urgencyRules,
+  });
 }

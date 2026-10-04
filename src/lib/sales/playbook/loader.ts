@@ -27,8 +27,8 @@ import { and, eq } from "drizzle-orm";
 import { getDb, schema } from "@/lib/db";
 import { scoped } from "@/lib/db/tenant";
 import {
-  type ConfigV1,
-  parseConfigV1,
+  type Config,
+  parseConfig,
 } from "@/lib/sales/playbook/schema";
 
 import type { PlaybookVersionRow } from "@/lib/sales/playbook/store";
@@ -42,7 +42,7 @@ import type { PlaybookVersionRow } from "@/lib/sales/playbook/store";
  */
 export type LoadedPlaybookVersion = {
   id: string;
-  config: ConfigV1;
+  config: Config;
   schema_version: string;
   version_number: number;
   status: PlaybookVersionRow["status"];
@@ -53,15 +53,15 @@ export type LoadedPlaybookVersion = {
  * ============================================================ */
 
 /**
- * Reconstruye un `ConfigV1` desde la fila cruda de
+ * Reconstruye un `Config` desde la fila cruda de
  * `sales_playbook_version`. Las 9 columnas JSONB se vuelven a unir en
  * la forma validada por el schema de V1. Si el payload no parsea,
- * `parseConfigV1` devuelve el error tipado y el loader retorna
+ * `parseConfig` devuelve el error tipado y el loader retorna
  * `null` (la ruta caliente hace fallback a `VENDE_VELOZ_*`).
  */
 function rowToConfig(row: PlaybookVersionRow): {
   id: string;
-  config: ConfigV1;
+  config: Config;
   schema_version: string;
   version_number: number;
   status: PlaybookVersionRow["status"];
@@ -79,7 +79,7 @@ function rowToConfig(row: PlaybookVersionRow): {
     urgency_rules: row.urgencyRules ?? null,
   } as unknown; // validamos abajo
 
-  const parsed = parseConfigV1(config);
+  const parsed = parseConfig(config);
   if (!parsed.ok) {
     // No propagamos la excepción: el runtime degrada con un fallback.
     // El caller (orchestrator) ya emite una sola vez el warning por org
@@ -102,7 +102,7 @@ function rowToConfig(row: PlaybookVersionRow): {
  */
 export class PlaybookInvalidConfigError extends Error {
   readonly code = "playbook_invalid_config";
-  constructor(detail = "Playbook publicado no cumple ConfigV1") {
+  constructor(detail = "Playbook publicado no cumple Config") {
     super(detail);
     this.name = "PlaybookInvalidConfigError";
   }

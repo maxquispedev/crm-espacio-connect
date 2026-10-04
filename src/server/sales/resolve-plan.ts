@@ -47,6 +47,7 @@ export type SalesFactUpdates = {
 export type SalesPlan = {
   lane: AutomationLane;
   nextAction: NextActionChoice;
+  paymentDeliveryAuthorized?: boolean;
   shouldReply: boolean;
   shouldHandoff: boolean;
   handoffReason: "commercial" | null;
@@ -80,6 +81,10 @@ export function resolveSalesPlan(input: ResolveSalesPlanInput): SalesPlan {
 
   if (isClearlyPositiveHumanCall(input.decision.needsHumanCall)) {
     return humanPlan(nextAction, stage);
+  }
+
+  if (nextAction === "send_payment_instructions") {
+    return { ...humanPlan(nextAction, stage), paymentDeliveryAuthorized: true };
   }
 
   if (nextAction === "schedule_follow_up") {

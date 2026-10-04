@@ -1,5 +1,61 @@
 # CURRENT STATE — Espacio Connect
 
+**Actualizado: 2026-10-04 — Spec 011, C4 IMPLEMENTADO / GATES VERDES;
+E2E 022 PENDIENTE. No READY punta a punta.**
+
+Corte recuperado sobre working tree parcial, sin reiniciarlo ni descartar cambios.
+Commit único: `feat(sales): entregar instrucciones de pago configuradas`, con
+padre `af6f1d9310127f4f03245fc459f8365ca0e90e88`. Hash disponible mediante
+`git log -1 --format='%H %s'`. Sin otro corte, runner, deploy, publicación
+productiva ni WhatsApp real.
+
+Nueva acción `send_payment_instructions` opt-in en schema 1.1. Published/histórico
+1.0 conservan siete acciones y contrato previo; no auto-migración. V3 derivada
+sin alterar V2/fixture/hash/§7. Editor actualiza únicamente draft con botón
+explícito, preserva ediciones y exige publicación posterior; rollback 1.0
+compatible. Config/store/loader validan por versión y normalizer por set activo.
+Los dos fallos iniciales eran fixtures lifecycle sin los campos ya obligatorios
+1.0/NOT NULL; se completaron solo esos bloques legacy, con evidencia en tests.
+Se preservó la tolerancia original del writer 1.0, separada de pago estricto 1.1.
+
+Destinos renderizados por código desde recurso validado del tenant, sin LLM/KB:
+todas las transferencias, Yape y link, en orden y sin truncar. Autorización de
+entrega separada del handoff commercial posterior. Fact solo tras todas las
+partes aceptadas y persistidas; vacío/error/entrega parcial no marcan ni reintentan.
+HUMAN/disqualify prioritarios; sandbox local sin sender/Graph; sin won, cobro,
+activación, voucher validado, nuevos follow-ups ni cambios de pricing.
+
+Verificación final: dirigida 108/108; regresión requerida **291/291** en 24
+archivos, Freeze V2 **13/13** intacto. Gate completo typecheck/lint/build/test
+**exit 0**, **1120 pass / 4 skipped**, 103 archivos verdes y 1 omitido.
+Lint 0 errores y 3 warnings preexistentes. Un fallo ambiental EPERM del test
+HTTP localhost motivó reejecutar el gate completo con sockets habilitados;
+resultado verde. Log `/tmp/commercial-c4-recovery-gates.log` y detalle durable
+con comandos en `specs/011-commercial-resources/tasks.md`.
+
+Arnés E2E **022 preparado e intentado**, con upgrade UI Playwright, publicación/
+rollback API, pipeline/outbox/fact/handoff, vacío/rechazo/HUMAN, sandbox y
+Published 1.0. Sin escenarios ejecutados: primero EPERM del socket, reintento
+confirmó **ECONNREFUSED 127.0.0.1:3000**; sin ejecutables PG/Docker disponibles.
+E2E **PENDIENTE**; no acredita UI viva/PG físico/intención real de Jev. Persisten
+los pendientes 020/021 y los 4 tests PostgreSQL opt-in. OP1–OP4 de la pausa
+operativa siguen cumplidos. Constitución IX pendiente.
+
+Archivos clave: playbook schema/store/loader/payment-extension, API/editor,
+sales payment-resource/normalize/resolve-plan/orchestrator/writer; tests
+playbook-store/API/pago/demo y `scripts/e2e-commercial-payment.mjs`.
+Documentación de publicación y contrato: `docs/playbook.md`,
+`docs/SALES_ORCHESTRATOR.md`, contracts/payment-action.md y quickstart del 011.
+
+Siguiente paso exacto: app + PostgreSQL dedicada migrada + mocks localhost:3033
++ Chromium según quickstart; ejecutar E2E_SECTION=022 happy/unhappy/UI/rollback
+y registrar evidencia; completar además pendientes 020/021/PG. La habilitación
+operativa exige configurar cobro, actualizar/probar/publicar draft 1.1
+explícitamente. Sincronización comercial en Obsidian pendiente. STOP C4.
+
+---
+
+
 **Actualizado: 2026-10-03 — Spec 011: PAUSA OPERATIVA de recursos comerciales
 cerrada (OP1–OP4 cumplidos).**
 

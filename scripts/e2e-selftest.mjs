@@ -162,9 +162,12 @@ async function runSection021() {
 }
 
 async function main() {
-  // Cortes 011 aislados: 020 UI local; 021 demos con proveedor HTTP mock propio.
-  if (["020", "021"].includes(process.env.E2E_SECTION)) {
-    if (process.env.E2E_SECTION === "021") await runSection021();
+  // Cortes 011 aislados: UI, demos y pago con proveedores locales.
+  if (["020", "021", "022"].includes(process.env.E2E_SECTION)) {
+    if (process.env.E2E_SECTION === "022") {
+      const { runCommercialPaymentSelftest } = await import("./e2e-commercial-payment.mjs");
+      await runCommercialPaymentSelftest({ BASE, api, ok, waitFor, getCookie: () => cookie });
+    } else if (process.env.E2E_SECTION === "021") await runSection021();
     else await runSection020();
     console.log(`\n===== ${checks - failures}/${checks} checks OK, ${failures} fallos =====`);
     process.exit(failures > 0 ? 1 : 0);

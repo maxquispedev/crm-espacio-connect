@@ -185,3 +185,78 @@ describe("pipeline demo nativa", () => {
     await turn(); expect(fact()).toBeNull(); expect(out()).toEqual([]); expect(mocks.graph).not.toHaveBeenCalled(); expect(mocks.upload).not.toHaveBeenCalled();
   });
 });
+
+describe("pipeline instrucciones de pago", () => {
+  const payload = { transfers: [{ bank: "Banco fixture", holder: "Titular", currency: "PEN", accountNumber: "000-123", cci: "000456" }],
+    yape: { phone: "999000001", holder: "Titular Yape" }, paymentLink: "https://pay.example.test/001" };
+  function paymentTurn() {
+    mocks.jev.mockResolvedValue({ ok: true, decision: makeDecision({ nextAction: "send_payment_instructions" }), snapshot: {} });
+  }
+  function seedPayment(org = "org_a", value: unknown = payload) {
+    tables.commercial_resource!.push({ id: `cr_${org}_pay`, organizationId: org, slot: "payment_instructions", mediaAssetId: null, payload: value });
+  }
+  const paymentFact = () => tables.lead![0]!.paymentInstructionsSentAt;
+  it("destinos exactos antes del fact/handoff; sin writer ni follow-ups", async () => {
+    paymentTurn(); seedPayment();
+    mocks.graph.mockImplementation(async () => {
+      expect(paymentFact()).toBeNull(); expect(tables.conversation![0]!.handoffAt).toBeUndefined();
+      return { messages: [{ id: "wamid.payment" }] };
+    });
+    await turn();
+    expect(out()).toHaveLength(1);
+    for (const value of ["000-123", "000456", "999000001", payload.paymentLink]) expect(out()[0]!.text).toContain(value);
+    expect(out()[0]).toMatchObject({ origin: "ai", aiGenerated: true });
+    expect(paymentFact()).toBeInstanceOf(Date);
+    expect(tables.conversation![0]!.handoffReason).toBe("commercial");
+    for (const check of [mocks.writer, mocks.upload, mocks.follow, mocks.manual]) expect(check).not.toHaveBeenCalled();
+    expect(tables.lead![0]!.automationLane).toBe("human");
+  });
+  it.each(["absent", "empty", "foreign", "corrupt"])("%s: honesto + handoff sin fact", async mode => {
+    paymentTurn();
+    if (mode === "foreign") seedPayment("org_b");
+    if (mode === "empty") seedPayment("org_a", { transfers: [], yape: null, paymentLink: null });
+    if (mode === "corrupt") seedPayment("org_a", { ...payload, paymentLink: "http://invalid.test" });
+    await turn(); expect(paymentFact()).toBeNull(); expect(out()[0]!.text).toContain("No tengo métodos");
+    expect(out()[0]!.text).not.toContain(payload.paymentLink); expect(tables.conversation![0]!.handoffReason).toBe("commercial");
+    expect(mocks.follow).not.toHaveBeenCalled();
+  });
+  it.each(["meta", "id", "persist", "window"])("%s: error sin fact/retry y mantiene humano", async mode => {
+    paymentTurn(); seedPayment();
+    if (mode === "meta") mocks.graph.mockRejectedValue(new Error("meta"));
+    if (mode === "id") mocks.graph.mockResolvedValue({});
+    if (mode === "persist") failure = "persist";
+    if (mode === "window") tables.conversation![0]!.lastInboundAt = new Date(0);
+    await turn(); expect(paymentFact()).toBeNull(); expect(tables.conversation![0]!.handoffReason).toBe("commercial");
+    expect(mocks.graph.mock.calls.length).toBeLessThanOrEqual(1); expect(mocks.follow).not.toHaveBeenCalled();
+  });
+  it("segunda parte fallida no marca fact ni reintenta; conserva handoff", async () => {
+    paymentTurn();
+    seedPayment("org_a", { transfers: Array.from({ length: 5 }, () => ({ bank: "b".repeat(120), holder: "h".repeat(120), currency: "PEN", accountNumber: "0".repeat(40), cci: "1".repeat(40) })), yape: null, paymentLink: "https://pay.example.test/" + "a".repeat(2000) });
+    mocks.graph.mockResolvedValueOnce({ messages: [{ id: "wamid.first" }] }).mockRejectedValueOnce(new Error("second failed"));
+    await turn();
+    expect(mocks.graph).toHaveBeenCalledTimes(2);
+    expect(out()).toHaveLength(1);
+    expect(out()[0]!.text).toContain("Transferencia");
+    expect(paymentFact()).toBeNull();
+    expect(tables.conversation![0]!.handoffReason).toBe("commercial");
+    expect(mocks.follow).not.toHaveBeenCalled();
+  });
+  it("HUMAN prioritario no entrega destinos ni fact", async () => {
+    seedPayment(); mocks.jev.mockResolvedValue({ ok: true, decision: makeDecision({ nextAction: "send_payment_instructions", needsHumanNoul: 0.9 }), snapshot: {} });
+    await turn(); expect(paymentFact()).toBeNull(); expect(out()[0]?.text).not.toContain(payload.paymentLink);
+    expect(mocks.writer).toHaveBeenCalledOnce(); expect(tables.conversation![0]!.handoffReason).toBe("commercial");
+  });
+  it("sandbox: instrucciones persistidas, fact y humano; cero Graph/upload/sender/jobs", async () => {
+    paymentTurn(); seedPayment(); tables.conversation![0]!.isTest = true;
+    const textSpy = vi.spyOn(sender, "sendText"); const mediaSpy = vi.spyOn(sender, "sendMediaMessage");
+    await turn(); expect(out()[0]).toMatchObject({ status: "sent", origin: "ai", type: "text" });
+    expect(out()[0]!.text).toContain("000-123"); expect(paymentFact()).toBeInstanceOf(Date);
+    expect(tables.conversation![0]!.handoffReason).toBe("commercial");
+    for (const check of [textSpy, mediaSpy, mocks.graph, mocks.upload, mocks.follow]) expect(check).not.toHaveBeenCalled();
+  });
+  it("sandbox error no marca fact y deriva", async () => {
+    paymentTurn(); seedPayment(); tables.conversation![0]!.isTest = true; failure = "message";
+    await turn(); expect(paymentFact()).toBeNull(); expect(out()).toEqual([]); expect(tables.conversation![0]!.handoffReason).toBe("commercial");
+    expect(mocks.graph).not.toHaveBeenCalled();
+  });
+});

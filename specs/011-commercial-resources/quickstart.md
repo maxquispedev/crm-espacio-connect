@@ -143,3 +143,33 @@ MP4 no prueban codec. 021 no reemplaza 020 ni la pausa de videos productivos.
 Intento C3: exit 1 antes de setup, ECONNREFUSED :3000 tras autorizar sockets;
 primer intento EPERM. App/PG/ffmpeg no disponibles. **Happy/unhappy PENDIENTES**,
 ningún escenario en vivo ejecutado ni MP4 generado, sin READY punta a punta.
+
+
+## Self-test C4 — sección 022 aislada
+
+Requiere app de desarrollo y PostgreSQL dedicado migrado, más Chromium de
+Playwright. No necesita videos/ffmpeg. La app debe usar la misma BD y proveedores
+mock localhost:3033; configurar TYPESAFE_API_KEY/JEV_MODEL y token/modelo LLM
+con valores de prueba para ejercer el cliente HTTP, sin fallback canned.
+Jamás usar app/BD productivas. El arnés usa solo cuenta fixture y org nueva.
+
+```bash
+APP_BASE_URL=http://127.0.0.1:3000 \
+DATABASE_URL=postgresql://local_test:local_test@127.0.0.1:5432/commercial_resources_test_c4 \
+E2E_SECTION=022 WA_MOCK_ENABLED=true BOT_API_KEY=e2e-local-placeholder \
+META_GRAPH_BASE_URL=http://127.0.0.1:3033/graph \
+OPENROUTER_BASE_URL=http://127.0.0.1:3033 \
+TYPESAFE_JEV_ENDPOINT=http://127.0.0.1:3033/jev \
+pnpm --pm-on-fail=ignore test:e2e
+```
+
+022 conduce el botón de upgrade real con Playwright; comprueba draft 1.1 sin
+mutar Published, publicación explícita y rollback por API, inbound → pipeline →
+instrucciones en outbox/hilo → fact/handoff, ausencia, rechazo de envío, HUMAN
+prioritario, sandbox cero Graph y rechazo de la acción en Published 1.0.
+La respuesta de Jev es scripted: no prueba inferencia semántica del proveedor real.
+
+Intentos recuperación C4: exit 1 antes de setup; primero EPERM del socket local,
+reintento autorizado confirmó ECONNREFUSED 127.0.0.1:3000. Sin ejecutables
+postgres/psql/pg_ctl/docker/ffmpeg. Ningún escenario E2E ejecutado: **PENDIENTE**,
+sin READY punta a punta. Ver tasks.md para gates y evidencia unitarios.

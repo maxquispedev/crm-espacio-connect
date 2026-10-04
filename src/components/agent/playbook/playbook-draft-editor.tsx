@@ -29,6 +29,7 @@ export function PlaybookDraftEditor({
   jevEditor,
   issues,
   onSave,
+  onUpgrade,
   onValidate,
   onDiscard,
   onPublish,
@@ -48,6 +49,7 @@ export function PlaybookDraftEditor({
   jevEditor: React.ReactNode;
   issues?: JsonIssue[];
   onSave: () => void;
+  onUpgrade?: () => void;
   onValidate: () => void;
   onDiscard: () => void;
   onPublish: () => void;
@@ -72,6 +74,10 @@ export function PlaybookDraftEditor({
 
   return (
     <section className="flex flex-col gap-3">
+      {onUpgrade ? <Button variant="outline" size="sm" onClick={onUpgrade}
+        disabled={saving || validating || publishing || deleting || anySyntaxError}>
+        Actualizar draft a 1.1 (pago)
+      </Button> : null}
       {/* Tabs: un editor a la vez. Montar y desmontar no pierde estado porque
           el texto vive en el padre, no dentro del editor. */}
       <div

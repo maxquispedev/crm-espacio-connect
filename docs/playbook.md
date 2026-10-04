@@ -548,7 +548,7 @@ Conviene que los tengas en la cabeza, no escondidos:
 - **El fallback es visible precisamente para que no se te olvide.** Si ves el aviso de
   "sin playbook publicado", significa que nadie publicó una versión todavía. No es un
   error de la plataforma: es una señal de que falta dar el paso.
-- **Los resultados esperados están tipados contra catálogos cerrados.** Las 7 acciones
+- **Los resultados esperados están tipados contra catálogos cerrados.** Las siete acciones 1.0 (ocho en 1.1)
   de `next_action` y las 5 lanes son listas cerradas en el editor. Es deliberado:
   garantiza que una expectativa con un typo no se pueda guardar (y que luego
   compararía mal sin explicación).
@@ -584,6 +584,31 @@ envían links de KB. Si falta el video, el agente lo informa sin marcar demo.
 Prueba rápida y Lab muestran el caption de la simulación sin enviar WhatsApp. Gate técnico verde, pero **E2E UI/codec/reinicio pendiente**
 en este entorno sin app/BD/ffmpeg: no está verificado punta a punta.
 
-Pausa obligatoria después de C3: verificar los tres MP4 reales y el volumen
-persistente en producción antes de C4. Sin deploy automático; instrucciones
-de pago todavía no habilitadas. E2E 021 de entrega nativa pendiente por entorno.
+La pausa operativa de videos está registrada como cumplida en tasks.md. Los
+self-tests locales 020/021 siguen pendientes; no equivalen a esa pausa.
+
+## Instrucciones de pago (spec 011, corte 4)
+
+Published y versiones históricas 1.0 conservan siete acciones. Para habilitar
+`send_payment_instructions`, configura primero **Guardar cobro**, crea un draft
+y pulsa **Actualizar draft a 1.1 (pago)**. El botón guarda las ediciones actuales
+y añade únicamente la acción, su criterio y su instrucción. Valida y prueba
+ese draft en Prueba rápida/Lab; después **Publicar** con comentario explícito.
+No se actualiza ni publica automáticamente la versión activa. El historial
+permite rollback a 1.0; los recursos de cobro permanecen independientes.
+
+Jev debe reconocer confirmación explícita de querer pagar por contratar;
+preguntar precio, pedir una demo de pagos o mostrar un voucher no basta.
+HUMAN prioritario conserva precedencia. Las instrucciones autorizadas usan
+exclusivamente el cobro validado de la organización: todas las transferencias,
+Yape y link, en ese orden. El CRM controla el texto completo y los destinos;
+el LLM y KB no aportan cuentas ni URLs. Bloques grandes se separan entre
+métodos sin truncar destinos. Después deriva a humano para confirmar pago e
+implementación; no confirma dinero recibido, voucher válido ni activación.
+
+Sin métodos responde honestamente y deriva. Un envío fallido o incompleto
+no marca `paymentInstructionsSentAt`, tampoco reintenta automáticamente.
+El fact solo se registra tras completar todos los mensajes aceptados y
+persistidos (o simulados localmente en sandbox). Prueba rápida/Lab no envían
+WhatsApp. E2E 022 preparado e intentado, **PENDIENTE** por app/PG local ausentes;
+no READY punta a punta. La decisión comercial debe sincronizarse en Obsidian.

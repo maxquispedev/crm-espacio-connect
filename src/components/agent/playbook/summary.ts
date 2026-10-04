@@ -6,7 +6,7 @@
  * pregunta Jev). Solo formateo: no mutan ni validan nada.
  */
 
-import type { ConfigV1 } from "@/lib/sales/playbook/schema";
+import type { Config } from "@/lib/sales/playbook/schema";
 import {
   JEV_QUESTION_CLASS_ICON,
   JEV_QUESTION_CLASS_LABEL,
@@ -36,7 +36,7 @@ function isFiniteNumber(n: number): boolean {
  * Los campos con número inválido (usuario a medio escribir) se
  * omiten en vez de imprimir `NaN`.
  */
-export function formatPricing(offer: ConfigV1["offer"]): string {
+export function formatPricing(offer: Config["offer"]): string {
   const sym = currencySymbol(offer.currency);
 
   // Partes que se unen con " + " (los importes).
@@ -69,7 +69,7 @@ export function formatPricing(offer: ConfigV1["offer"]): string {
 
 /** Conteo de preguntas Jev por clase (para los badges). */
 export function countJevByClass(
-  questions: ConfigV1["jev_questions"]
+  questions: Config["jev_questions"]
 ): Record<JevQuestionClass, number> {
   const counts: Record<JevQuestionClass, number> = {
     "engine-required": 0,

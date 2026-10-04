@@ -32,6 +32,7 @@ const NEXT_ACTIONS = [
   "schedule_call",
   "schedule_follow_up",
   "disqualify",
+  "send_payment_instructions",
 ] as const;
 
 const ExpectedPatch = z.object({

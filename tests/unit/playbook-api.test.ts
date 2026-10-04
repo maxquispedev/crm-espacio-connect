@@ -919,3 +919,33 @@ describe("DELETE /api/playbook/draft (T406) — eliminar el draft abierto", () =
     expect(versionsByOrg.get("org_a")?.some((v) => v.status === "draft")).toBe(true);
   });
 });
+
+describe("upgrade explícito pago 1.1", () => {
+  const request = (method: string, body: unknown) => new Request("http://local/api/playbook/draft", { method, headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+  it("1.0 → draft 1.1 preservando edición → publicar → rollback 1.0; tenant intacto", async () => {
+    const original = seedOrgWithPublishedV1("org_a"); seedOrgWithPublishedV1("org_b");
+    const baseline = structuredClone(original);
+    const { POST, PUT } = await import("@/app/api/playbook/draft/route");
+    expect((await POST(request("POST", {}))).status).toBe(201);
+    const response = await PUT(request("PUT", { upgrade_to: "1.1", offer: { ...VENDE_VELOZ_PLAYBOOK_V1.offer, monthlyBase: 999 }, writer: { ...VENDE_VELOZ_PLAYBOOK_V1.writer, present_price: "Editado" } }));
+    expect(response.status).toBe(200);
+    const upgraded = (await response.json()).draft;
+    expect(upgraded.schema_version).toBe("1.1"); expect(upgraded.offer.monthlyBase).toBe(999);
+    expect(upgraded.writer.present_price).toBe("Editado"); expect(upgraded.writer.send_payment_instructions).toBeTruthy();
+    expect(upgraded.jev_questions.next_action.criteria.send_payment_instructions).toBeTruthy();
+    expect(original).toEqual(baseline); expect(versionsByOrg.get("org_b")![0]!.schemaVersion).toBe("1.0");
+    const { POST: publish } = await import("@/app/api/playbook/publish/route");
+    expect((await publish(request("POST", { notes: "habilitar pago" }))).status).toBe(200);
+    const { POST: rollback } = await import("@/app/api/playbook/rollback/route");
+    const restored = await rollback(request("POST", { version_id: original.id, notes: "volver 1.0" }));
+    expect(restored.status).toBe(200); expect((await restored.json()).published.schema_version).toBe("1.0");
+    expect(original.writerJson).toEqual(baseline.writerJson);
+  });
+  it("PUT no permite cambiar schema ni inyectar octava acción sin upgrade explícito", async () => {
+    seedOrgWithPublishedV1("org_a");
+    const { POST, PUT } = await import("@/app/api/playbook/draft/route");
+    await POST(request("POST", {}));
+    expect((await PUT(request("PUT", { schema_version: "1.1" }))).status).toBe(422);
+    expect((await PUT(request("PUT", { writer: { ...VENDE_VELOZ_PLAYBOOK_V1.writer, send_payment_instructions: "Pago" } }))).status).toBe(422);
+  });
+});

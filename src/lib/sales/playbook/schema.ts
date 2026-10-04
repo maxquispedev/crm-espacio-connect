@@ -32,6 +32,7 @@ import {
   MAIN_VALUE_PROPOSITION_OPTION_KEYS,
   NEXT_ACTION_OPTION_KEYS,
   PROTECTED_QUESTION_TYPES,
+  NEXT_ACTION_OPTION_KEYS_V11,
 } from "./constants";
 
 /* ============================================================
@@ -105,7 +106,7 @@ const PrioritiesSchema = z.object({
   tertiary: z.array(z.string().min(1).max(200)).max(8),
 });
 
-const WriterSchema = z.object({
+export const WriterSchema = z.object({
   ask_more_questions: z.string().min(1).max(1500),
   show_operations_demo: z.string().min(1).max(1500),
   show_online_enrollment_demo: z.string().min(1).max(1500),
@@ -239,7 +240,7 @@ export function parseConfigV1(input: unknown): ParseConfigV1Result {
  * ============================================================ */
 
 function refineConfigV1(
-  cfg: z.infer<typeof ConfigV1Schema>,
+  cfg: Omit<z.infer<typeof ConfigV1ObjectSchema>, "schema_version"> & { schema_version: "1.0" | "1.1" },
   ctx: z.RefinementCtx
 ): void {
   const qs = cfg.jev_questions;
@@ -290,7 +291,7 @@ function refineConfigV1(
       ctx,
       ["jev_questions", "next_action", "criteria"],
       nextAction.criteria,
-      NEXT_ACTION_OPTION_KEYS,
+      cfg.schema_version === "1.1" ? NEXT_ACTION_OPTION_KEYS_V11 : NEXT_ACTION_OPTION_KEYS,
       "next_action"
     );
   }
@@ -451,4 +452,21 @@ function asQuestionRecord(
     return null;
   }
   return value as Record<string, { type?: unknown }>;
+}
+
+/** 1.0 y 1.1 se validan por discriminante, sin migración automática. */
+export const ConfigV11ObjectSchema = ConfigV1ObjectSchema.extend({
+  schema_version: z.literal("1.1"),
+  writer: WriterSchema.extend({ send_payment_instructions: z.string().min(1).max(1500) }).strict(),
+});
+export const ConfigSchema = z.discriminatedUnion("schema_version", [ConfigV1ObjectSchema, ConfigV11ObjectSchema])
+  .superRefine(refineConfigV1);
+export type Config = z.infer<typeof ConfigSchema>;
+export type ConfigV11 = z.infer<typeof ConfigV11ObjectSchema>;
+export function parseConfig(input: unknown) {
+  const result = ConfigSchema.safeParse(input);
+  return result.success ? { ok: true as const, data: result.data } : {
+    ok: false as const, error: "invalid_playbook_config",
+    details: result.error.issues.map(i => ({ path: i.path, message: i.message, code: i.code })),
+  };
 }

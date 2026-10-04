@@ -13,6 +13,7 @@ const NEXT_ACTIONS = new Set([
   "schedule_call",
   "schedule_follow_up",
   "disqualify",
+  "send_payment_instructions",
 ]);
 
 const BUYING_TIMINGS = new Set<string>(BUYING_TIMING_OPTION_KEYS);

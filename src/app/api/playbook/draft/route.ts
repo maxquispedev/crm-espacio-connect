@@ -1,3 +1,4 @@
+import { upgradePaymentDraft } from "@/lib/sales/playbook/payment-extension";
 /**
  * /api/playbook/draft — T202 (POST) y T203 (PUT).
  *
@@ -25,8 +26,9 @@ import { parseBody, withAuth } from "@/lib/api";
 import {
   assertJevProtectedKeys,
   ConfigV1ObjectSchema,
-  ConfigV1Schema,
-  type ConfigV1,
+  ConfigSchema,
+  ConfigV11ObjectSchema,
+  type Config,
 } from "@/lib/sales/playbook/schema";
 import {
   createDraft,
@@ -74,7 +76,7 @@ export const POST = withAuth(async (session, request: Request) => {
     const draft = await createDraft(session.organizationId, {
       createdBy: session.userId,
       notes: parsed.data.notes ?? null,
-      config: rowToConfigV1(published),
+      config: rowToConfig(published),
     });
     return Response.json({ draft: versionRowToDto(draft) }, { status: 201 });
   } catch (err) {
@@ -101,7 +103,8 @@ const DraftPatchBody = z
     offer: ConfigV1ObjectSchema.shape.offer.optional(),
     commercial_policy: ConfigV1ObjectSchema.shape.commercial_policy.optional(),
     priorities: ConfigV1ObjectSchema.shape.priorities.optional(),
-    writer: ConfigV1ObjectSchema.shape.writer.optional(),
+    writer: z.union([ConfigV11ObjectSchema.shape.writer, ConfigV1ObjectSchema.shape.writer.passthrough()]).optional(),
+    upgrade_to: z.literal("1.1").optional(),
     jev_questions: ConfigV1ObjectSchema.shape.jev_questions.optional(),
     prohibitions: ConfigV1ObjectSchema.shape.prohibitions.optional(),
     handoff: ConfigV1ObjectSchema.shape.handoff.optional(),
@@ -125,8 +128,15 @@ export const PUT = withAuth(async (session, request: Request) => {
     );
   }
 
-  const current = rowToConfigV1(draft);
-  const merged: ConfigV1 = {
+  const current = rowToConfig(draft);
+  // La escritura de capacidades nuevas exige upgrade; la lectura histórica 1.0
+  // conserva la tolerancia original a metadata adicional del writer.
+  if (current.schema_version === "1.0" && parsed.data.upgrade_to !== "1.1" &&
+      parsed.data.writer && Object.hasOwn(parsed.data.writer, "send_payment_instructions")) {
+    return Response.json({ code: "validation_failed", message: "La acción de pago requiere actualizar el draft a 1.1" }, { status: 422 });
+  }
+
+  const merged = {
     ...current,
     ...(parsed.data.product !== undefined && {
       product: parsed.data.product,
@@ -152,7 +162,9 @@ export const PUT = withAuth(async (session, request: Request) => {
   };
 
   // El Zod de ConfigV1 ya aplica las guardarraíles Jev (T103).
-  const result = ConfigV1Schema.safeParse(merged);
+  const candidate = ConfigSchema.safeParse(merged);
+  const result = candidate.success && parsed.data.upgrade_to === "1.1"
+    ? ConfigSchema.safeParse(upgradePaymentDraft(candidate.data)) : candidate;
   if (!result.success) {
     return Response.json(
       {
@@ -263,17 +275,17 @@ export const DELETE = withAuth(async (session) => {
  * pero reutilizado dentro de la propia ruta para mergear el patch).
  * ============================================================ */
 
-function rowToConfigV1(row: Parameters<typeof versionRowToDto>[0]): ConfigV1 {
-  return {
-    schema_version: row.schemaVersion as ConfigV1["schema_version"],
-    product: row.productJson as ConfigV1["product"],
-    offer: row.offerJson as ConfigV1["offer"],
-    commercial_policy: row.policyJson as ConfigV1["commercial_policy"],
-    priorities: row.prioritiesJson as ConfigV1["priorities"],
-    writer: row.writerJson as ConfigV1["writer"],
-    jev_questions: row.jevQuestionsJson as ConfigV1["jev_questions"],
-    prohibitions: row.prohibitionsJson as ConfigV1["prohibitions"],
-    handoff: row.handoffJson as ConfigV1["handoff"],
+function rowToConfig(row: Parameters<typeof versionRowToDto>[0]): Config {
+  return ConfigSchema.parse({
+    schema_version: row.schemaVersion as Config["schema_version"],
+    product: row.productJson as Config["product"],
+    offer: row.offerJson as Config["offer"],
+    commercial_policy: row.policyJson as Config["commercial_policy"],
+    priorities: row.prioritiesJson as Config["priorities"],
+    writer: row.writerJson as Config["writer"],
+    jev_questions: row.jevQuestionsJson as Config["jev_questions"],
+    prohibitions: row.prohibitionsJson as Config["prohibitions"],
+    handoff: row.handoffJson as Config["handoff"],
     urgency_rules: row.urgencyRules,
-  };
+  });
 }

@@ -17,30 +17,30 @@ import type {
   PlaybookRow,
   PlaybookVersionRow,
 } from "@/lib/sales/playbook/store";
-import type { ConfigV1 } from "@/lib/sales/playbook/schema";
+import type { Config } from "@/lib/sales/playbook/schema";
 
 /**
  * Schema versions soportadas por el loader/UI en V1. Cualquier otro
  * `schema_version` se rechaza con `422 unknown_schema_version`
  * (rollback no migrador).
  */
-export const SUPPORTED_SCHEMA_VERSIONS = ["1.0"] as const;
+export const SUPPORTED_SCHEMA_VERSIONS = ["1.0", "1.1"] as const;
 
 /**
- * Reconstruye un `ConfigV1` desde las columnas JSONB separadas.
+ * Reconstruye un `Config` desde las columnas JSONB separadas.
  * Asume que los JSONB ya fueron validados por Zod al INSERT/UPDATE.
  */
-function rowToConfigV1(row: PlaybookVersionRow): ConfigV1 {
+function rowToConfig(row: PlaybookVersionRow) {
   return {
-    schema_version: row.schemaVersion as ConfigV1["schema_version"],
-    product: row.productJson as ConfigV1["product"],
-    offer: row.offerJson as ConfigV1["offer"],
-    commercial_policy: row.policyJson as ConfigV1["commercial_policy"],
-    priorities: row.prioritiesJson as ConfigV1["priorities"],
-    writer: row.writerJson as ConfigV1["writer"],
-    jev_questions: row.jevQuestionsJson as ConfigV1["jev_questions"],
-    prohibitions: row.prohibitionsJson as ConfigV1["prohibitions"],
-    handoff: row.handoffJson as ConfigV1["handoff"],
+    schema_version: row.schemaVersion as Config["schema_version"],
+    product: row.productJson as Config["product"],
+    offer: row.offerJson as Config["offer"],
+    commercial_policy: row.policyJson as Config["commercial_policy"],
+    priorities: row.prioritiesJson as Config["priorities"],
+    writer: row.writerJson as Config["writer"],
+    jev_questions: row.jevQuestionsJson as Config["jev_questions"],
+    prohibitions: row.prohibitionsJson as Config["prohibitions"],
+    handoff: row.handoffJson as Config["handoff"],
     urgency_rules: row.urgencyRules,
   };
 }
@@ -68,14 +68,14 @@ export type PlaybookVersionDto = {
   version_number: number;
   schema_version: string;
   status: "draft" | "published" | "archived";
-  product: ConfigV1["product"];
-  offer: ConfigV1["offer"];
-  commercial_policy: ConfigV1["commercial_policy"];
-  priorities: ConfigV1["priorities"];
-  writer: ConfigV1["writer"];
-  jev_questions: ConfigV1["jev_questions"];
-  prohibitions: ConfigV1["prohibitions"];
-  handoff: ConfigV1["handoff"];
+  product: Config["product"];
+  offer: Config["offer"];
+  commercial_policy: Config["commercial_policy"];
+  priorities: Config["priorities"];
+  writer: Config["writer"];
+  jev_questions: Config["jev_questions"];
+  prohibitions: Config["prohibitions"];
+  handoff: Config["handoff"];
   urgency_rules: string | null;
   notes: string | null;
   created_at: string;
@@ -120,7 +120,7 @@ export function playbookRowToDto(row: PlaybookRow): PlaybookHeaderDto {
 }
 
 export function versionRowToDto(row: PlaybookVersionRow): PlaybookVersionDto {
-  const config = rowToConfigV1(row);
+  const config = rowToConfig(row);
   return {
     id: row.id,
     version_number: row.versionNumber,

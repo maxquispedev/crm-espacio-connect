@@ -42,7 +42,8 @@ export type NextActionChoice =
   | "present_price"
   | "schedule_call"
   | "schedule_follow_up"
-  | "disqualify";
+  | "disqualify"
+  | "send_payment_instructions";
 
 export type RealOperationalNeedAnswer = NormalizedNoul;
 export type ProductFitAnswer = NormalizedScore;

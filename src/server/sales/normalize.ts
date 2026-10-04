@@ -1,3 +1,4 @@
+import { NEXT_ACTION_OPTION_KEYS_V11 } from "@/lib/sales/playbook/constants";
 import type {
   BuyingTimingChoice,
   MainValuePropositionChoice,
@@ -261,7 +262,9 @@ function parseNextActionOrRequired(
       }),
     };
   }
-  const parsed = parseChoice(raw, "next_action", isNextActionChoiceKey);
+  const allowed = (v: string): v is NextActionChoice =>
+    isNextActionChoiceKey(v) && q.type === "choice" && Object.hasOwn(q.criteria, v);
+  const parsed = parseChoice(raw, "next_action", allowed);
   if (typeof parsed === "string") {
     // Distinguir entre type inválido e invalid_choice_key.
     if (isRecord(raw) && raw.type !== undefined && raw.type !== "choice") {
@@ -274,7 +277,7 @@ function parseNextActionOrRequired(
         }),
       };
     }
-    if (isRecord(raw) && typeof raw.choice === "string" && !isNextActionChoiceKey(raw.choice)) {
+    if (isRecord(raw) && typeof raw.choice === "string" && !allowed(raw.choice)) {
       return {
         ok: false,
         result: fail({
@@ -506,7 +509,7 @@ function isMainValuePropositionChoiceKey(
 }
 
 function isNextActionChoiceKey(value: string): value is NextActionChoice {
-  return value in JEV_SALES_QUESTIONS_V2.next_action.criteria;
+  return NEXT_ACTION_OPTION_KEYS_V11.some(key => key === value);
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

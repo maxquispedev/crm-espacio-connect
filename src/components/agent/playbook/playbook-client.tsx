@@ -675,6 +675,11 @@ function DraftEditorPane({
     void onValidate(doc);
   }, [configState, jevState, draft.schema_version, onValidate]);
 
+  const runUpgrade = () => {
+    const doc = reassembleDocuments({ configText: configState.text, jevText: jevState.text });
+    if (doc) void onSave({ ...doc, upgrade_to: "1.1" });
+  };
+
   const runSave = React.useCallback(() => {
     // Sin `schema_version`: el cuerpo del `PUT` es `.strict()` de los nueve
     // bloques y lo pone el servidor al mergear con el draft.
@@ -703,6 +708,7 @@ function DraftEditorPane({
       jevEditor={jevEditor}
       issues={issuesForConfig(issues)}
       onSave={runSave}
+      onUpgrade={draft.schema_version === "1.0" ? runUpgrade : undefined}
       onValidate={runValidate}
       onDiscard={() => void onDiscard()}
       onPublish={onPublish}

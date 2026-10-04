@@ -695,3 +695,27 @@ sin sender/upload/Graph, y limpia copias por marcador propio sin borrar recursos
 Siete acciones 1.0, precio, opt-in y HUMAN/STOP conservados. E2E 021 PENDIENTE
 por entorno; el gate técnico no equivale a READY punta a punta. Tras este corte,
 pausa para verificar los tres MP4 reales antes de C4; no deploy automático.
+
+
+## Extensión de pago opt-in — spec 011, corte 4 (2026-10-04)
+
+El contrato 1.0 y V2 canónica/fixture/hash/§7 conservan sus siete acciones.
+Config 1.1 exige ocho criterios y el writer `send_payment_instructions`.
+`payment-extension.ts` deriva V3 de V2, sin mutarla; el upgrade explícito del
+draft preserva la estrategia editada. Loader/store validan por discriminante;
+normalizer admite solo las opciones del set activo. Sin Published válida sigue
+fallback V2. Ninguna fila histórica se migra ni reescribe automáticamente.
+Publicación/rollback mantienen su flujo; operación descrita en docs/playbook.md.
+
+El resolver separa `paymentDeliveryAuthorized` del handoff commercial posterior.
+Disqualify y petición humana/complejidad clara conservan prioridad. La rama de
+pago autorizada evita el LLM y renderiza únicamente recursos scoped validados,
+en orden transferencia/Yape/link, sin truncar destinos. Fact tras completar
+todas las partes; ausencia, error o entrega parcial no lo marcan. Siempre
+handoff posterior, sin nuevos follow-ups, won, cobro o activación. Sandbox
+persiste localmente antes de cualquier sender/Graph; jamás WhatsApp real.
+
+Gates técnicos y tests documentados en tasks.md. E2E 022 preparado, ejecución
+happy/unhappy y UI pendiente por ausencia de app/PG local. No READY punta a
+punta ni interpretación real de intención por Jev verificada con mocks.
+Sincronización de la decisión comercial en Obsidian pendiente.

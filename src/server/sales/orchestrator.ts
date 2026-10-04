@@ -1,3 +1,4 @@
+import { loadPaymentInstructions, renderPaymentInstructions, PAYMENT_UNAVAILABLE_TEXT } from "@/server/sales/payment-resource";
 import { asc, eq } from "drizzle-orm";
 import { getDb, schema } from "@/lib/db";
 import { scoped } from "@/lib/db/tenant";
@@ -148,6 +149,7 @@ export async function runSalesOrchestratorTurn(
       lane: plan.lane,
       nextAction: plan.nextAction,
       shouldHandoff: plan.shouldHandoff,
+      paymentDeliveryAuthorized: plan.paymentDeliveryAuthorized === true,
     },
     requestId: jev.requestId ?? null,
     model: jev.model ?? null,
@@ -169,6 +171,27 @@ export async function runSalesOrchestratorTurn(
   const skipRepeatStop =
     leadCtx.lead.automationLane === "stop" && plan.lane === "stop";
   const shouldWrite = plan.shouldReply && !skipRepeatStop;
+
+  if (shouldWrite && plan.paymentDeliveryAuthorized) {
+    // Entrega estándar autorizada ANTES de handoff. Sin LLM/KB ni retry incierto.
+    try {
+      const payment = await loadPaymentInstructions(organizationId);
+      const messages = payment ? renderPaymentInstructions(payment) : [];
+      let delivered = messages.length > 0;
+      for (const text of messages.length ? messages : [PAYMENT_UNAVAILABLE_TEXT]) {
+        if (!await deliverReply(conversation, text)) { delivered = false; break; }
+      }
+      if (delivered) await persistLeadPatch(organizationId, leadCtx.lead.id, {
+        paymentInstructionsSentAt: new Date(), updatedAt: new Date(),
+      });
+    } catch {
+      // Puede haber aceptación antes de un error local: no reenviar ni marcar fact.
+      console.warn("[sales] entrega de instrucciones de pago no completada");
+    } finally {
+      await applyHandoff(conversationId, organizationId, "commercial");
+    }
+    return;
+  }
 
   let sent = false;
   if (shouldWrite) {

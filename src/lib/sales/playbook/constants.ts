@@ -241,3 +241,6 @@ export const WRITER_NEXT_ACTIONS = [
  * schema Zod (y con él, arrastrar el validador al bundle del cliente).
  */
 type WriterEntryShape = Record<string, string>;
+
+/** Extensión opt-in 1.1; el catálogo 1.0 permanece congelado. */
+export const NEXT_ACTION_OPTION_KEYS_V11 = [...NEXT_ACTION_OPTION_KEYS, "send_payment_instructions"] as const;

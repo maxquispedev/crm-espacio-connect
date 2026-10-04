@@ -43,3 +43,34 @@ después applyHandoff commercial. En sandbox simular en su conversación; cero G
 cero upload externo, follow-ups o CAPI reales. Fallo de envío no marca fact y degrada
 con seguridad manteniendo camino humano. HUMAN prioritario no recibe cuentas
 porque pago no está autorizado. No fact de pago por un mensaje de handoff.
+
+
+## Implementación C4 — 2026-10-04
+
+`ConfigSchema` discrimina por `schema_version`: 1.0 usa el contrato estructural
+anterior y siete criterios; 1.1 exige ocho y writer de pago no vacío, con
+longitudes y guardarraíles protegidos. 1.0 conserva la tolerancia histórica
+a metadata adicional del writer. Versiones desconocidas se rechazan. Loader
+solo lee; store valida antes de escribir/publicar/rollback, sin migración.
+
+`PUT /api/playbook/draft` acepta `upgrade_to: "1.1"` explícito, junto a las
+ediciones actuales. Es la única transición del draft; no acepta `schema_version`
+en el patch, ni habilita pago mediante writer añadido a un draft 1.0 sin
+upgrade. `payment-extension.ts` contiene V3 derivada e instrucciones de pago.
+La UI guarda ese patch al pulsar Actualizar draft a 1.1 (pago). Publicación y
+rollback siguen explícitos. Pasos operativos en docs/playbook.md.
+
+`payment-resource.ts` produce una plantilla completa sin llamar al LLM:
+transferencias completas, Yape, link y transición final. Si supera el límite
+de 4096, divide entre métodos. El orquestador entrega secuencialmente y marca
+el fact solo al completar todas las partes; fallo parcial no marca ni reintenta.
+El sender de texto existente no persiste outbound si Graph rechaza antes de
+aceptar: se conserva handoff, no se inventa un mensaje failed. Sandbox persiste
+texto localmente sin sender/Graph. Sin recursos, error de lectura o corrupción:
+texto honesto y humano sin fact.
+
+E2E 022 con mocks locales preparado; ejecución pendiente por app/PG ausentes.
+Los tests del pipeline usan BD en memoria; lifecycle API usa store simulado;
+el test integrado store/loader usa ambos reales con executor en memoria. Nada
+de esto acredita PostgreSQL físico ni interpretación real de Jev. El freeze V2
+no se modifica. Evidencia y siguientes pasos en tasks.md/quickstart.md.

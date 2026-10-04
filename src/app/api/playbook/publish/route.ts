@@ -83,6 +83,7 @@ export const POST = withAuth(async (session, request: Request) => {
       { status: 200 }
     );
   } catch (err) {
+    if (err instanceof z.ZodError) return Response.json({ code: "validation_failed", message: "El draft no cumple su contrato", details: err.issues }, { status: 422 });
     if (
       err instanceof Error &&
       err.name === "PlaybookVersionNotFoundError"

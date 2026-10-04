@@ -10,12 +10,12 @@
  * Si cambia el shape en `_dto.ts`, cambia aquí también.
  */
 
-import type { ConfigV1 } from "@/lib/sales/playbook/schema";
+import type { Config } from "@/lib/sales/playbook/schema";
 
 export type PlaybookVersionStatus = "draft" | "published" | "archived";
 
 /** Versión completa (GET /api/playbook, POST/PUT draft, publish…). */
-export type PlaybookVersionDto = ConfigV1 & {
+export type PlaybookVersionDto = Config & {
   id: string;
   version_number: number;
   status: PlaybookVersionStatus;

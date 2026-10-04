@@ -5,7 +5,7 @@ import {
   getPublishedConfigForOrg,
   type LoadedPlaybookVersion,
 } from "@/lib/sales/playbook/loader";
-import type { ConfigV1 } from "@/lib/sales/playbook/schema";
+import type { Config } from "@/lib/sales/playbook/schema";
 import type {
   JevAdContext,
   JevConversationTurn,
@@ -237,7 +237,7 @@ export async function buildJevSalesState(
     try {
       playbook = await getPublishedConfigForOrg(organizationId);
     } catch (err) {
-      // Una fila publicada que no cumple ConfigV1 no debe tumbar el
+      // Una fila publicada que no cumple Config no debe tumbar el
       // turno. Degradamos al default y registramos para diagnóstico.
       if (!warnedNoPlaybookOrgs.has(organizationId)) {
         warnedNoPlaybookOrgs.add(organizationId);
@@ -292,19 +292,19 @@ export async function buildJevSalesState(
 }
 
 /**
- * `ConfigV1.product` (contrato durable, `src/lib/sales/playbook/schema.ts`)
+ * `Config.product` (contrato durable, `src/lib/sales/playbook/schema.ts`)
  * a `JevSalesState.product` (contrato de Jev, snake_case + bloques
  * `implementation`/`subscription`).
  *
  * Corte 3 — el spread `{...VENDE_VELOZ_PRODUCT, ...product}` era
- * INCORRECTO: `ConfigV1.product` no declara `implementation` ni
+ * INCORRECTO: `Config.product` no declara `implementation` ni
  * `subscription`, asi que el spread arrastraba los bloques hardcodeados
  * de Vende Veloz al state de CUALQUIER organizacion con playbook
  * publicado (otro negocio heredaba "S/247 al mes" hacia Jev y el
  * writer). Aqui el playbook manda: se mapean sus 6 claves y, si el
  * autor no describe esos dos bloques, se omiten en vez de inventarlos.
  */
-function toStateProduct(product: ConfigV1["product"]): VendeVelozProduct {
+function toStateProduct(product: Config["product"]): VendeVelozProduct {
   return {
     name: product.name,
     one_liner: product.one_liner,
@@ -320,7 +320,7 @@ function toStateProduct(product: ConfigV1["product"]): VendeVelozProduct {
 }
 
 /**
- * `ConfigV1.commercial_policy` es camelCase (`automationFirst`,
+ * `Config.commercial_policy` es camelCase (`automationFirst`,
  * `humanHandoff`, ...) porque es el contrato durable que edita el
  * administrador; el state que consume Jev es snake_case.
  *
@@ -331,7 +331,7 @@ function toStateProduct(product: ConfigV1["product"]): VendeVelozProduct {
  * exactamente lo que Jev evalua.
  */
 function toStatePolicy(
-  policy: ConfigV1["commercial_policy"]
+  policy: Config["commercial_policy"]
 ): VendeVelozCommercialPolicy {
   return {
     default_channel: policy.defaultChannel,

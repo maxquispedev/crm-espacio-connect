@@ -1,3 +1,5 @@
+import type { PaymentInstructions } from "@/lib/commercial/resources";
+import { renderPaymentInstructions, PAYMENT_UNAVAILABLE_TEXT } from "@/server/sales/payment-resource";
 import { z } from "zod";
 import { chatJson, type ChatMessage } from "@/lib/ai";
 import { renderKb } from "@/server/ai/prompts";
@@ -61,6 +63,7 @@ export type WriteSalesReplyInput = {
   kb: KbEntry[];
   facts: DurableSalesFacts;
   demo?: { slot: string; available: boolean };
+  payment?: PaymentInstructions | null;
   product?: VendeVelozProduct;
   policy?: VendeVelozCommercialPolicy;
   /**
@@ -129,6 +132,11 @@ export async function writeSalesReply(
 ): Promise<SalesWriterResult> {
   if (!input.plan.shouldReply) {
     return { ok: true, text: null };
+  }
+
+  if (input.plan.paymentDeliveryAuthorized) {
+    const messages = input.payment ? renderPaymentInstructions(input.payment) : [];
+    return { ok: true, text: messages.length ? messages.join("\n\n") : PAYMENT_UNAVAILABLE_TEXT };
   }
 
   const result = await chatJson(SalesWriterOutput, buildWriterMessages(input));
@@ -260,6 +268,8 @@ function defaultNextActionInstruction(action: SalesPlan["nextAction"]): string {
       return "Centra la respuesta en matrícula o inscripción online: el lead expresó esa necesidad. No inventes URL.";
     case "present_price":
       return "Presenta la oferta vigente con claridad: la implementación asistida está incluida y no tiene costo de setup; el primer mes se paga por adelantado; S/247/mes hasta 50 alumnos activos; +S/1 por alumno activo desde el 51; sin permanencia obligatoria. Sin descuentos inventados y sin briefing de contrato.";
+    case "send_payment_instructions":
+      return "Solo transición humana si no hay autorización expresa de entrega. No generar destinos de pago.";
     case "schedule_call":
       return "Redacta una transición corta a atención humana. No inventes una hora si no fue acordada en la conversación.";
     case "schedule_follow_up":
