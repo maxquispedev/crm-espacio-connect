@@ -85,6 +85,13 @@
       "when": 1789965900000,
       "tag": "0009_commercial_resources",
       "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1791115200000,
+      "tag": "0010_conversation_attention",
+      "breakpoints": true
     }
   ]
 }

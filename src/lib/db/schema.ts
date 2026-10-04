@@ -247,6 +247,63 @@ export const conversation = pgTable(
   ]
 );
 
+/**
+ * 013 C1 — Estado operativo de la atención humana (concepto de operación, no de
+ * canal: por eso es tabla dedicada y no columnas en `conversation`; plan §3.1).
+ *
+ * UNA fila por conversación, como máximo: programar un recordatorio nuevo
+ * reemplaza al anterior en vez de acumular compromisos ambiguos (plan §5, D-6).
+ * El **vencimiento no se almacena**: `deferred` con `due_at <= now()` es un
+ * recordatorio vencido, derivado en cada lectura. Sin worker, sin cron, sin lease
+ * (plan §3.3, D-5).
+ *
+ * `organization_id` NOT NULL e índice org-first (Constitución III). Toda query
+ * pasa por `scoped()` desde `src/server/inbox/attention.ts`.
+ */
+export const conversationAttention = pgTable(
+  "conversation_attention",
+  {
+    id: text("id").primaryKey(),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organization.id, { onDelete: "cascade" }),
+    conversationId: text("conversation_id")
+      .notNull()
+      .references(() => conversation.id, { onDelete: "cascade" }),
+    /** 013 — Operación humana, NO el estado interno del motor automático. */
+    state: text("state", {
+      enum: ["pending", "waiting_client", "deferred"],
+    }).notNull(),
+    /** Obligatorio si y solo si `state = 'deferred'` (CHECK bidireccional). */
+    dueAt: timestamp("due_at"),
+    /** Razón/compromiso visible en la Agenda; recortado por el módulo. */
+    note: text("note"),
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+    updatedAt: timestamp("updated_at").notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex("conversation_attention_org_conv_uq").on(
+      t.organizationId,
+      t.conversationId
+    ),
+    index("conversation_attention_org_state_idx").on(t.organizationId, t.state),
+    // Buckets de Agenda y "Por atender" ordenan/filtran por (org, state, due_at).
+    index("conversation_attention_org_state_due_idx").on(
+      t.organizationId,
+      t.state,
+      t.dueAt
+    ),
+    check(
+      "conversation_attention_state_check",
+      sql`${t.state} IN ('pending', 'waiting_client', 'deferred')`
+    ),
+    check(
+      "conversation_attention_due_coherence_check",
+      sql`((${t.state} = 'deferred' AND ${t.dueAt} IS NOT NULL) OR (${t.state} <> 'deferred' AND ${t.dueAt} IS NULL))`
+    ),
+  ]
+);
+
 export const message = pgTable(
   "message",
   {

@@ -1,3 +1,100 @@
+# Checkpoint 2026-10-04 — Spec 013, CUT 1: estado durable de atención humana
+
+**IMPLEMENTADO / GATES TÉCNICOS VERDES; E2E NO EJECUTADO (sin PostgreSQL en la
+máquina). No READY punta a punta.**
+Commit único: `feat(inbox): persistir atención y recordatorios humanos`.
+Base limpia `33fb80e` (árbol limpio al empezar; el bootstrap de 013).
+
+**Objetivo.** Que "necesita atención" y "me acuerdo el jueves" sobrevivan a
+reinicios, sin colarse en el motor automático. Tabla dedicada
+`conversation_attention` (una fila por conversación, `ca_*`), tres estados
+operativos —`pending`, `waiting_client`, `deferred(due_at, note)`— y **vencimiento
+derivado**: `deferred` con `due_at <= now()` ya está vencido. No hay columna de
+estado, ni worker, ni cron, ni lease (plan §3.3, D-5).
+
+**Cambios.** `drizzle/0010_conversation_attention.sql` + journal `idx: 12`, escrita
+a mano tras revisar el `pnpm db:generate` (emitía un diff de snapshot completo que
+recreaba tablas existentes y hacía `DROP INDEX "test_run_org_running_uq"`). CHECK de
+estado cerrado y CHECK bidireccional `deferred` ⇔ `due_at`; UNIQUE
+`(organization_id, conversation_id)`; tres índices org-first; `organization_id`
+NOT NULL con FK y cascade. `src/server/inbox/attention.ts` con la API de plan §3.4
+más `deriveAttention` (derivación en un solo lugar, la reutiliza el corte 2),
+`clearAttentionForContact` y `bestEffortAttention`. Seis enganches best-effort, uno
+por punto de estrangulamiento: `applyHandoff`→`pending`; inbound durante HUMAN→
+`pending`; `ingestManualEcho` y outbound `origin="operator"`→`waiting_client`;
+`reactivate` limpia y `aiEnabled=false`→`pending` (reactivate gana si llegan
+juntos); lead a `won`/`lost` limpia. **`markRead` no toca la atención: abrir no
+resuelve.**
+
+**Decisiones técnicas (trazadas en `tasks.md`).** (1) La guarda de FR-1.10 se
+implementa como "la IA no es la dueña" = `handoffAt != null || aiEnabled === false`:
+con la regla literal `handoffAt != null`, el `aiEnabled=false` sin handoff
+—alcanzable desde el interruptor del panel de conversación— no podría generar el
+`pending` que exige spec §3.4. (2) `moveLeadStage` limpia solo con cambio **real**
+de etapa, para no romper el contrato de rendimiento del no-op documentado. (3)
+`scheduleHumanReminder` falla ruidosamente (`due_in_past`) porque es acción
+explícita del operador, frente al no-op silencioso de los eventos.
+
+**Lo que NO se tocó, verificado por test.** `src/server/sales/follow-ups/**`,
+cadencias, worker, seeding, `automationLane`, `followUpCount/Reason` y los errores
+`human_lane`/`handoff_active`: intactos. `docs/SALES_FOLLOW_UPS.md` **no se
+modificó** porque su contrato no cambia. `tests/unit/attention-no-send.test.ts` ata
+esa frontera por código: falla si alguien importa el sender/Graph/plantillas/motor
+desde la atención, o la atención desde el motor o el worker; y ejecuta el ciclo de
+recordatorio con todos esos colaboradores sabotajeados. Cero llamadas a Graph desde
+un recordatorio humano, por construcción y por prueba.
+
+**Evidencia.** `pnpm typecheck`, `pnpm lint` (0 errores; 3 warnings preexistentes),
+`pnpm build` y `pnpm test` en verde: **107 ficheros, 1193 tests** verdes, 9 skipped.
+Tests nuevos: 27 del ciclo de 10 pasos + tenant A/B + derivación, 25 de los seis
+enganches (incluido `markRead` intacto y los cuatro casos best-effort), 6 de
+cero-Graph, 6 de estructura de migración. Regresión obligatoria **sin modificar
+ninguna expectativa** (`git diff --name-only -- tests/` vacío): 9 ficheros/100 tests
+de follow-ups, orchestrator, writer, handoff y media-send; 18 ficheros/210 tests de
+`playbook-*` y `lab-preview-*`. Comandos y resultados en
+`specs/013-operator-workspace/tasks.md`.
+
+**E2E: NO EJECUTADO, con causa.** App construida arrancada en `:3111` →
+`GET /api/health` = **503 `db_unavailable`**, `ECONNREFUSED 127.0.0.1:5432`. No hay
+`postgres`/`psql`/`pg_ctl`/`initdb`/`docker` en la máquina; Playwright y Chromium sí
+están instalados, así que el bloqueo es solo la BD dedicada. Este corte no añade UI,
+endpoint ni DTO (la superficie observable empieza en el corte 2), pero la
+verificación en PostgreSQL real de UNIQUE/CHECK/FK/cascade y el E2E de
+comportamiento quedan **PENDIENTES**: los dobles en memoria no sustituyen
+PostgreSQL. Los 5 tests opt-in de `tests/unit/attention-migration.test.ts` requieren
+`ATTENTION_TEST_DATABASE_URL` y una BD `attention_test[_sufijo]`.
+
+**Constitución.** I intacto (sin secretos nuevos; la nota se recorta, no se
+interpola en SQL ni se loguea). III respetado: `organization_id` NOT NULL, índices
+org-first y toda query por `scoped()`. IV: upsert idempotente, migración
+re-ejecutable sin seeds ni backfill. VII: las tres decisiones anteriores quedan
+registradas. IX pendiente, igual que en los cortes previos. Sin dependencia
+externa nueva.
+
+**Decisión de producto para sincronizar en Obsidian:** el recordatorio humano es un
+concepto de **operación** y por eso vive en su propia tabla, no en
+`sales_follow_up_job` ni en `lead.nextFollowUpAt`; el vencimiento se deriva por
+lectura y no por proceso; y **nunca** dispara un envío — la Agenda solo le recuerda a
+Max que escribir. Esa frontera (operación ≠ motor) es lo que hay que dejar escrita
+en el cuaderno de producto, no el detalle de implementación.
+
+**Archivos clave.** `src/server/inbox/attention.ts`; enganches en
+`src/server/ai/delivery.ts`, `src/server/inbox/{ingest,queries,send}.ts` y
+`src/server/leads/stage-gateway.ts`; `src/lib/db/{schema,ids}.ts`;
+`drizzle/0010_conversation_attention.sql` + `drizzle/meta/_journal.json`;
+`tests/fixtures/mem-db.ts`; `tests/unit/attention-{state,hooks,no-send,migration}.test.ts`.
+
+**Siguiente paso exacto:** (1) con PostgreSQL local dedicado, correr
+`ATTENTION_TEST_DATABASE_URL` + `pnpm vitest run tests/unit/attention-migration.test.ts`
+para verificar UNIQUE, CHECK de estado, coherencia `deferred`⇔`due_at`, NOT NULL, FK,
+cascade y la aplicación repetida de la migración; (2) después, sesión nueva e
+independiente para **solo CUT 2** (`ConversationDto.attention` aditivo + LEFT JOIN
+scropeado en `listConversations` + chip "Por atender"), que es donde empieza la
+superficie observable y, por tanto, el self-test E2E de comportamiento. Ningún
+`amend`, `merge`, `rebase`, `push` ni deploy en este corte.
+
+---
+
 # Checkpoint 2026-10-04 — Spec 012: handoff humano silencioso
 
 **IMPLEMENTADO / GATES TÉCNICOS VERDES; E2E PENDIENTE. No READY punta a punta.**

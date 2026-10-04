@@ -2,6 +2,10 @@ import { and, asc, eq, inArray, sql } from "drizzle-orm";
 import { getDb, schema } from "@/lib/db";
 import { newId } from "@/lib/db/ids";
 import { scoped } from "@/lib/db/tenant";
+import {
+  bestEffortAttention,
+  clearAttentionForContact,
+} from "@/server/inbox/attention";
 
 /**
  * Puerta única runtime para los cambios de `lead.stageId`.
@@ -109,6 +113,7 @@ export async function moveLeadStage(
     .select({
       id: schema.lead.id,
       organizationId: schema.lead.organizationId,
+      contactId: schema.lead.contactId,
       stageId: schema.lead.stageId,
     })
     .from(schema.lead)
@@ -137,6 +142,9 @@ export async function moveLeadStage(
     input.extra !== undefined && Object.keys(input.extra).length > 0;
   const wantsPosition = input.position !== undefined;
   const wantsLastActivity = input.lastActivityAt !== undefined;
+  // 013 C1 - Solo un cambio REAL de etapa decide si se limpia la atención humana:
+  // un no-op a la misma etapa no lee nada más (contrato de rendimiento de arriba).
+  let destKind: (typeof schema.pipelineStage.$inferSelect)["kind"] | null = null;
 
   // True no-op: ni cambia de etapa ni escribe nada extra. La etapa destino
   // se valida solo cuando se va a escribir un cambio de etapa real;
@@ -183,6 +191,7 @@ export async function moveLeadStage(
         "La etapa destino no pertenece a este tenant"
       );
     }
+    destKind = dest.kind;
   }
 
   const patch: Record<string, unknown> = { ...input.extra, updatedAt: now };
@@ -209,6 +218,18 @@ export async function moveLeadStage(
     throw new StageGatewayError(
       "lead_not_found",
       "Lead no encontrado tras actualizar"
+    );
+  }
+
+  // 013 C1 - Llevar el lead a `cliente`/`perdido` deja sin sentido cualquier
+  // compromiso humano previo ("pending", "esperando al cliente", recordatorio):
+  // se limpia. Best-effort: la etapa manda, la atención es apoyo (plan §3.5).
+  if (destKind === "won" || destKind === "lost") {
+    await bestEffortAttention(`lead a ${destKind}`, () =>
+      clearAttentionForContact({
+        organizationId: input.organizationId,
+        contactId: lead.contactId,
+      })
     );
   }
 

@@ -4,6 +4,11 @@ import { scoped } from "@/lib/db/tenant";
 import type { AnuncioListaDto, ConversationDto } from "@/lib/types";
 import { isWindowOpen, windowRemainingMs } from "@/server/inbox/window";
 import { listaDesdeRow } from "@/lib/anuncios";
+import {
+  bestEffortAttention,
+  clearAttention,
+  markAttentionPending,
+} from "@/server/inbox/attention";
 
 export type { ConversationDto };
 
@@ -183,5 +188,24 @@ export async function updateConversation(
       )
     )
     .returning();
-  return updated[0] ?? null;
+  const row = updated[0] ?? null;
+
+  // 013 C1 - Estados de la atención humana en el mismo punto de estrangulamiento
+  // que los estados de la conversación (plan §3.5):
+  //   - `reactivate` devuelve la conversación a la IA: limpia la atención.
+  //   - `aiEnabled: false` deja la conversación en manos del humano: pendiente.
+  // `markRead` NO aparece aquí a propósito: abrir no resuelve (spec §3.4).
+  // `reactivate` gana si vienen ambos: es la señal más fuerte.
+  if (row) {
+    if (patch.reactivate) {
+      await bestEffortAttention(`reactivate ${conversationId}`, () =>
+        clearAttention({ organizationId, conversationId })
+      );
+    } else if (patch.aiEnabled === false) {
+      await bestEffortAttention(`ia desactivada ${conversationId}`, () =>
+        markAttentionPending({ organizationId, conversationId })
+      );
+    }
+  }
+  return row;
 }

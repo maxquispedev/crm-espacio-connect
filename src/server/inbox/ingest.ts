@@ -19,6 +19,11 @@ import {
 } from "@/server/inbox/identity";
 import { applyStatusUpdate } from "@/server/inbox/status";
 import { onLeadActivity } from "@/server/inbox/lead-activity";
+import {
+  bestEffortAttention,
+  markAttentionPending,
+  markAttentionWaitingClient,
+} from "@/server/inbox/attention";
 import { maybeRunAgentTurn } from "@/server/ai/trigger";
 import { cancelFollowUpsOnManualReply } from "@/server/sales/follow-ups/store";
 import { anuncioDeWhatsapp } from "@/server/attribution/referral";
@@ -358,6 +363,14 @@ async function ingestManualEcho(
     conversationId: conversation.id,
   });
 
+  // 013 C1 - El dueño respondió: la pelota está en el cliente. Es un estado
+  // OPERATIVO, no del motor: no crea follow-up ni cadencia, solo deja de
+  // "estar pendiente". El handoff de las líneas anteriores garantiza que
+  // `handoffAt` ya no es null cuando hay handoff, así que el módulo valida.
+  await bestEffortAttention(`respuesta manual ${conversation.id}`, () =>
+    markAttentionWaitingClient({ organizationId, conversationId: conversation.id })
+  );
+
   await publishMessageNew({
     organizationId,
     conversationId: conversation.id,
@@ -431,6 +444,14 @@ export async function ingestInboundMessage(input: {
       updatedAt: new Date(),
     })
     .where(eq(schema.conversation.id, conversation.id));
+
+  // 013 C1 - El cliente escribió: si la conversación es del humano, vuelve a
+  // "pending" y cualquier recordatorio previo deja de aplicar. Si la IA es la
+  // dueña, el módulo no hace nada. Va ANTES de `onLeadActivity` para que un
+  // fallo posterior no deje la atención sin registrar.
+  await bestEffortAttention(`inbound ${conversation.id}`, () =>
+    markAttentionPending({ organizationId, conversationId: conversation.id })
+  );
 
   await onLeadActivity(organizationId, contact.id, waTimestamp);
 

@@ -3,6 +3,7 @@ import { getDb, schema } from "@/lib/db";
 import { newId } from "@/lib/db/ids";
 import { publish } from "@/server/events/bus";
 import { SendError, sendText, sendMediaMessage } from "@/server/inbox/send";
+import { bestEffortAttention, markAttentionPending } from "@/server/inbox/attention";
 
 import { scoped } from "@/lib/db/tenant";
 import { saveMediaFile, deleteMediaFile } from "@/server/whatsapp/media";
@@ -142,6 +143,13 @@ export async function applyHandoff(
     )
     .returning();
   if (!updated[0]) return;
+  // 013 C1 - Punto ÚNICO de handoff IA -> humano: la conversación queda
+  // esperando a Max ("pending"). Best-effort: si falla, el handoff sigue
+  // siendo válido (plan §3.5, D-4). Las conversaciones del Laboratorio se
+  // filtran dentro del módulo.
+  await bestEffortAttention(`handoff ${conversationId}`, () =>
+    markAttentionPending({ organizationId, conversationId })
+  );
   publish(organizationId, {
     type: "conversation.updated",
     data: {

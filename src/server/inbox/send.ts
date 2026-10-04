@@ -17,6 +17,10 @@ import {
   type FileMediaKind,
 } from "@/server/whatsapp/media";
 import { cancelFollowUpsOnManualReply } from "@/server/sales/follow-ups/store";
+import {
+  bestEffortAttention,
+  markAttentionWaitingClient,
+} from "@/server/inbox/attention";
 
 /** Error tipado del envío; `code` mapea a HTTP en la capa de API. */
 export class SendError extends Error {
@@ -164,6 +168,15 @@ async function persistOutbound(input: {
       organizationId: input.organizationId,
       conversationId: input.conversationId,
     });
+    // 013 C1 - El dueño respondió desde el CRM: se espera al cliente
+    // ("waiting_client"). Best-effort, y sin efecto en un envío de la IA
+    // (`origin='ai'`), que no es una respuesta humana.
+    await bestEffortAttention(`outbound del operador ${input.conversationId}`, () =>
+      markAttentionWaitingClient({
+        organizationId: input.organizationId,
+        conversationId: input.conversationId,
+      })
+    );
   }
 
   return message.id;

@@ -30,24 +30,24 @@ Cortes 6–8 (rebrand + rediseño) viven en `specs/014-espacio-connect-rebrand/t
 
 ## CUT 1 — Estado durable de atención y recordatorios humanos
 
-- [ ] T101 Spec, plan, Constitution Check y análisis del código real (choke points)
-- [ ] T102 `ca_` en `src/lib/db/ids.ts`; tabla `conversation_attention` en `schema.ts`
-- [ ] T103 Migración `0010` re-ejecutable + `idx: 12` en el journal Drizzle
-- [ ] T104 `src/server/inbox/attention.ts`: `markAttentionPending`,
+- [x] T101 Spec, plan, Constitution Check y análisis del código real (choke points)
+- [x] T102 `ca_` en `src/lib/db/ids.ts`; tabla `conversation_attention` en `schema.ts`
+- [x] T103 Migración `0010` re-ejecutable + `idx: 12` en el journal Drizzle
+- [x] T104 `src/server/inbox/attention.ts`: `markAttentionPending`,
       `markAttentionWaitingClient`, `scheduleHumanReminder`, `clearAttention`,
       `getAttention`/`listAttention`; todo con `scoped()` y upsert idempotente
-- [ ] T105 Enganche `applyHandoff` → `pending`
-- [ ] T106 Enganche inbound durante HUMAN → `pending` (y `ingestManualEcho` →
+- [x] T105 Enganche `applyHandoff` → `pending`
+- [x] T106 Enganche inbound durante HUMAN → `pending` (y `ingestManualEcho` →
       `waiting_client`)
-- [ ] T107 Enganche outbound `origin=operator` → `waiting_client`
-- [ ] T108 Enganche `reactivate` → limpiar; `aiEnabled=false` → `pending`;
+- [x] T107 Enganche outbound `origin=operator` → `waiting_client`
+- [x] T108 Enganche `reactivate` → limpiar; `aiEnabled=false` → `pending`;
       `markRead` **no** toca atención
-- [ ] T109 Enganche `moveLeadStage` a `won`/`lost` → limpiar
-- [ ] T110 Tests unitarios: ciclo de 10 pasos, derivación, constraints, tenant A/B,
+- [x] T109 Enganche `moveLeadStage` a `won`/`lost` → limpiar
+- [x] T110 Tests unitarios: ciclo de 10 pasos, derivación, constraints, tenant A/B,
       cero Graph
-- [ ] T111 Regresión follow-ups automáticos sin expectativas modificadas
-- [ ] T112 Gate completo + E2E (o PENDIENTE explícito con causa)
-- [ ] T113 Documentación, evidencia, un commit, árbol limpio
+- [x] T111 Regresión follow-ups automáticos sin expectativas modificadas
+- [x] T112 Gate completo verde; **E2E NO ejecutado** (causa registrada abajo)
+- [x] T113 Documentación, evidencia, un commit, árbol limpio
 
 ## CUT 2 — Bandeja "Por atender"
 
@@ -115,22 +115,105 @@ Cortes 6–8 (rebrand + rediseño) viven en `specs/014-espacio-connect-rebrand/t
 
 | Caso | CUT | E2E | Unitario |
 |---|---|---|---|
-| handoff → Por atender | 2 | pendiente | pendiente |
-| abrir no equivale a resolver | 1/2 | pendiente | pendiente |
-| reply manual → estado coherente | 1 | pendiente | pendiente |
+| handoff → Por atender | 2 | pendiente | **verde** (`attention-hooks`) |
+| abrir no equivale a resolver | 1/2 | pendiente | **verde** (`attention-state`, `attention-hooks`) |
+| reply manual → estado coherente | 1 | pendiente | **verde** (`attention-hooks`: echo + outbound) |
 | recordatorio futuro → Agenda, fuera de Por atender | 3 | pendiente | pendiente |
 | inbound antes de vencimiento → Por atender | 3 | pendiente | pendiente |
 | recordatorio vencido → Por atender | 3 | pendiente | pendiente |
 | programar otro recordatorio | 3 | pendiente | pendiente |
-| reactivar IA | 1/4 | pendiente | pendiente |
-| Cliente / Perdido | 1 | pendiente | pendiente |
-| aislamiento tenant | 1 | pendiente | pendiente |
-| cero Graph en recordatorio humano | 1 | pendiente | pendiente |
-| follow-ups automáticos sin regresión | 1/5 | pendiente | pendiente |
+| reactivar IA | 1/4 | pendiente | **verde** (`attention-hooks`) |
+| Cliente / Perdido | 1 | pendiente | **verde** (`attention-hooks`) |
+| aislamiento tenant | 1 | pendiente | **verde** (`attention-state`, `attention-hooks`) |
+| cero Graph en recordatorio humano | 1 | pendiente | **verde** (`attention-no-send`) |
+| follow-ups automáticos sin regresión | 1/5 | pendiente | **verde** (100 tests, sin tocar expectativas) |
 
 ## Evidencia
 
-_(Sin evidencia todavía. Este bloque es bootstrap: ningún corte implementado.)_
+### CUT 1 — 2026-10-04 · commit `feat(inbox): persistir atención y recordatorios humanos`
+
+Base: `33fb80e` (árbol limpio al empezar). Choke points verificados en el código
+real antes de tocar nada: los seis de `plan.md` §2/§3.5 existen y son los puntos
+únicos (`applyHandoff`, `ingestInboundMessage`, `ingestManualEcho`,
+`persistOutbound` con `origin:"operator"`, `updateConversation`, `moveLeadStage`).
+
+**Qué entró**
+
+- `drizzle/0010_conversation_attention.sql` + journal `idx: 12`
+  (`tag: 0010_conversation_attention`). Escrita a mano: `pnpm db:generate` emitió
+  un diff de snapshot completo que recreaba tablas existentes y hacía
+  `DROP INDEX "test_run_org_running_uq"`. Revisado el SQL generado y descartado,
+  igual que en el corte comercial (0009).
+- `src/lib/db/schema.ts`: `conversation_attention` con `organization_id` NOT NULL +
+  FK, UNIQUE `(organization_id, conversation_id)`, CHECK de estado y CHECK
+  bidireccional `deferred` ⇔ `due_at`, tres índices org-first.
+- `src/server/inbox/attention.ts`: la API de `plan.md` §3.4 + `deriveAttention`
+  (derivación en un solo lugar, la reutiliza el corte 2), `AttentionError`,
+  `clearAttentionForContact` y `bestEffortAttention`.
+- Seis enganches best-effort, uno por punto de estrangulamiento.
+- `tests/fixtures/mem-db.ts`: doble de BD en memoria con ORM/`schema`/`scoped()`
+  REALES (interpreta el SQL que Drizzle genera). Los constraints de PostgreSQL NO
+  los comprueba esto: para eso está la suite opt-in.
+
+**Comandos y resultados**
+
+| Comando | Resultado |
+|---|---|
+| `pnpm typecheck` | verde |
+| `pnpm lint` | verde (0 errores; 3 warnings preexistentes de `build-state.ts` / `anuncio-origen.tsx`) |
+| `pnpm build` | verde |
+| `pnpm test` | verde: **107 ficheros, 1193 tests** en verde, 9 skipped |
+| `pnpm vitest run tests/unit/attention-state.test.ts` | 27 tests verdes (ciclo de 10 pasos + tenant A/B + derivación) |
+| `pnpm vitest run tests/unit/attention-hooks.test.ts` | 25 tests verdes (los 6 enganches, `markRead` intacto, best-effort) |
+| `pnpm vitest run tests/unit/attention-no-send.test.ts` | 6 tests verdes (estructural + dinámico, cero Graph) |
+| `pnpm vitest run tests/unit/attention-migration.test.ts` | 6 verdes + **5 skipped** (opt-in sin PostgreSQL) |
+
+**Regresión obligatoria, sin modificar ninguna expectativa** (`git diff --name-only
+-- tests/` vacío):
+`tests/unit/sales-follow-up-*.test.ts`, `sales-orchestrator`, `sales-writer`,
+`handoff`, `media-send` → 9 ficheros / 100 tests verdes.
+`playbook-*` + `lab-preview-*` → 18 ficheros / 210 tests verdes.
+
+**E2E de comportamiento: NO EJECUTADO (PENDIENTE con causa).**
+Intento real: app construida arrancada en `:3111` con los mocks →
+`GET /api/health` devuelve **503 `db_unavailable`** con
+`ECONNREFUSED 127.0.0.1:5432`. En esta máquina no hay `postgres`, `psql`,
+`pg_ctl`, `initdb` ni `docker`, así que no hay forma de levantar la BD
+dedicada que exigen el harness y `migrate`. Playwright y Chromium sí están
+instalados: el único bloqueo es la base de datos. Este corte no añade UI, ni
+endpoint, ni DTO, así que la superficie observable empieza en el corte 2
+(`tests/e2e/` y `scripts/e2e-selftest.mjs`); aun así el E2E real de la
+`conversation_attention` debe ejecutarse en el corte 5 o en cuanto haya
+PostgreSQL. **No se declara READY.**
+
+**Decisiones que se apartan de una lectura literal (quedan trazadas aquí)**
+
+1. **FR-1.10 vs spec §3.4.** `pending`/`waiting_client` se validan contra
+   "la IA no es la dueña" = `handoffAt != null || aiEnabled === false`, no
+   solo contra `handoffAt != null`. Con la regla literal, `aiEnabled=false`
+   sin handoff (alcanzable desde el interruptor del panel de conversación)
+   no podría generar el `pending` que el propio §3.4 exige. La invariante que
+   FR-1.10 protege —"si la IA es dueña, no hay estado humano"— se cumple
+   íntegra: con la IA activa y sin handoff no se escribe nada.
+2. **`moveLeadStage` solo limpia con cambio REAL de etapa.** El no-op a la misma
+   etapa documenta que no hace lecturas extra; no se rompió ese contrato de
+   rendimiento. El efecto práctico (un lead ya en `cliente` al que se le
+   reactivara la IA y se apagara después) se resuelve al moverlo a cualquier
+   etapa y de vuelta.
+3. **Extras del módulo sobre el mínimo de §3.4**, todos condicionados por lo que
+   el corte 2/3 necesita y sin superficie nueva: `deriveAttention` (evita
+   duplicar la derivación), `clearAttentionForContact` (el lead es el segundo
+   anclaje del contrato), `ATTENTION_NOTE_MAX_LENGTH` (recorte defensivo, el
+   Zod del endpoint irá en el corte 3) y `AttentionError` con
+   `conversation_not_found | ai_owns_conversation | due_in_past`.
+
+**Lo que este corte NO abre**
+
+`docs/SALES_FOLLOW_UPS.md` **no se tocó**: el contrato de follow-ups no cambia
+(`src/server/sales/follow-ups/**` intacto, sin entradas nuevas en el worker, sin
+`automationLane`/`followUpCount`/`human_lane`/`handoff_active`). El test
+`attention-no-send.test.ts` ata esa frontera por código: si alguien importa el
+módulo desde el motor, o el motor desde el módulo, la suite falla.
 
 Bootstrap 2026-10-04: creados `spec.md`, `plan.md`, `tasks.md` y `quickstart.md` de
 este spec, más el runner `scripts/ai/run-operator-workspace-mcode.sh` y los prompts

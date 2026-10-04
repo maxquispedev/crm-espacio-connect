@@ -30,6 +30,8 @@ const prefixes = {
   salesPlaybookVersion: "spv",
   /** 008 Corte 7 — Caso de evaluación anonimizado desde conversación real. */
   labCase: "lbc",
+  /** 013 C1 — Estado operativo de la atención humana (una fila por conversación). */
+  conversationAttention: "ca",
 } as const;
 
 export type IdKind = keyof typeof prefixes;
