@@ -413,7 +413,12 @@ Reglas que siguen intactas y que este corte NO cambió:
 - `POST/DELETE /api/pipeline/leads/[id]/follow-up` **sigue rechazando** la vía
   humana con `human_lane` / `handoff_active`. Esa es la prueba de que son dos
   mecanismos: el automático no programa encima de una conversación humana, y el
-  humano no se apoya en `sales_follow_up_job`.
+  humano no se apoya en `sales_follow_up_job`. Verificado **en vivo** en el E2E
+  `E2E_SECTION=026` (2026-10-04): la ida y vuelta de programar → `wait` →
+  cancelar funciona, y los dos rechazos devuelven 409 con su código. El `DELETE`
+  **no borra la fila**: la deja en `cancelled` (auditable) y limpia
+  `next_follow_up_at`; lo que no puede quedar es un `pending` que el worker
+  fuera a reclamar.
 - La Agenda no lee ni escribe `sales_follow_up_job` ni `lead.next_follow_up_at`.
   Afirmado por código en `tests/unit/agenda-no-send.test.ts` y en pantalla en el
   E2E `E2E_SECTION=024` (outbox del mock sin cambios, `sales_follow_up_job`

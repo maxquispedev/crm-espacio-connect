@@ -1,3 +1,106 @@
+# Checkpoint 2026-10-04 — Spec 013, CUT 5: verificación del workspace (CIERRE)
+
+**CORTES 1–5 CERRADOS. E2E REAL EJECUTADO EN VERDE: 120/120 checks, tres
+corridas seguidas, con la app real, PostgreSQL real y UI real.** Commit único:
+`test(inbox): verificar workspace operativo`. Base limpia `4b3c556` (CUT 4).
+
+**Objetivo.** Verificar que el workspace operativo se sostiene **junto** y cerrar
+los dos huecos que quedaban: el **handoff real** (el del corte 4 se sembraba por
+SQL) y **lead a Cliente / lead a Perdido**, el único caso de la tabla que seguía
+PENDIENTE. Sin superficie nueva: este corte no añade ni un estado ni un endpoint.
+
+**Cambios (todo de arnés, guion y dos correcciones)**
+
+- `scripts/e2e-workspace-verification.mjs` (nuevo) + dispatch de
+  **`E2E_SECTION=026`** en `scripts/e2e-selftest.mjs`. El nombre propuesto `023`
+  ya estaba ocupado: 023 = cola (C2), 024 = Agenda (C3), 025 = flujo (C4).
+- `tests/e2e/013-workspace-verificacion.md` (nuevo): guion legible de los doce
+  casos, con su estado al empezar y qué mira el "cero Graph".
+- `tests/unit/attention-migration.test.ts`: **la capa opt-in de PostgreSQL real
+  tenía dos aserciones falsas** y nunca se había ejecutado. Corregidas y
+  **11/11 verde**.
+- `.gitignore` + `eslint.config.mjs`: `.tmp-org-create.mjs` (ver abajo).
+- `specs/013-operator-workspace/quickstart.md`: sección real `026` y el fixture
+  por `pnpm org:create`.
+
+**Evidencia por caso — los DOCE, EJECUTADOS en la misma corrida**
+
+| Caso | E2E 026 |
+|---|---|
+| handoff → Por atender | EJECUTADO — handoff **real**: inbound por webhook → el agente escala solo → `pending`, 2 → 3, y **no manda WhatsApp** |
+| abrir no resuelve | EJECUTADO — abrir y cerrar deja la cola en 3 y la fila `pending` |
+| reply manual coherente | EJECUTADO — `waiting_client`, 3 → 2, y es lo único que sale |
+| recordatorio futuro | EJECUTADO — sale de la cola (2 → 1), Comprometidos 1 → 2, Agenda "programado" |
+| inbound antes del vencimiento | EJECUTADO — de inmediato, 1 → 2, y sale de Comprometidos |
+| recordatorio vencido | EJECUTADO — en BD sigue `deferred` con fecha pasada: nadie lo movió, la UI lo deriva |
+| programar otro recordatorio | EJECUTADO — 2º compromiso + cancelar y volver a comprometer sin duplicar fila |
+| reactivar IA | EJECUTADO — `handoff_at` limpio, sale de Comprometidos y de la Agenda |
+| Cliente / Perdido | EJECUTADO — `PATCH /api/pipeline/leads/{id}` real; Perdido saca la conversación de la cola |
+| aislamiento tenant | EJECUTADO — dos orgs por API y por UI; lead ajeno → 404 |
+| cero Graph en recordatorio humano | EJECUTADO — outbox +1 (el reply), **0** jobs creados, **0** mensajes `origin IN (ai,template)` |
+| follow-ups sin regresión | EJECUTADO — programar → `wait` → cancelar; 409 `handoff_active` y 409 `human_lane`; 422 fecha pasada |
+
+**Gates.** `typecheck` OK · `lint` **0 errores** (3 warnings preexistentes) ·
+`build` compiló · `test` **113 archivos / 1311 tests** verdes (1 archivo skipped
+= opt-in sin variable). E2E `026`: `exit=0`, log en `/tmp/e2e-026-green.log`.
+
+**Los cuatro hallazgos fueron de expectativas, no de producto** (detalle en
+`tasks.md`): programar un recordatorio **sí** saca de la cola; con recordatorio
+vigente el panel ofrece **Cancelar**, no fecha nueva (coherente con el spec);
+perder el lead limpia la **tarea**, no la pertenencia (la lista dice "Atención
+humana", que el propio copy define como "sin nada pendiente" — reactivar la IA
+sobre un negocio cerrado sería peor); y cancelar un seguimiento automático deja
+la fila en `cancelled` en vez de borrarla.
+
+**Corrección 1 — la opt-in de PostgreSQL mentía.** Al poder ejecutarla por fin
+contra una BD real, falló 2 checks porque **las dos aserciones eran falsas**: la
+FK no es compuesta (PostgreSQL acepta `organization_id = A` apuntando a una
+conversación de B) y la lectura scropeada **no** la oculta (la fila se declara
+de A, así que el scope de A la encuentra). Eso además rompía el test de cascade.
+Ahora afirma la realidad y prueba **la garantía que sí existe**: que la app solo
+escribe el par que su propio scope resolvió (`markAttentionPending(A, cv_b)` →
+`null` y sin fila, con la conversación declarada humana para que el no-op no
+venga de otro motivo). **La limitación de schema sigue abierta**: la garantía
+vive en la aplicación, no en la base.
+
+**Corrección 2 — `pnpm org:create` rompía `pnpm lint`.** Deja su bundle de
+esbuild en `.tmp-org-create.mjs` en la raíz; no estaba en `.gitignore` (ensuciaba
+el árbol) ni en los `ignores` de ESLint (5 errores de variables sin usar). Quien
+ejecutara ese script documentado rompía el gate. Arreglado en las dos listas, y
+la sección borra el artefacto tras usarlo.
+
+**Pendientes (honesto, no cerrados aquí)**
+
+1. **Suite opt-in de 011 `commercial-resource-postgres.test.ts`: 3 de 4.** La
+   última aserción (el `INSERT` duplicado, que debería dar `23505`) recibe
+   `TypeError [ERR_INVALID_ARG_TYPE]` desde `postgres/src/bytes.js:22` vía
+   `Bind`: postgres.js serializa el parámetro `sql.json()` como cadena **dentro
+   de vitest**. Los otros tres checks del mismo test sí pasan contra PostgreSQL
+   real, y el mismo INSERT fuera de vitest sí da `23505` — no es schema ni
+   `upsertCommercialResource`. **No se arregla aquí**: es de 011, no de 013.
+2. **Secciones E2E 020/021/022**: sin cambios, siguen PENDIENTES.
+3. **FK compuesta de `conversation_attention`**: sigue abierta; exige migración
+   propia (`FK compuesta` + `UNIQUE (organization_id, id)` en `conversation`).
+4. **Decisión de producto para Obsidian**: con el handoff verificado de punta a
+   punta, la pregunta que queda es si la garantía de aislamiento entre
+   organizaciones debe bajar a la base (FK compuesta) o si se acepta
+   documentada en la aplicación.Hoy es lo segundo, y funciona, pero es
+   defensa-en-profundidad a un solo nivel.
+
+**Archivos clave.** `src/server/inbox/attention.ts` · `src/lib/operational-state.ts`
+· `src/server/leads/stage-gateway.ts` · `src/app/api/reminders/route.ts` ·
+`src/app/api/conversations/[id]/attention/route.ts` ·
+`src/server/sales/follow-ups/store.ts` (`scheduleManualFollowUp`) ·
+`scripts/e2e-workspace-verification.mjs` · `specs/013-operator-workspace/tasks.md`.
+
+**Siguiente paso exacto.** Ninguno dentro de 013: el spec está cerrado con sus
+cinco commits y `tasks.md` no tiene casillas abiertas. Lo que sigue es una
+decisión, no una tarea: **abrir un corte de migración para la FK compuesta**
+(punto 3) o **declararla aceptada** (punto 4), y en paralelo diagnosticar el
+`sql.json()` de la opt-in de 011 (punto 1) desde el spec 011.
+
+---
+
 # Checkpoint 2026-10-04 — Spec 013, CUT 4: flujo operativo / UX integrada
 
 **IMPLEMENTADO, GATES TÉCNICOS VERDES Y E2E DE UI REAL EJECUTADO EN VERDE

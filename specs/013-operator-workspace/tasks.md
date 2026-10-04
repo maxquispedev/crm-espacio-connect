@@ -312,43 +312,204 @@ vencido mandan nada, y `sales_follow_up_job` queda intacta.
 
 ## CUT 5 — Verificación del workspace
 
-- [ ] T501 Sección nueva aislada en `scripts/e2e-selftest.mjs` (patrón 020/022)
-- [ ] T502 Guion `tests/e2e/` del workspace
-- [ ] T503 handoff → Por atender
-- [ ] T504 abrir no resuelve
-- [ ] T505 reply manual → estado coherente
-- [ ] T506 recordatorio futuro en Agenda y fuera de Por atender
-- [ ] T507 inbound antes de vencimiento → Por atender
-- [ ] T508 recordatorio vencido → Por atender
-- [ ] T509 programar otro recordatorio
-- [ ] T510 reactivar IA
-- [ ] T511 Cliente / Perdido
-- [ ] T512 aislamiento tenant con dos organizaciones
-- [ ] T513 ningún recordatorio humano toca Graph automáticamente
-- [ ] T514 follow-ups automáticos existentes sin regresión
-- [ ] T515 Gate completo + E2E real (o PENDIENTE con causa exacta)
-- [ ] T516 Cierre: `tasks.md`, `docs/CURRENT_STATE.md`, docs de dominio, un commit
+- [x] T501 Sección nueva aislada en `scripts/e2e-selftest.mjs` (patrón 020/022)
+      → **`E2E_SECTION=026`**: 023 = cola (C2), 024 = Agenda (C3), 025 = flujo (C4),
+      así que el nombre propuesto `023` ya estaba ocupado. Vive en
+      `scripts/e2e-workspace-verification.mjs`.
+- [x] T502 Guion `tests/e2e/` del workspace → `tests/e2e/013-workspace-verificacion.md`
+- [x] T503 handoff → Por atender
+- [x] T504 abrir no resuelve
+- [x] T505 reply manual → estado coherente
+- [x] T506 recordatorio futuro en Agenda y fuera de Por atender
+- [x] T507 inbound antes de vencimiento → Por atender
+- [x] T508 recordatorio vencido → Por atender
+- [x] T509 programar otro recordatorio
+- [x] T510 reactivar IA
+- [x] T511 Cliente / Perdido
+- [x] T512 aislamiento tenant con dos organizaciones
+- [x] T513 ningún recordatorio humano toca Graph automáticamente
+- [x] T514 follow-ups automáticos existentes sin regresión
+- [x] T515 Gate completo + E2E real (o PENDIENTE con causa exacta)
+- [x] T516 Cierre: `tasks.md`, `docs/CURRENT_STATE.md`, docs de dominio, un commit
 
 ---
 
 ## Casos E2E mínimos (CUT 5) — estado
 
+Los doce se ejecutaron en la **misma corrida** de `E2E_SECTION=026` (120/120
+checks, `exit=0`). La columna E2E dice qué lo verificó en esa corrida.
+
 | Caso | CUT | E2E | Unitario |
 |---|---|---|---|
-| handoff → Por atender | 2 | **verde** (023) | **verde** (`attention-hooks`, `attention-queue`) |
-| abrir no equivale a resolver | 1/2 | **verde** (023: `markRead` no cambia la cola) | **verde** (`attention-state`, `attention-hooks`) |
-| reply manual → estado coherente | 1/4 | **verde** (025: respuesta real desde el composer) | **verde** (`attention-hooks`, `operational-flow`) |
-| recordatorio futuro → Agenda, fuera de Por atender | 3/4 | **verde** (025) | **verde** (`attention-queue`, `operational-flow`) |
-| inbound antes de vencimiento → Por atender | 3/4 | **verde** (025) | **verde** (`attention-queue`, `attention-hooks`) |
-| recordatorio vencido → Por atender | 3/2/4 | **verde** (023, 025) | **verde** (`attention-queue`, `operational-flow`) |
-| programar otro recordatorio | 3/4 | **verde** (025: 1 → 2 compromisos) | **verde** (`operational-flow`) |
-| reactivar IA | 1/4 | **verde** (025: sale de la cola y de la Agenda) | **verde** (`attention-hooks`, `operational-flow`) |
-| Cliente / Perdido | 1 | pendiente (CUT 5) | **verde** (`attention-hooks`) |
-| aislamiento tenant | 1/2 | **verde** (023: dos orgs, API y UI) | **verde** (`attention-state`, `attention-hooks`, `attention-queue`) |
-| cero Graph en recordatorio humano | 1/4 | **verde** (025: el outbox solo crece con la respuesta escrita a mano) | **verde** (`attention-no-send`, `agenda-no-send`) |
-| follow-ups automáticos sin regresión | 1/5 | **verde** (025: `sales_follow_up_job` intacta) | **verde** (sin tocar expectativas) |
+| handoff → Por atender | 2/5 | **EJECUTADO** (026: handoff REAL por webhook, no sembrado) | **verde** (`attention-hooks`, `attention-queue`) |
+| abrir no equivale a resolver | 1/2/5 | **EJECUTADO** (026: abrir y cerrar no baja la cola) | **verde** (`attention-state`, `attention-hooks`) |
+| reply manual → estado coherente | 1/4/5 | **EJECUTADO** (026: `waiting_client`, 3 → 2) | **verde** (`attention-hooks`, `operational-flow`) |
+| recordatorio futuro → Agenda, fuera de Por atender | 3/4/5 | **EJECUTADO** (026: 2 → 1 en la cola, Comprometidos 1 → 2) | **verde** (`attention-queue`, `operational-flow`) |
+| inbound antes de vencimiento → Por atender | 3/4/5 | **EJECUTADO** (026: de inmediato, 1 → 2) | **verde** (`attention-queue`, `attention-hooks`) |
+| recordatorio vencido → Por atender | 3/2/4/5 | **EJECUTADO** (026: sigue `deferred` en BD, la UI lo deriva) | **verde** (`attention-queue`, `operational-flow`) |
+| programar otro recordatorio | 3/4/5 | **EJECUTADO** (026: 2º compromiso + cancelar y volver a programar) | **verde** (`operational-flow`) |
+| reactivar IA | 1/4/5 | **EJECUTADO** (026: `handoff_at` limpio, sale de Comprometidos y Agenda) | **verde** (`attention-hooks`, `operational-flow`) |
+| Cliente / Perdido | 1/5 | **EJECUTADO** (026: `PATCH /api/pipeline/leads/{id}` real) | **verde** (`attention-hooks`) |
+| aislamiento tenant | 1/2/5 | **EJECUTADO** (026: dos orgs, API y UI, 404 en lead ajeno) | **verde** (`attention-state`, `attention-hooks`, `attention-queue`) |
+| cero Graph en recordatorio humano | 1/4/5 | **EJECUTADO** (026: outbox +1, cero jobs, cero `origin IN (ai,template)`) | **verde** (`attention-no-send`, `agenda-no-send`) |
+| follow-ups automáticos sin regresión | 1/5 | **EJECUTADO** (026: programar → `wait` → cancelar; 409 `handoff_active` y `human_lane`) | **verde** (sin tocar expectativas) |
 
 ## Evidencia
+
+### CUT 5 — 2026-10-04 · commit `test(inbox): verificar workspace operativo`
+
+Base: `4b3c556` (árbol limpio al empezar; cortes 1–4 cerrados).
+
+**Qué entró**
+
+- `scripts/e2e-workspace-verification.mjs` — la sección 026, con los doce casos
+  en una sola corrida y su propio guard (app y BD locales, BD
+  `operator_workspace_test[_…]`, `WA_MOCK_ENABLED=true`, nunca `production`).
+- `scripts/e2e-selftest.mjs` — dispatch aislado de `E2E_SECTION=026`.
+- `tests/e2e/013-workspace-verificacion.md` — guion legible.
+- `tests/unit/attention-migration.test.ts` — la capa opt-in de PostgreSQL real,
+  corregida (ver abajo). **11/11 verde.**
+- `.gitignore` + `eslint.config.mjs` — `.tmp-org-create.mjs` (ver abajo).
+
+**Cómo se ejecutó**
+
+```bash
+# PostgreSQL dedicado ya levantado en :55432 (binarios de embedded-postgres)
+DATABASE_URL=postgresql://postgres:postgres@127.0.0.1:55432/operator_workspace_test_c5 \
+  pnpm db:migrate                       # BD nueva, migrada desde cero
+
+# App de pruebas AISLADA en :3200 (nunca la de :3000, nunca la productiva)
+DATABASE_URL=... APP_BASE_URL=http://127.0.0.1:3200 WA_MOCK_ENABLED=true \
+  META_GRAPH_BASE_URL=http://127.0.0.1:3200/api/dev/wa-mock/graph \
+  OPENROUTER_BASE_URL=http://127.0.0.1:3200/api/dev/ai-mock \
+  pnpm dev --port 3200
+
+# La sección
+LD_LIBRARY_PATH=/tmp/pwlibs/extracted/usr/lib/x86_64-linux-gnu \
+  E2E_SECTION=026 APP_BASE_URL=http://127.0.0.1:3200 \
+  DATABASE_URL=... E2E_OPERATOR_DATABASE_URL=... \
+  WA_MOCK_ENABLED=true BOT_API_KEY=e2e-local-placeholder \
+  META_GRAPH_BASE_URL=... OPENROUTER_BASE_URL=... \
+  node --env-file=.env scripts/e2e-selftest.mjs
+```
+
+**Resultado**
+
+- E2E `026`: **120/120 checks OK, 0 fallos, `exit=0`**, tres corridas seguidas
+  con el mismo resultado (log: `/tmp/e2e-026-green.log`).
+- Gate: `pnpm typecheck` OK · `pnpm lint` **0 errores** (3 warnings preexistentes
+  en `anuncio-origen.tsx` y `build-state.ts`) · `pnpm build` compiló ·
+  `pnpm test` **113 archivos / 1311 tests verdes**, 1 archivo skipped (opt-in sin
+  variable) y 9 tests skipped.
+- Suite física de PostgreSQL (`attention-migration.test.ts` con
+  `ATTENTION_TEST_DATABASE_URL=…/attention_test_cut5`): **11/11 verde**. Los
+  dobles en memoria ya no son la única evidencia de UNIQUE, CHECK, FK y cascade.
+
+**Qué NO se tocó**
+
+Ni el motor de follow-ups, ni el worker, ni las cadencias, ni las plantillas, ni
+`is_test` contra Graph, ni los guardrails de sandbox. `scheduleManualFollowUp`,
+`moveLeadStage` y los tres estados de `conversation_attention` se ejercitaron tal
+cual; el único código de producción que este corte modifica son los ignores de
+`.gitignore` y `eslint.config.mjs` (abajo).
+
+#### Hallazgos del E2E (ninguno era un defecto de producto)
+
+1. **Programar un recordatorio SACA la conversación de "Por atender"** (2 → 1).
+   Es lo correcto según `spec.md` §3.2 paso 6 ("sale de Por atender"), pero la
+   primera versión del guion daba por hecho lo contrario. Corregido el guion, no
+   el producto.
+2. **Con un recordatorio vigente el panel ofrece "Cancelar", no una fecha
+   nueva.** `reminder-schedule.tsx` solo pinta "Elegir fecha" cuando no hay
+   compromiso. Es coherente con el spec (§3.2 paso 9: "puede programar otro"
+   después de atender, no editar la fecha en silencio), así que el caso 7 verifica
+   el camino real —cancelar y volver a comprometer— en vez de un
+   reprogramado en sitio que la UI no ofrece.
+3. **Perder el lead limpia la TAREA, no la pertenencia.** La fila de atención se
+   borra (y la conversación sale de la cola y de la Agenda), pero `handoff_at`
+   sigue puesto, así que la lista dice "Atención humana" — que
+   `operational-state.ts` define como "sin nada pendiente" — y no "Por atender".
+   No se revierte el handoff a propósito: reactivar la IA sobre un negocio
+   cerrado sería peor que el ruido. El caso 9 verifica esa lectura exacta.
+4. **Cancelar un seguimiento automático no borra la fila**: la deja en
+   `cancelled` (auditable) y limpia `next_follow_up_at`. Lo que importa es que
+   no quede un `pending` que el worker reclame; el caso 12 lo comprueba así.
+
+#### Corrección 1 — la suite opt-in de PostgreSQL mentía en dos aserciones
+
+Al poder ejecutarla por fin contra una BD real (nunca se había ejecutado: es
+`describe.skipIf(!ATTENTION_TEST_DATABASE_URL)`), falló 2 checks. **Las dos
+aserciones eran falsas**, y su propio comentario las daba por buenas:
+
+- Afirmaba que `INSERT (organization_id=A, conversation_id=<conv de B>)` se
+  rechaza con `23503`. **Falso**: `0010_conversation_attention.sql` declara dos
+  FK de una columna, no una compuesta, y PostgreSQL lo acepta. El comentario
+  lo sabía ("estos 2 checks fallan") y aun así dejó la aserción puesta.
+- Afirmaba que la lectura scropeada oculta esa fila
+  (`getAttention(A, cv_b)` → `null`). **También falso**: la fila se declara de
+  A, así que el scope de A la encuentra. Probado contra PostgreSQL real.
+
+Eso además rompía el test de cascade, que contaba 2 filas donde esperaba 1.
+
+Ahora el test afirma **la realidad** y, sobre todo, comprueba **la garantía que
+sí existe**: que la app solo escribe el par que su propio scope resolvió.
+
+- `getAttention(A, cv_b)` → `null` cuando la fila es legítimamente de B.
+- `markAttentionPending(A, cv_b)` → `null` y **no deja fila**, con `cv_b`
+  declarado humano a propósito (si no, el no-op vendría de "la IA es la dueña" y
+  no probaría nada del aislamiento); la misma llamada con B sí escribe.
+- La fila espuria se **aserta** como insertable (queda escrito que, si algún día
+  se añade la FK compuesta, esa aserción falla y avisa) y se borra para no
+  contaminar los conteos de los demás tests.
+
+**Consecuencia para el registro durable**: el punto 1 de "PENDIENTE que este
+corte envía a un corte posterior" (abajo) está **parcialmente desmentido**: no
+es cierto que "la fila solo se alcanza a través de una conversación de su propia
+organización" porque la lectura la encuentre. Lo que la hace inalcanzable es que
+**la app nunca la escribe**, y eso queda probado arriba. La limitación de schema
+sigue abierta y sigue sin arreglarse aquí (exige migración propia).
+
+#### Corrección 2 — `pnpm org:create` rompía `pnpm lint` y ensuciaba el árbol
+
+La sección crea sus organizaciones por la puerta real de producto
+(`pnpm org:create` → `createOrganizationWithDefaults`, la única que siembra
+pipeline y perfil del agente). Ese script deja su bundle de esbuild en
+`.tmp-org-create.mjs` **en la raíz**, y ese fichero:
+
+- no estaba en `.gitignore` (solo lo estaban los otros `.tmp-*.mjs`), así que
+  dejaba el árbol sucio;
+- no estaba en los `ignores` de ESLint, y al ser código generado con variables
+  sin usar, **`pnpm lint` fallaba con 5 errores**.
+
+Quien hubiera ejecutado `pnpm org:create` en este repo —un script documentado—
+rompía el gate. Arreglado en las dos listas, y además la sección borra el
+artefacto tras usarlo, para que una corrida del self-test no ensucie nada.
+
+#### PENDIENTE que este corte NO cierra (honesto)
+
+1. **Suite opt-in de 011 `commercial-resource-postgres.test.ts`: 3 de 4
+   verdes.** El que falla es la última aserción del test "SQL directo rechaza
+   media ajena, slot abierto, shape inválido y duplicado" (el `INSERT`
+   duplicado, que debería dar `23505`). Sintoma: la consulta rechaza con
+   `TypeError [ERR_INVALID_ARG_TYPE]: The "string" argument must be of type
+   string or an instance of Buffer or ArrayBuffer. Received an instance of
+   Object`, lanzado desde `postgres/src/bytes.js:22 (reset.str)` vía
+   `connection.js:964 (Bind)` — es decir, postgres.js serializa el parámetro
+   `sql.json()` como si fuera una cadena. Los otros tres checks del mismo test
+   (`23503` media ajena, `23514` slot abierto, `23514` shape y claves) **sí
+   pasan** contra PostgreSQL real. El mismo `INSERT` duplicado, ejecutado fuera
+   de vitest contra esa misma BD, **sí** rechaza con `23505`, así que no es un
+   defecto del schema ni de `upsertCommercialResource`: es la serialización de un
+   parámetro jsonb dentro del entorno de vitest. **No se arregla aquí**: es de
+   011, no de 013, y un corte es un objetivo.
+2. **Secciones históricas 020/021/022**: sin cambios, siguen PENDIENTES (este
+   corte no las ejecutó).
+3. **FK compuesta de `conversation_attention`**: sigue abierta (arriba).
+4. **Lección de entorno, no de producto**: `pnpm build` **pisa el `.next` del
+   `next dev` que esté corriendo** y lo deja sirviendo `/inbox` en 500 ("Could
+   not find the module … in the React Client Manifest"). Passó aquí porque el
+   gate y el E2E se lanzan cada uno con su app, pero quien los lance en el mismo
+   `pnpm` tiene que reiniciar la app de pruebas después del build.
 
 ### PENDIENTE que este corte envía a un corte posterior
 
@@ -357,17 +518,19 @@ vencido mandan nada, y `sales_follow_up_job` queda intacta.
    `drizzle/0010_conversation_attention.sql` declara **dos** FK de una columna:
    `conversation_id → conversation.id` y `organization_id → organization.id`.
    Con eso, una fila puede decir `organization_id = A` apuntando a una
-   conversación de B. La suite opt-in de CUT 1 asumía la FK compuesta
-   (`INSERT (orgA, cv_b)` → 23503) y por eso falla en 2 checks. **No se arregla
-   aquí**: es un cambio de schema (FK compuesta + `UNIQUE (organization_id, id)`
-   en `conversation`) que exige migración propia y no pertenece a la cola.
-   Impacto en este corte: **ninguno** — la lista, el LEFT JOIN y `getAttention`
-   filtran por `organization_id`, y la fila solo se alcanza a través de una
-   conversación de su propia organización, así que no hay fuga. Debe cerrarse en
-   CUT 5 o en un corte de migración.
-2. Suite opt-in `attention-migration.test.ts`: se arregló su fixture (omitía
-   `contact.name`, NOT NULL desde 010) para que **pudiera** correr. Siguen
-   fallando 2 checks por el punto 1; 9 verdes.
+   conversación de B. **No se arregla aquí**: es un cambio de schema (FK
+   compuesta + `UNIQUE (organization_id, id)` en `conversation`) que exige
+   migración propia y no pertenece a la cola.
+   **CUT 5 corrigió el diagnóstico**: la suite asumía la FK compuesta
+   (`INSERT (orgA, cv_b)` → 23503) y además daba por hecho que la lectura la
+   ocultaba; ejecutada contra PostgreSQL real **las dos cosas son falsas**. La
+   fila espuria la encuentra el scope de A. Lo que la hace inalcanzable es que
+   **la app nunca la escribe** (`markAttentionPending` resuelve la conversación
+   por `scoped()`), y eso CUT 5 lo prueba. Sigue abierta y sin Owner: la
+   garantía vive en la aplicación, no en la base.
+2. Suite opt-in `attention-migration.test.ts`: **CUT 5 la dejó 11/11 verde**
+   corrigiendo las dos aserciones falsas del punto 1 y añadiendo la comprobación
+   de que el scope (no la FK) es lo que aísla. Ver "CUT 5 → Corrección 1".
 
 ### CUT 2 — 2026-10-04 · commit `feat(inbox): añadir cola por atender`
 
@@ -556,6 +719,10 @@ este spec, más el runner `scripts/ai/run-operator-workspace-mcode.sh` y los pro
 `.ai/tasks/operator-workspace/01..05`. **Cero código funcional de 013 en este
 commit.** CUT 1 no iniciado.
 
-Pendientes históricos que este spec **no** cierra: E2E 020/021/022 y los 4 tests
-PostgreSQL opt-in (`tests/unit/commercial-resource-postgres.test.ts`). Constitución IX
-sigue abierta hasta que CUT 5 tenga E2E real ejecutado.
+Pendientes históricos que este spec **no** cierra: E2E **020/021/022** y la suite
+PostgreSQL opt-in de 011 (`tests/unit/commercial-resource-postgres.test.ts`: 3 de
+4 verdes; el `INSERT` duplicado serializa mal el parámetro jsonb dentro de vitest
+— ver "CUT 5 → PENDIENTE que este corte NO cierra", punto 1). La opt-in de 013
+(`attention-migration.test.ts`) **sí** quedó verde en CUT 5: 11/11 contra
+PostgreSQL real. **Constitución IX cumplida para 013**: CUT 5 ejecutó el E2E real
+con mocks, los doce casos, en tres corridas seguidas con 120/120.

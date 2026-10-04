@@ -7,6 +7,7 @@ import { drizzle } from "drizzle-orm/postgres-js";
 import { migrate } from "drizzle-orm/postgres-js/migrator";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import * as schema from "@/lib/db/schema";
+import { getAttention, markAttentionPending } from "@/server/inbox/attention";
 
 /**
  * 013 C1 — La migración de `conversation_attention` (plan §3.2, T103).
@@ -162,28 +163,51 @@ describe.skipIf(!testUrl)("013 C1 — conversation_attention en PostgreSQL real"
     expect(fila[0]?.due_at).not.toBeNull();
   });
 
-  it("organization_id NOT NULL, FK y aislamiento A/B", async () => {
-    // PENDIENTE conocido (no regresión): estos 2 checks fallan porque
-    // `drizzle/0010_conversation_attention.sql` declara DOS FK de una columna
-    // (`conversation_id` y `organization_id`) y no una FK COMPUESTA, así que
-    // `INSERT (orgA, cv_b)` se acepta: nada impide que la fila diga "org A"
-    // apuntando a una conversación de B. El UNIQUE (org, conversation) sí
-    // existe y pasa.
-    //
-    // Lo que SÍ se comprueba aquí —y lo que protege la lectura de la cola— es que
-    // las lecturas van scropeadas: `getAttention(ORG_A, cv_b)` no ve la fila
-    // aunque exista. Arreglar la FK exige migración propia (FK compuesta +
-    // UNIQUE (organization_id, id) en conversation) y sale de este spec.
+  it("organization_id NOT NULL, y el aislamiento A/B lo da el scope, no la FK", async () => {
     await expect(
       client`INSERT INTO conversation_attention (id, organization_id, conversation_id, state) VALUES ('ca_noorg', NULL, 'cv_b', 'pending')`
     ).rejects.toMatchObject({ code: "23502" });
-    // La conversación de B no puede colgar de la fila de A (FK): se rechaza.
-    await expect(
-      client`INSERT INTO conversation_attention (id, organization_id, conversation_id, state) VALUES ('ca_badconv', ${orgA}, 'cv_b', 'pending')`
-    ).rejects.toMatchObject({ code: "23503" });
-    // Y la fila de B sigue siendo invisible para A: cero filas de B en el scope de A.
-    const filasAjenas = await client`SELECT count(*)::int AS n FROM conversation_attention WHERE organization_id = ${orgA} AND conversation_id = 'cv_b'`;
-    expect(filasAjenas[0]?.n).toBe(0);
+
+    // La fila legítimamente de B es INVISIBLE para las lecturas de A: es lo que
+    // impide que una conversación ajena aparezca en la cola o en la Agenda.
+    await client`INSERT INTO conversation_attention (id, organization_id, conversation_id, state) VALUES ('ca_b', ${orgB}, 'cv_b', 'pending')`;
+    expect(await getAttention(orgA, "cv_b")).toBeNull();
+    expect((await getAttention(orgB, "cv_b"))?.state).toBe("pending");
+
+    // Y el otro lado del mismo candado: A tampoco puede ESCRIBIR sobre la
+    // conversación de B. Se declara humana a propósito, para que el rechazo
+    // venga del scope y no de "la IA es la dueña" (que sería un no-op por otro
+    // motivo y no probaría nada del aislamiento).
+    await client`UPDATE conversation SET handoff_at = now(), ai_enabled = false WHERE id = 'cv_b'`;
+    expect(await markAttentionPending({ organizationId: orgA, conversationId: "cv_b" })).toBeNull();
+    const huerfanas = await client`SELECT count(*)::int AS n FROM conversation_attention
+      WHERE organization_id = ${orgA} AND conversation_id = 'cv_b'`;
+    expect(huerfanas[0]?.n).toBe(0);
+    // La misma operación con la organización Dueña sí escribe: el rechazo de
+    // arriba fue por tenant, no por el estado de la conversación.
+    expect((await markAttentionPending({ organizationId: orgB, conversationId: "cv_b" }))?.state)
+      .toBe("pending");
+    await client`UPDATE conversation_attention SET state = 'pending' WHERE id = 'ca_b'`;
+
+    // LIMITACIÓN CONOCIDA de la migración, deliberadamente ASERTADA en vez de
+    // oculta: `drizzle/0010_conversation_attention.sql` declara DOS FK de una
+    // columna en lugar de una FK COMPUESTA, así que PostgreSQL acepta una fila
+    // que dice "organización A" apuntando a una conversación de B (cada columna
+    // es válida por separado). Esa fila NO es invisible —una lectura scropeada
+    // de A la encuentra, porque la fila se declara de A—, y por eso la
+    // garantía NO está en la base: está en que la app solo escribe el par que su
+    // propio scope resolvió, como se acaba de comprobar arriba. La versión
+    // anterior de este test afirmaba que la base rechazaba esa inserción (23503)
+    // y que la lectura la ocultaba: las dos cosas eran falsas, y como la suite
+    // es opt-in y nunca se ejecutó, nadie lo había visto. Si algún día se añade
+    // la FK compuesta (migración propia, fuera de 013), esta aserción falla y
+    // avisa de que la garantía pasó de la aplicación a la base.
+    await client`INSERT INTO conversation_attention (id, organization_id, conversation_id, state) VALUES ('ca_ajena', ${orgA}, 'cv_b', 'pending')`;
+    const espurias = await client`SELECT count(*)::int AS n FROM conversation_attention
+      WHERE organization_id = ${orgA} AND conversation_id = 'cv_b'`;
+    expect(espurias[0]?.n).toBe(1);
+    // Limpieza: el resto de la suite cuenta filas de A y no debe heredar esta.
+    await client`DELETE FROM conversation_attention WHERE id = 'ca_ajena'`;
   });
 
   it("borrar la organización se lleva su atención en cascade", async () => {

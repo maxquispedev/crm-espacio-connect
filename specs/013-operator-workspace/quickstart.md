@@ -129,21 +129,25 @@ levantada. Si falta cualquiera: registrar el comando intentado y la causa, y dej
 ```bash
 APP_BASE_URL=http://127.0.0.1:3000 \
 DATABASE_URL=postgresql://local_test:local_test@127.0.0.1:5432/operator_workspace_test \
-E2E_SECTION=023 WA_MOCK_ENABLED=true BOT_API_KEY=e2e-local-placeholder \
+E2E_SECTION=026 WA_MOCK_ENABLED=true BOT_API_KEY=e2e-local-placeholder \
 META_GRAPH_BASE_URL=http://127.0.0.1:3033/graph \
 OPENROUTER_BASE_URL=http://127.0.0.1:3033 \
 TYPESAFE_JEV_ENDPOINT=http://127.0.0.1:3033/jev \
 pnpm --pm-on-fail=ignore test:e2e
 ```
 
-- `E2E_SECTION=023` es el **nombre propuesto** para la sección del workspace
-  (sigue a 020/021/022). El corte 5 confirma el número real al añadir el dispatch
-  aislado en `scripts/e2e-selftest.mjs`; si ya está ocupado, usa el siguiente libre y
-  actualiza aquí.
+- `E2E_SECTION=026` es el nombre **real** de la sección del workspace. El
+  nombre propuesto era `023`, pero quedó ocupado: 023 = cola "Por atender"
+  (C2), 024 = Agenda (C3), 025 = flujo operativo (C4) y **026 = verificación
+  integral** (C5). Vive en `scripts/e2e-workspace-verification.mjs`, con su
+  dispatch aislado en `scripts/e2e-selftest.mjs` y el guion legible en
+  `tests/e2e/013-workspace-verificacion.md`.
 - Los mocks son los de `src/app/api/dev/` tras el gate único de `dev-guard`: **404
   incondicional en producción**. Nunca se activan en un despliegue real.
-- Cuenta fixture de pruebas, nunca credenciales productivas. La sección crea su propia
-  organización y limpia sus contactos de prueba al iniciar.
+- Cuenta fixture de pruebas, nunca credenciales productivas. La sección crea sus
+  propias organizaciones por la puerta real de producto (`pnpm org:create`, que
+  es la única que siembra pipeline y perfil del agente) con un slug único por
+  corrida, así que convive con las de 023/024/025 sin mezclarse.
 - Cero WhatsApp real. Los `is_test` del Laboratorio jamás tocan Graph (guardrail
   existente: **no "arreglarlo"**).
 

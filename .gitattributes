@@ -1,0 +1,6 @@
+# `docs/CURRENT_STATE.md` está versionado con finales de línea CRLF. Sin esto,
+# `git diff --check` lee el CR de cada línea tocada como "espacio al final de
+# línea" y falla cualquier edición del checkpoint, aunque el cambio sea correcto.
+# `whitespace=cr-at-eol` dice que ese CR es parte del salto de línea. No
+# convierte nada: el contenido del archivo no cambia.
+docs/CURRENT_STATE.md whitespace=cr-at-eol

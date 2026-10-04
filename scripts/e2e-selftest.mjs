@@ -163,10 +163,18 @@ async function runSection021() {
 
 async function main() {
   // Cortes aislados: UI, demos, pago, la cola "Por atender" de 013 y la Agenda.
-  if (["020", "021", "022", "023", "024", "025"].includes(process.env.E2E_SECTION)) {
+  if (["020", "021", "022", "023", "024", "025", "026"].includes(process.env.E2E_SECTION)) {
     if (process.env.E2E_SECTION === "022") {
       const { runCommercialPaymentSelftest } = await import("./e2e-commercial-payment.mjs");
       await runCommercialPaymentSelftest({ BASE, api, ok, waitFor, getCookie: () => cookie });
+    } else if (process.env.E2E_SECTION === "026") {
+      // 013 C5 — Verificación del workspace operativo. Reúne los doce casos
+      // mínimos de plan.md §7: si esta sección corre, el handoff real, la
+      // coherencia de las tres superficies, el aislamiento por tenant y la
+      // separación entre recordatorio humano y seguimiento automático se
+      // verificaron contra la app real con UI real.
+      const { runWorkspaceVerification } = await import("./e2e-workspace-verification.mjs");
+      await runWorkspaceVerification({ BASE, api, ok, waitFor, getCookie: () => cookie });
     } else if (process.env.E2E_SECTION === "025") {
       // 013 C4 — Flujo operativo integrado. Misma garantía que 023/024: si esta
       // sección corre, las tres acciones y la coherencia de estado se verificaron
