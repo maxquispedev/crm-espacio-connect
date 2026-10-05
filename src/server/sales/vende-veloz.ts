@@ -86,7 +86,7 @@ export const VENDE_VELOZ_COMMERCIAL_POLICY = {
     "Las afirmaciones del vendedor sobre posibles problemas o beneficios no prueban que el prospecto tenga esa necesidad. Priorizar lo expresado por el prospecto y los datos objetivos de su operación.",
 } as const;
 
-export type VendeVelozCommercialPolicy = typeof VENDE_VELOZ_COMMERCIAL_POLICY;
+export type VendeVelozCommercialPolicy = Omit<typeof VENDE_VELOZ_COMMERCIAL_POLICY, "evidence_rule"> & { evidence_rule: string };
 
 export const VENDE_VELOZ_OFFER = {
   currency: "PEN",

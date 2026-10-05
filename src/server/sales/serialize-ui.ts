@@ -47,7 +47,12 @@ function extractSnapshot(raw: unknown): SalesSnapshotDto | null {
   const decision = isRecord(raw.decision) ? raw.decision : null;
   if (!decision) return null;
 
-  const nextAction = readChoice(decision.nextAction, NEXT_ACTIONS);
+  const plan = isRecord(raw.plan) ? raw.plan : null;
+  const effective = plan && typeof plan.nextAction === "string" && NEXT_ACTIONS.has(plan.nextAction)
+    ? plan.nextAction : null;
+  const proposed = readChoice(decision.nextAction, NEXT_ACTIONS);
+  const nextAction = effective && effective !== proposed?.choice
+    ? { choice: effective, confidence: undefined } : proposed;
   const buyingTiming = readChoice(decision.buyingTiming, BUYING_TIMINGS);
   const mainValueProposition = readChoice(
     decision.mainValueProposition,

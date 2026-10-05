@@ -156,11 +156,17 @@ describe("corte 2 — el bootstrap refleja la oferta vigente", () => {
 });
 
 describe("corte 2 — contratos Jev siguen válidos (DV-8)", () => {
-  it("los criteria del playbook siguen idénticos a la fixture congelada", () => {
+  it("criteria mantienen contrato; next_action refuerza evidencia para demos", () => {
     for (const [key, question] of Object.entries(OFFER_JEV())) {
       const frozen = canonicalQuestions[key as keyof typeof canonicalQuestions];
       expect(frozen).toBeDefined();
-      expect(question.criteria).toEqual(frozen.criteria);
+      if (key === "next_action") {
+        const criteria = question.criteria as Record<string, string>;
+        expect(Object.keys(criteria)).toEqual(Object.keys(frozen.criteria));
+        expect(criteria.show_operations_demo).toMatch(/necesidad operativa concreta|explícitamente/);
+        expect(criteria.show_operations_demo).toMatch(/anuncio no prueba necesidad/);
+        expect(criteria.ask_more_questions).toMatch(/UNA pregunta/);
+      } else expect(question.criteria).toEqual(frozen.criteria);
     }
   });
 

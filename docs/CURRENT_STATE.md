@@ -1,3 +1,31 @@
+# Checkpoint 2026-10-05 — Spec 015: hotfix demos prematuros
+
+Objetivo: anuncio pagos/saldos + «¡Hola! Quiero más información» no envía video;
+beneficio breve y UNA pregunta; al expresar problema/pedir demo, video relevante.
+
+Implementación mínima: guard conservador de curiosidad en resolver (sin scores),
+regla de evidencia reforzada en bootstrap y state runtime para Published antiguas,
+`ad_context` en routing/writer, DTO del panel toma `plan.nextAction`. Snapshot
+conserva propuesta Jev y `demoGuardReason`. No migraciones, campañas, pricing ni
+oferta. Writer usa respuesta acotada para opener inequívoco; resto conserva LLM.
+
+Verificación: E2E comercial 021 **44/44**, app Next local + PostgreSQL 18.4 en
+base exclusiva `commercial_resources_test_hotfix` + proveedores HTTP mock.
+A/E texto corto con una pregunta/cero video; B/C demo pagos/saldos; D matrícula;
+ambas acciones demo protegidas; API del panel efectiva, facts tras envío,
+recurso ausente/rechazo seguro y sandbox sin Graph. Jev mock reproduce propuesta
+errónea con necesidad 0.16, intención 0.1 y encaje 0.5. No proveedor real ni
+WhatsApp real; **no desplegado**. Evidencia detallada y gates en
+`specs/015-demo-opener-hotfix/tasks.md`.
+
+Siguiente paso exacto: desplegar el commit del hotfix por el mecanismo habitual;
+no requiere publicar/mutar playbooks existentes ni cambiar configuración comercial.
+Es corrección de contrato ya acordado, sin nueva decisión de negocio para Obsidian.
+Pendientes históricos de otros specs siguen vigentes. Commit identificable:
+`fix(sales): prevent premature demos and route by ad context`.
+
+---
+
 # Checkpoint 2026-10-04 — Spec 014, CUT 8: pulido y regresión (CIERRE DE LOS DOS BLOQUES)
 
 **LOS DOS BLOQUES CERRADOS. GATES EN VERDE, 342/342 CHECKS E2E EN LA APP REAL.**

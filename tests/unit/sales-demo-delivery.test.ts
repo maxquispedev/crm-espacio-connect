@@ -282,3 +282,45 @@ describe("pipeline instrucciones de pago", () => {
     expect(mocks.graph).not.toHaveBeenCalled();
   });
 });
+
+
+describe("hotfix 015 — casos reales A–E", () => {
+  const ad = { source_type: "ad", headline: "Controla pagos y saldos pendientes", body: "Control de pagos" };
+  function state(texts: string[], organic = false) {
+    mocks.build.mockResolvedValue({ ok: true, persist: { leadId: "ld_a" }, playbook: null,
+      state: { conversation: texts.map(text => ({ from: "lead", text })),
+        product: { name: "Vende Veloz 365", one_liner: "Organiza alumnos y pagos desde un solo lugar." },
+        commercial_policy: {}, ...(!organic ? { ad_context: ad } : {}) } });
+  }
+  it.each(["show_operations_demo", "show_online_enrollment_demo"])("A/E: %s se degrada, texto real de writer y DTO efectivo", async action => {
+    await seed("demo_enrollment_panel"); await seed("demo_payments_balances");
+    const decision = makeDecision({ nextAction: action as "show_operations_demo" });
+    decision.realOperationalNeed!.noul = 0.16;
+    mocks.jev.mockResolvedValue({ ok: true, decision, snapshot: {} });
+    mocks.writer.mockImplementation(async input => (await vi.importActual<typeof import("@/server/sales/writer")>("@/server/sales/writer")).writeSalesReply(input));
+    state(["¡Hola! Quiero más información"]);
+    await turn();
+    expect(out()).toHaveLength(1); expect(out()[0]!.type).toBe("text");
+    const text = String(out()[0]!.text);
+    expect(text).toContain("pagos, saldos"); expect(text.match(/\?/g)).toHaveLength(1); expect(text.length).toBeLessThan(250);
+    expect(fact()).toBeNull(); expect(mocks.upload).not.toHaveBeenCalled();
+    const saved = tables.lead![0]!.lastJevDecision;
+    expect(saved).toMatchObject({ decision: { nextAction: { choice: action } },
+      plan: { nextAction: "ask_more_questions", demoGuardReason: "generic_curiosity_only" } });
+    const { serializeLeadSalesState } = await import("@/server/sales/serialize-ui");
+    expect(serializeLeadSalesState(tables.lead![0] as unknown as typeof schema.lead.$inferSelect).snapshot?.nextAction).toBe("ask_more_questions");
+    tables.message = []; state(["Hola, quiero información"], true); await turn();
+    expect(out()[0]!.type).toBe("text"); expect(String(out()[0]!.text).match(/\?/g)).toHaveLength(1);
+  });
+  it.each([
+    ["B", ["Quiero ver cómo controlan los pagos y saldos pendientes"], "demo_payments_balances"],
+    ["C", ["¡Hola! Quiero más información", "Lo llevo en Excel y a veces se me pierden los Yapes / no sé quién debe"], "demo_payments_balances"],
+    ["D", ["¡Hola! Quiero más información", "En realidad quiero ver cómo funciona la matrícula"], "demo_enrollment_panel"],
+    ["pedido sin tema", ["¡Hola! Quiero más información", "Enséñame el sistema"], "demo_payments_balances"],
+  ])("%s permite video del slot vigente", async (_label, texts, slot) => {
+    await seed(slot as DemoResourceSlot); state(texts as string[]); await turn();
+    expect(out()[0]!.type).toBe("video"); expect(fact()).toBeInstanceOf(Date);
+    expect(mocks.writer.mock.calls[0]![0].demo.slot).toBe(slot);
+    expect(tables.lead![0]!.lastJevDecision).toMatchObject({ plan: { nextAction: "show_operations_demo", demoGuardReason: null } });
+  });
+});

@@ -1,3 +1,32 @@
+## Hotfix 015 — evidencia y routing de demos (2026-10-05)
+
+Un saludo/pedido genérico de información es curiosidad, no necesidad. El anuncio
+aporta contexto y tema, nunca prueba del problema. Demo requiere necesidad
+expresada o petición explícita de ver funcionamiento. Se refuerza la política
+que viaja a Jev en runtime, también con Published previas, sin mutar sus filas.
+
+El guard reconoce solamente historiales de curiosidad inequívoca del lead, ignora
+vendedor/anuncio/scores y degrada las dos acciones demo a `ask_more_questions`
+si no hay facts durables de demo/precio/pago/humano. Textos desconocidos o
+concretos quedan a Jev; una petición explícita permite demo incluso con score
+bajo. No es un clasificador adicional de necesidades. Los facts de avance
+conservan conversaciones con contexto recortado; no se inventa un nuevo fact de
+necesidad. Prioridad HUMAN intacta. Snapshot conserva `decision` original,
+`plan.nextAction` efectivo y `plan.demoGuardReason`; UI prefiere plan efectivo,
+sin atribuirle confianza del score original cuando la acción cambió.
+
+Routing: tema específico reciente del lead > headline/body de `ad_context` >
+panel general. Solicitud genérica de ver el sistema conserva tema previo/ad;
+matrícula explícita más reciente gana al anuncio de pagos. Acción online conserva
+su slot propio. Sin IDs de anuncios. Writer recibe contexto; ante opener genérico
+usa beneficio breve + UNA pregunta controlados; demás turnos conservan redacción
+LLM. Entrega/facts/sender/tenant/sandbox siguen el contrato existente.
+
+Evidencia E2E comercial 021: **44/44** checks sobre app/PG reales con proveedores
+mock, incluidos A–E y unhappy paths. Detalle: spec 015/tasks.md. No desplegado.
+
+---
+
 # Sales Orchestrator — contrato operativo
 
 **Contrato vigente (2026-10-03, corte 3 del spec 009):** el runtime

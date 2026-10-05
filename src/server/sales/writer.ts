@@ -1,3 +1,5 @@
+import { hasOnlyGenericCuriosity } from "./demo-guard";
+import { selectDemoSlot } from "./demo-routing";
 import type { PaymentInstructions } from "@/lib/commercial/resources";
 import { renderPaymentInstructions, PAYMENT_UNAVAILABLE_TEXT } from "@/server/sales/payment-resource";
 import { z } from "zod";
@@ -7,7 +9,7 @@ import type { schema } from "@/lib/db";
 import type { SalesDecision } from "@/server/sales/decision";
 import type { NextActionChoice } from "@/server/sales/answers";
 import type { DurableSalesFacts, SalesPlan } from "@/server/sales/resolve-plan";
-import type { JevConversationTurn } from "@/server/sales/state";
+import type { JevAdContext, JevConversationTurn } from "@/server/sales/state";
 import type {
   VendeVelozCommercialPolicy,
   VendeVelozOffer,
@@ -60,6 +62,7 @@ export type WriteSalesReplyInput = {
   decision: SalesDecision;
   plan: SalesPlan;
   conversation: JevConversationTurn[];
+  adContext?: JevAdContext;
   kb: KbEntry[];
   facts: DurableSalesFacts;
   demo?: { slot: string; available: boolean };
@@ -142,6 +145,18 @@ export async function writeSalesReply(
   // El handoff puro es interno: ni el LLM ni un playbook antiguo pueden anunciarlo.
   if (isHumanHandoffPlan(input.plan)) return { ok: true, text: null };
 
+  // Opener sin contexto operativo: respuesta acotada incluso con Published antigua.
+  if (input.plan.nextAction === "ask_more_questions" && hasOnlyGenericCuriosity(input.conversation)
+      && !hasFact(input.facts.demoShownAt) && !hasFact(input.facts.pricePresentedAt)
+      && !hasFact(input.facts.paymentInstructionsSentAt) && !hasFact(input.facts.humanRequestedAt)) {
+    const product = input.product ?? VENDE_VELOZ_PRODUCT;
+    const slot = selectDemoSlot("show_operations_demo", [], input.adContext);
+    const payments = slot === "demo_payments_balances";
+    return { ok: true, text: payments
+      ? `Claro 😊 ${product.name} te ayuda a llevar pagos, saldos y alumnos desde un solo lugar. ¿Hoy cómo controlas lo que ya te pagaron y lo que todavía queda pendiente?`
+      : `Claro 😊 ${product.one_liner} ¿Hoy cómo llevas el control de tus alumnos y matrículas?` };
+  }
+
   const result = await chatJson(SalesWriterOutput, buildWriterMessages(input));
   if (!result.ok) {
     return {
@@ -200,6 +215,7 @@ function buildWriterSystemPrompt(input: WriteSalesReplyInput): string {
       .filter(Boolean)
       .join("\n"),
     `Producto:\n${JSON.stringify(product)}`,
+    input.adContext ? `Contexto del anuncio (tema, no evidencia de necesidad): ${JSON.stringify(input.adContext)}` : "",
     `Política comercial:\n${JSON.stringify(policy)}`,
     offerBlock(offer),
     `Conocimiento adicional de la organización (no inventes URLs ni datos que no estén aquí):\n${renderKb(input.kb)}`,

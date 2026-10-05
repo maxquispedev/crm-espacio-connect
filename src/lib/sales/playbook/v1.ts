@@ -1,3 +1,4 @@
+import { DEMO_EVIDENCE_RULE } from "@/lib/sales/demo-evidence";
 /**
  * Sales Playbook V1 — "Vende Veloz 365 — Academia Bajo Control".
  *
@@ -96,7 +97,7 @@ const VENDE_VELOZ_PLAYBOOK_V1_RAW: ConfigV1 = {
     disqualification:
       "Si no existe encaje, necesidad relevante o el prospecto busca algo que Vende Veloz no ofrece, cerrar el flujo sin intervención humana y sin inventar dolores.",
     evidenceRule:
-      "Las afirmaciones del vendedor sobre posibles problemas o beneficios no prueban que el prospecto tenga esa necesidad. Priorizar lo expresado por el prospecto y los datos objetivos de su operación.",
+      DEMO_EVIDENCE_RULE,
   },
   priorities: {
     primary: [
@@ -228,11 +229,11 @@ const VENDE_VELOZ_PLAYBOOK_V1_RAW: ConfigV1 = {
         "Decide la siguiente acción comercial. En esta fase de aprendizaje el objetivo es filtrar tráfico y avanzar solo a los leads que muestran intención, no forzar el cierre autónomo de punta a punta. Pide el contexto mínimo indispensable con UNA sola pregunta concreta cuando falte un dato que cambia la decisión, y nunca conviertas la conversación en una encuesta. No repreguntes lo ya respondido, no inventes dolores y no persigas a quien no ha reaccionado. Si hay avance comercial genuino o el prospecto pide hablar con una persona, la acción correcta es escalar, no insistir.",
       criteria: {
         ask_more_questions:
-          "Existe una señal concreta de necesidad o interés, pero falta una información esencial para saber qué mostrar o cómo encaja Vende Veloz.",
+          "Curiosidad inicial o falta de contexto: hola / quiero información / más información requieren un beneficio breve y UNA pregunta útil, sin demo.",
         show_operations_demo:
-          "Existe una necesidad operativa identificada y conviene mostrar brevemente cómo Vende Veloz centraliza alumnos, pagos, ventas y operación diaria.",
+          "El prospecto expresó una necesidad operativa concreta o pidió explícitamente un demo/ver cómo funciona. El anuncio no prueba necesidad. Ante curiosidad genérica usar ask_more_questions.",
         show_online_enrollment_demo:
-          "El prospecto ha expresado específicamente una necesidad relacionada con matrícula online, inscripciones o automatización de ese proceso.",
+          "El prospecto expresó una necesidad concreta de matrícula online o pidió explícitamente ver ese proceso. El anuncio y la curiosidad genérica no bastan: usar ask_more_questions.",
         present_price:
           "El prospecto ya entiende el valor relevante, existe suficiente contexto y muestra interés concreto para presentar la propuesta económica.",
         schedule_call:

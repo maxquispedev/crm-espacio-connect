@@ -7,8 +7,16 @@ describe("routing de demos — pedido vigente", () => {
   it.each(["pagos", "saldos", "voucher", "deuda", "matrículas y pagos", "No sé cómo controlar pagos"])("payments: %s", text => {
     expect(route(text)).toBe("demo_payments_balances");
   });
-  it.each(["matrícula", "alumnos", "operación general", "muéstrame cómo funciona"])("panel: %s", text => {
+  it.each(["matrícula", "alumnos", "operación general"])("panel: %s", text => {
     expect(route("pagos", text)).toBe("demo_enrollment_panel");
+  });
+  it("petición de funcionamiento conserva tema previo o anuncio", () => {
+    expect(route("pagos", "muéstrame cómo funciona")).toBe("demo_payments_balances");
+    expect(selectDemoSlot("show_operations_demo", [{ from: "lead", text: "Enséñame el sistema" }],
+      { source_type: "ad", headline: "Controla pagos y saldos pendientes", body: null })).toBe("demo_payments_balances");
+    expect(selectDemoSlot("show_operations_demo", [{ from: "lead", text: "En realidad quiero ver cómo funciona la matrícula" }],
+      { source_type: "ad", headline: "Controla pagos y saldos pendientes", body: null })).toBe("demo_enrollment_panel");
+    expect(selectDemoSlot("show_operations_demo", [], { source_type: "ad", headline: null, body: "Controla tus pagos" })).toBe("demo_payments_balances");
   });
   it("cambio de panel a pagos y asentimiento conserva el pedido", () => {
     expect(route("alumnos", "muéstrame saldos", "sí por favor")).toBe("demo_payments_balances");

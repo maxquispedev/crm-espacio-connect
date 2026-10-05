@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import path from "node:path";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createMemDb, type Row, type Tables } from "../fixtures/mem-db";
 import { UnauthorizedError } from "@/lib/auth/session";
 
@@ -160,6 +160,8 @@ function sembrarHumana(id: string) {
   } as Row);
 }
 
+afterEach(() => vi.useRealTimers());
+
 beforeEach(() => {
   org = "org_a";
   for (const bucket of Object.values(tables)) bucket!.length = 0;
@@ -243,6 +245,7 @@ describe("013 C3 — prueba estructural: la Agenda no tiene con qué enviar", ()
 
 describe("013 C3 — prueba dinámica: el camino completo no envía ni encola", () => {
   it("programar, listar, vencer, recibir al cliente y cancelar no toca Graph, sender ni el motor", async () => {
+    vi.useFakeTimers({ now: AHORA });
     sembrarHumana("cv_1");
     const endpoint = (cuerpo: Record<string, unknown>) =>
       new Request("http://localhost/api/reminders", {
@@ -251,9 +254,8 @@ describe("013 C3 — prueba dinámica: el camino completo no envía ni encola", 
         body: JSON.stringify(cuerpo),
       });
 
-    // 1) Programar por el endpoint real. La fecha es futura respecto al reloj
-    //    real (que valida el endpoint) y respecto a `AHORA` (que mueve el
-    //    vencimiento en el paso 3).
+    // 1) Programar por el endpoint real con reloj fijado a AHORA: la fixture
+    //    sigue siendo futura cuando este test se ejecuta otro día.
     const creado = await POST(
       endpoint({ conversationId: "cv_1", dueAt: new Date(AHORA.getTime() + 2 * H).toISOString(), note: "jueves 10:00" })
     );

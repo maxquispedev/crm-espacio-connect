@@ -127,6 +127,7 @@ export async function runSalesOrchestratorTurn(
 
   const plan = resolveSalesPlan({
     decision: jev.decision,
+    conversation: built.state.conversation,
     currentSalesState: {
       automationLane: leadCtx.lead.automationLane,
       demoShownAt: leadCtx.lead.demoShownAt,
@@ -148,6 +149,7 @@ export async function runSalesOrchestratorTurn(
     plan: {
       lane: plan.lane,
       nextAction: plan.nextAction,
+      demoGuardReason: plan.demoGuardReason ?? null,
       shouldHandoff: plan.shouldHandoff,
       paymentDeliveryAuthorized: plan.paymentDeliveryAuthorized === true,
     },
@@ -196,7 +198,7 @@ export async function runSalesOrchestratorTurn(
   let sent = false;
   if (shouldWrite) {
     const demoSlot = plan.lane !== "human" && plan.lane !== "stop" && !plan.shouldHandoff
-      ? selectDemoSlot(plan.nextAction, built.state.conversation) : null;
+      ? selectDemoSlot(plan.nextAction, built.state.conversation, built.state.ad_context) : null;
     const demo = demoSlot ? await loadDemoVideo(organizationId, demoSlot) : null;
     const kb = await loadKb(organizationId);
     // T307 — overrides para el writer: el playbook gana sobre los
@@ -212,6 +214,7 @@ export async function runSalesOrchestratorTurn(
       plan,
       demo: demoSlot ? { slot: demoSlot, available: demo !== null } : undefined,
       conversation: built.state.conversation,
+      adContext: built.state.ad_context,
       kb,
       facts: {
         automationLane: plan.lane,

@@ -1,0 +1,2 @@
+export const DEMO_EVIDENCE_RULE =
+  '«Hola», «quiero información» o «más información» son curiosidad inicial, no necesidad identificada. El anuncio (ad_context) y las afirmaciones del vendedor aportan tema, nunca evidencia de un problema del prospecto. show_operations_demo y show_online_enrollment_demo requieren una necesidad concreta expresada por el prospecto en el historial o una petición explícita de demo/ver cómo funciona. Si falta esa evidencia, elige ask_more_questions: beneficio breve relacionado con el tema y UNA pregunta útil.';

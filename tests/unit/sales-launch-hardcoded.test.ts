@@ -269,7 +269,7 @@ describe("lanzamiento: builder + orquestador + resolver reales", () => {
         future_interest: `FUTURE ${version}`,
         no_response: `NORES ${version}`,
         disqualification: "DISQUAL CUSTOM",
-        evidence_rule: `EVIDENCE ${version}`,
+        evidence_rule: expect.stringContaining(`EVIDENCE ${version}`),
       });
       // Y el state NO arrastra `implementation`/`subscription`
       // hardcodeados de Vende Veloz (T932).
@@ -329,7 +329,7 @@ describe("lanzamiento: builder + orquestador + resolver reales", () => {
     // Cae al baseline hardcodeado…
     expect(evaluateJev).toHaveBeenLastCalledWith({
       state: expect.objectContaining({
-        product: VENDE_VELOZ_PRODUCT, commercial_policy: VENDE_VELOZ_COMMERCIAL_POLICY,
+        product: VENDE_VELOZ_PRODUCT, commercial_policy: expect.objectContaining({ evidence_rule: expect.stringContaining(VENDE_VELOZ_COMMERCIAL_POLICY.evidence_rule) }),
       }),
       questions: JEV_SALES_QUESTIONS_V2,
     });
@@ -356,7 +356,7 @@ describe("lanzamiento: builder + orquestador + resolver reales", () => {
     expect(evaluateJev).toHaveBeenCalledOnce();
     const input = evaluateJev.mock.calls.at(-1)![0];
     expect(input.state.product).toEqual(VENDE_VELOZ_PRODUCT);
-    expect(input.state.commercial_policy).toEqual(VENDE_VELOZ_COMMERCIAL_POLICY);
+    expect(input.state.commercial_policy).toMatchObject({ ...VENDE_VELOZ_COMMERCIAL_POLICY, evidence_rule: expect.stringContaining(VENDE_VELOZ_COMMERCIAL_POLICY.evidence_rule) });
     expect(input.questions).toEqual(JEV_SALES_QUESTIONS_V2);
     __resetWarnedNoPlaybookOrgs();
   });

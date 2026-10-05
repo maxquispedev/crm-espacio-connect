@@ -148,7 +148,7 @@ function queueHappyPath(nextAction: string, laneWas = "auto") {
       leadId: "ld_1",
     },
     state: {
-      conversation: [{ from: "lead", text: "hola" }],
+      conversation: [{ from: "lead", text: nextAction.startsWith("show_") ? "Enséñame el sistema" : "hola" }],
       product: { name: "Vende Veloz 365" },
       commercial_policy: {},
     },

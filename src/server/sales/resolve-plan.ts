@@ -1,3 +1,5 @@
+import { hasOnlyGenericCuriosity } from "./demo-guard";
+import type { JevConversationTurn } from "./state";
 import type { NextActionChoice, NormalizedNoul } from "@/server/sales/answers";
 import type { SalesDecision } from "@/server/sales/decision";
 import type { AutomationLane } from "@/server/sales/lanes";
@@ -27,6 +29,7 @@ export type DurableSalesFacts = {
 
 export type ResolveSalesPlanInput = {
   decision: SalesDecision;
+  conversation?: readonly JevConversationTurn[];
   currentSalesState: DurableSalesFacts;
   currentPipelineStage: PipelineSemantic | null;
 };
@@ -48,6 +51,7 @@ export type SalesPlan = {
   lane: AutomationLane;
   nextAction: NextActionChoice;
   paymentDeliveryAuthorized?: boolean;
+  demoGuardReason?: "generic_curiosity_only";
   shouldReply: boolean;
   shouldHandoff: boolean;
   handoffReason: "commercial" | null;
@@ -61,7 +65,19 @@ export type SalesPlan = {
  * Pura: sin I/O, sin IDs de etapa, sin lead score.
  */
 export function resolveSalesPlan(input: ResolveSalesPlanInput): SalesPlan {
-  const nextAction = input.decision.nextAction.choice;
+  const proposed = input.decision.nextAction.choice;
+  const facts = input.currentSalesState;
+  const blocked = (proposed === "show_operations_demo" || proposed === "show_online_enrollment_demo")
+    && input.conversation !== undefined && hasOnlyGenericCuriosity(input.conversation)
+    && !hasFact(facts.demoShownAt) && !hasFact(facts.pricePresentedAt)
+    && !hasFact(facts.paymentInstructionsSentAt) && !hasFact(facts.humanRequestedAt);
+  if (blocked && !isClearlyPositiveHumanCall(input.decision.needsHumanCall)) {
+    return { ...makePlan({ lane: "auto", nextAction: "ask_more_questions",
+      shouldReply: true, shouldHandoff: false,
+      desiredPipelineSemantic: pipelineIntent("active_conversation", input.currentPipelineStage),
+      followUpDirective: { kind: "none" } }), demoGuardReason: "generic_curiosity_only" };
+  }
+  const nextAction = proposed;
   const stage = input.currentPipelineStage;
 
   if (nextAction === "disqualify") {

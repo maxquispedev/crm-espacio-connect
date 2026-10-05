@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import path from "node:path";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createMemDb, type Row, type Tables } from "../fixtures/mem-db";
 
 /**
@@ -141,10 +141,13 @@ describe("013 C1 — preuve estructural: nada que pueda enviar", () => {
   });
 });
 
+afterEach(() => vi.useRealTimers());
+
 describe("013 C1 — prueba dinámica: el camino de recordatorio no llama a nada que envíe", () => {
   it("programar, vencer, leer y limpiar no toca Graph ni el sender", async () => {
     const conversationId = seedHumanConversation();
     const t0 = new Date("2026-10-05T12:00:00Z");
+    vi.useFakeTimers({ now: t0 });
 
     // 1) Programar un recordatorio: no envía nada.
     const programado = await scheduleHumanReminder({

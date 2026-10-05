@@ -1,3 +1,4 @@
+import { DEMO_EVIDENCE_RULE } from "@/lib/sales/demo-evidence";
 import { desc, eq } from "drizzle-orm";
 import { getDb, schema } from "@/lib/db";
 import { scoped } from "@/lib/db/tenant";
@@ -267,7 +268,8 @@ export async function buildJevSalesState(
 
   const state: JevSalesState = {
     product: productFromPlaybook,
-    commercial_policy: policyFromPlaybook,
+    commercial_policy: { ...policyFromPlaybook,
+      evidence_rule: `${policyFromPlaybook.evidence_rule} ${DEMO_EVIDENCE_RULE}` },
     crm_state: toCrmState(leadRow),
     conversation,
     ...(adContext
