@@ -1,3 +1,4 @@
+import { ATTENDANCE_KNOWLEDGE } from "./commercial-evidence";
 /**
  * Producto, política y oferta congelados.
  * Freeze local: docs/SALES_ORCHESTRATOR.md §§5–6.
@@ -22,7 +23,7 @@ export const VENDE_VELOZ_PRODUCT = {
     "Disciplinas y actividades",
     "Horarios y cupos",
     "Pagos, ventas, saldos y caja",
-    "Asistencia y sesiones",
+    ATTENDANCE_KNOWLEDGE,
     "Renovaciones",
     "Promociones, cupones, productos e inventario",
     "Matrícula online opcional",

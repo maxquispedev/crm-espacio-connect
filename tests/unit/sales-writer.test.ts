@@ -20,20 +20,20 @@ describe("SalesWriterOutput (contrato de redacción)", () => {
     });
     expect(parsed.success).toBe(true);
     if (!parsed.success) return;
-    expect(parsed.data).toEqual({ text: "Hola, te cuento el precio." });
+    expect(parsed.data).toEqual({ commercial_evidence: "unknown", text: "Hola, te cuento el precio." });
     expect(parsed.data).not.toHaveProperty("action");
     expect(parsed.data).not.toHaveProperty("move_stage");
   });
 
   it("acepta text null", () => {
-    expect(SalesWriterOutput.parse({ text: null })).toEqual({ text: null });
+    expect(SalesWriterOutput.parse({ text: null })).toEqual({ commercial_evidence: "unknown", text: null });
   });
 });
 
 describe("writeSalesReply", () => {
   beforeEach(() => {
     chatJson.mockReset();
-    chatJson.mockResolvedValue({ ok: true, data: { text: "redactado" }, raw: "{}" });
+    chatJson.mockResolvedValue({ ok: true, data: { commercial_evidence: "supported", text: "redactado" }, raw: "{}" });
   });
 
   it("si el plan no pide reply, no llama al LLM", async () => {
@@ -160,4 +160,29 @@ describe("writeSalesReply", () => {
     expect(prompt).not.toContain("Si la KB tiene un recurso real de demo, úsalo");
   });
 
+});
+
+
+describe("016 — evidencia antes de redactar", () => {
+  const decision = makeDecision({ nextAction: "ask_more_questions" });
+  const plan = resolveSalesPlan({ decision, currentSalesState: BASE_FACTS, currentPipelineStage: "interested" });
+  it("Roberto: producto contiene asistencia/sesiones incluso con Published antigua", async () => {
+    chatJson.mockResolvedValue({ ok: true, data: { commercial_evidence: "supported", text: "Sí, puedes registrar la asistencia de los alumnos y llevar el control de sus sesiones. ¿Hoy cómo la registran?" } });
+    const conversation = ["Precio", "S/247 al mes", "¿Qué incluye el servicio?", "Alumnos y pagos", "Necesito un control de asistencia"].map((text, i) => ({ from: i % 2 === 0 ? "lead" as const : "seller" as const, text }));
+    const result = await writeSalesReply({ decision, plan, conversation, kb: [], facts: BASE_FACTS });
+    expect(result).toMatchObject({ commercialEvidence: "supported", text: expect.stringContaining("asistencia") });
+    expect(chatJson.mock.calls.at(-1)![1][0].content).toContain("registro de asistencia de alumnos y control/consumo de sesiones");
+  });
+  it.each(["¿Se integra directamente con SistemaNoDocumentado?", "¿Puedo migrar 3,000 alumnos desde X?", "¿Tiene API para X?", "¿Incluyen tal desarrollo especial?"])("%s: unknown suprime incluso texto de incertidumbre", async text => {
+    chatJson.mockResolvedValue({ ok: true, data: { commercial_evidence: "unknown", text: "No tengo confirmado, creo que sí" } });
+    expect(await writeSalesReply({ decision, plan, conversation: [{ from: "lead", text }], kb: [], facts: BASE_FACTS })).toEqual({ ok: true, text: null, commercialEvidence: "unknown" });
+  });
+  it("sin clasificación nunca autoriza outbound", async () => {
+    chatJson.mockResolvedValue({ ok: true, data: { text: "Sí, se integra" } });
+    expect(await writeSalesReply({ decision, plan, conversation: [{ from: "lead", text: "¿Se integra con X?" }], kb: [], facts: BASE_FACTS })).toMatchObject({ text: null, commercialEvidence: "unknown" });
+  });
+  it("falta contexto de academia conserva pregunta", async () => {
+    chatJson.mockResolvedValue({ ok: true, data: { commercial_evidence: "context_needed", text: "¿Qué te cuesta más controlar hoy?" } });
+    expect(await writeSalesReply({ decision, plan, conversation: [{ from: "lead", text: "Necesito algo para controlar mejor mi academia" }], kb: [], facts: BASE_FACTS })).toMatchObject({ text: "¿Qué te cuesta más controlar hoy?", commercialEvidence: "context_needed" });
+  });
 });

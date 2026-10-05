@@ -57,6 +57,8 @@ export type JevAdContext = {
  * estado previo al hotfix.
  */
 export type JevSalesState = {
+  /** KB comercial scoped, solo preguntas/respuestas; sin IDs ni metadata. */
+  commercial_knowledge?: { question: string | null; answer: string | null; content: string | null }[];
   product: VendeVelozProduct;
   commercial_policy: VendeVelozCommercialPolicy;
   crm_state: JevCrmState;

@@ -163,8 +163,11 @@ async function runSection021() {
 
 async function main() {
   // Cortes aislados: UI, demos, pago, la cola "Por atender" de 013 y la Agenda.
-  if (["020", "021", "022", "023", "024", "025", "026", "027"].includes(process.env.E2E_SECTION)) {
-    if (process.env.E2E_SECTION === "027") {
+  if (["020", "021", "022", "023", "024", "025", "026", "027", "028"].includes(process.env.E2E_SECTION)) {
+    if (process.env.E2E_SECTION === "028") {
+      const { runCommercialEvidenceSelftest } = await import("./e2e-commercial-evidence.mjs");
+      await runCommercialEvidenceSelftest({ BASE, api, ok, waitFor, getCookie: () => cookie });
+    } else if (process.env.E2E_SECTION === "027") {
       // 014 C8 — Cierre del workspace: pulido y regresión. Si esta sección corre,
       // el shell responde en móvil, el foco se ve, los caminos infelices AVISAN y
       // las tres acciones de 013 siguen funcionando contra la app real.

@@ -1,3 +1,4 @@
+import { ATTENDANCE_KNOWLEDGE } from "@/server/sales/commercial-evidence";
 import { DEMO_EVIDENCE_RULE } from "@/lib/sales/demo-evidence";
 /**
  * Sales Playbook V1 — "Vende Veloz 365 — Academia Bajo Control".
@@ -35,6 +36,7 @@ const VENDE_VELOZ_PLAYBOOK_V1_RAW: ConfigV1 = {
       "Siguiente ciclo y renovación",
       "Adopción real durante el primer mes",
       "Matrícula online opcional",
+      ATTENDANCE_KNOWLEDGE,
     ],
     not_the_product: [
       "No genera alumnos por sí solo",
@@ -89,7 +91,7 @@ const VENDE_VELOZ_PLAYBOOK_V1_RAW: ConfigV1 = {
     autoClose:
       "Si el prospecto quiere avanzar y el caso es estándar, el agente puede llegar hasta el precio y las condiciones y escalar a una persona para el cierre. En esta fase no se exige cerrar la venta de manera autónoma de punta a punta.",
     humanHandoff:
-      "Escalar a humano ante avance comercial genuino (intención clara de avanzar, decisor identificado, acuerdo en curso) o cuando el prospecto lo pida explícitamente. También con complejidad, integraciones o API, múltiples sedes o decisores, negociación u objeciones importantes.",
+      "Escalar a humano ante avance comercial genuino (intención clara de avanzar, decisor identificado, acuerdo en curso) o cuando el prospecto lo pida explícitamente. También con complejidad, múltiples sedes o decisores, negociación u objeciones importantes, o preguntas materiales de funcionalidad, implementación, integración o condición sin evidencia. Las capacidades documentadas se responden normalmente, sin exponer incertidumbre.",
     futureInterest:
       "Si existe interés real pero la implementación corresponde a una temporada o fecha futura, programar seguimiento automático cerca de ese momento, sin inventar la fecha.",
     noResponse:
@@ -97,7 +99,7 @@ const VENDE_VELOZ_PLAYBOOK_V1_RAW: ConfigV1 = {
     disqualification:
       "Si no existe encaje, necesidad relevante o el prospecto busca algo que Vende Veloz no ofrece, cerrar el flujo sin intervención humana y sin inventar dolores.",
     evidenceRule:
-      DEMO_EVIDENCE_RULE,
+      `${DEMO_EVIDENCE_RULE} Pregunta comercial material sin evidencia: schedule_call/HUMAN silencioso. Falta de contexto de la academia: ask_more_questions. Capacidad documentada: responder. No inventar ni exponer incertidumbre.`,
   },
   priorities: {
     primary: [
@@ -120,7 +122,7 @@ const VENDE_VELOZ_PLAYBOOK_V1_RAW: ConfigV1 = {
   },
   writer: {
     ask_more_questions:
-      "Identifica qué bloque operativo está más desordenado hoy (alumnos, pagos, horarios, saldos) y formula UNA sola pregunta concreta para entender el contexto. No conviertas la conversación en una encuesta ni repitas preguntas ya respondidas.",
+      "Si el lead consulta una capacidad documentada (incluida asistencia/sesiones), responde primero de forma breve y correcta; luego puedes hacer UNA pregunta útil. Si falta evidencia material, handoff silencioso. Identifica qué bloque operativo está más desordenado hoy (alumnos, pagos, horarios, saldos) y formula UNA sola pregunta concreta para entender el contexto. No conviertas la conversación en una encuesta ni repitas preguntas ya respondidas.",
     show_operations_demo:
       "Mensaje breve que muestra cómo se centralizan alumnos, pagos, ventas, saldos, horarios y operación diaria en un solo lugar. Invita a verlo con un video corto o un recorrido de 3-4 pantallas reales. Evita prometer funcionalidades que no se demostraron.",
     show_online_enrollment_demo:
@@ -237,7 +239,7 @@ const VENDE_VELOZ_PLAYBOOK_V1_RAW: ConfigV1 = {
         present_price:
           "El prospecto ya entiende el valor relevante, existe suficiente contexto y muestra interés concreto para presentar la propuesta económica.",
         schedule_call:
-          "Existe interés real, pero la complejidad de la operación, múltiples sedes, múltiples decisores, integraciones, API, necesidades especiales o una solicitud explícita hacen recomendable una conversación humana.",
+          "Pregunta material sin evidencia confiable: handoff humano silencioso. También complejidad de operación, múltiples sedes/decisores, necesidades especiales o solicitud explícita de humano. Una capacidad o integración documentada se responde sin handoff innecesario.",
         schedule_follow_up:
           "Existe buen encaje e interés, pero el prospecto ha indicado que la necesidad corresponde a una temporada, apertura o fecha futura. Registrar el interés y retomar cerca del momento adecuado.",
         disqualify:
@@ -251,7 +253,7 @@ const VENDE_VELOZ_PLAYBOOK_V1_RAW: ConfigV1 = {
         "¿Existe una razón clara por la que este prospecto necesite una llamada humana antes de poder continuar o cerrar razonablemente por WhatsApp? En esta fase, el avance comercial genuino y la petición explícita de una persona son motivo suficiente para escalar. No exijas un cierre autónomo de punta a punta: es aceptable y correcto dejar el cierre a una persona.",
       criteria: {
         true:
-          "La operación es compleja, existen múltiples sedes o decisores, requiere API, integraciones o desarrollos especiales, hay necesidades difíciles de resolver por chat o el prospecto solicita explícitamente una reunión.",
+          "No existe evidencia para responder una pregunta comercial material, o la operación es compleja, hay múltiples sedes/decisores, negociación, desarrollos especiales o solicitud explícita de humano. No escalar solo por falta de contexto de la academia ni por preguntar una capacidad documentada.",
         false:
           "La conversación puede continuar, mostrar el producto, presentar precio y potencialmente cerrar razonablemente por WhatsApp.",
       },

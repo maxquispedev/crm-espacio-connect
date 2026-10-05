@@ -36,7 +36,7 @@ const provider = http.createServer(async (req,res) => {
   }
   if(writerDelay) await new Promise(resolve=>setTimeout(resolve,writerDelay));
   if(writerFail) {res.statusCode=503;res.end('{}');return;}
-  res.end(JSON.stringify({choices:[{message:{content:JSON.stringify({text:'¿Retomamos lo que conversamos?'})}}]}));
+  res.end(JSON.stringify({choices:[{message:{content:JSON.stringify({commercial_evidence:'supported',text:'¿Retomamos lo que conversamos?'})}}]}));
 });
 await new Promise(resolve => provider.listen(3022,'127.0.0.1',resolve));
 

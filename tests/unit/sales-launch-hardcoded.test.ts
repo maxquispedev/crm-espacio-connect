@@ -1,7 +1,7 @@
+import { withCommercialEvidenceQuestions } from "@/server/sales/commercial-evidence";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createServer } from "node:http";
 import * as env from "@/lib/env";
-import canonicalQuestions from "../fixtures/jev-questions-v2.json";
 
 import { runSalesOrchestratorTurn } from "@/server/sales/orchestrator";
 import { makeDecision } from "./sales-fixtures";
@@ -130,9 +130,9 @@ function queueTurn(orgId: string, conversationId: string) {
     [{ message: { direction: "in", text: "precio por favor" }, media: null }],
     [{ sourceType: "ad", headline: "Ordena tu academia", body: "Control de pagos" }],
     [{ lead, stage: STAGES[2] }],
-    STAGES,
-    [],
+    [], // KB disponible antes de Jev
     [{ tone: "cercano", instructions: "Sé breve", escalationRules: "Pedido humano" }],
+    STAGES,
   );
   return conv;
 }
@@ -221,14 +221,14 @@ describe("lanzamiento: builder + orquestador + resolver reales", () => {
       deliverReply.mockResolvedValue(true);
       const conv = queueTurn("org_1", "cv_http");
       await runSalesOrchestratorTurn({ organizationId: "org_1", conversationId: conv.id, conversation: conv as never });
-      expect(received).toEqual([canonicalQuestions]);
+      expect(received).toEqual([withCommercialEvidenceQuestions(JEV_SALES_QUESTIONS_V2)]);
       expect(deliverReply).toHaveBeenCalledOnce();
       expect(leadPatches.some(p => p.automationLane === "auto_close")).toBe(true);
 
       reject = true;
       const failed = queueTurn("org_1", "cv_http_rejected");
       await runSalesOrchestratorTurn({ organizationId: "org_1", conversationId: failed.id, conversation: failed as never });
-      expect(received).toEqual([canonicalQuestions, canonicalQuestions]);
+      expect(received).toEqual([withCommercialEvidenceQuestions(JEV_SALES_QUESTIONS_V2), withCommercialEvidenceQuestions(JEV_SALES_QUESTIONS_V2)]);
       expect(deliverReply).toHaveBeenCalledOnce();
       expect(leadPatches.at(-1)?.lastJevError).toContain("422");
     } finally {
@@ -331,7 +331,7 @@ describe("lanzamiento: builder + orquestador + resolver reales", () => {
       state: expect.objectContaining({
         product: VENDE_VELOZ_PRODUCT, commercial_policy: expect.objectContaining({ evidence_rule: expect.stringContaining(VENDE_VELOZ_COMMERCIAL_POLICY.evidence_rule) }),
       }),
-      questions: JEV_SALES_QUESTIONS_V2,
+      questions: withCommercialEvidenceQuestions(JEV_SALES_QUESTIONS_V2),
     });
     // …y no inventa una versión auditada.
     const patch = leadPatches.find((p) => "lastJevPlaybookVersionId" in p);
@@ -357,7 +357,7 @@ describe("lanzamiento: builder + orquestador + resolver reales", () => {
     const input = evaluateJev.mock.calls.at(-1)![0];
     expect(input.state.product).toEqual(VENDE_VELOZ_PRODUCT);
     expect(input.state.commercial_policy).toMatchObject({ ...VENDE_VELOZ_COMMERCIAL_POLICY, evidence_rule: expect.stringContaining(VENDE_VELOZ_COMMERCIAL_POLICY.evidence_rule) });
-    expect(input.questions).toEqual(JEV_SALES_QUESTIONS_V2);
+    expect(input.questions).toEqual(withCommercialEvidenceQuestions(JEV_SALES_QUESTIONS_V2));
     __resetWarnedNoPlaybookOrgs();
   });
 

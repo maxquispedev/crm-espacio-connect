@@ -156,7 +156,7 @@ describe("corte 2 — el bootstrap refleja la oferta vigente", () => {
 });
 
 describe("corte 2 — contratos Jev siguen válidos (DV-8)", () => {
-  it("criteria mantienen contrato; next_action refuerza evidencia para demos", () => {
+  it("criteria mantienen contrato; next_action/needs_human_call refuerzan evidencia", () => {
     for (const [key, question] of Object.entries(OFFER_JEV())) {
       const frozen = canonicalQuestions[key as keyof typeof canonicalQuestions];
       expect(frozen).toBeDefined();
@@ -166,6 +166,12 @@ describe("corte 2 — contratos Jev siguen válidos (DV-8)", () => {
         expect(criteria.show_operations_demo).toMatch(/necesidad operativa concreta|explícitamente/);
         expect(criteria.show_operations_demo).toMatch(/anuncio no prueba necesidad/);
         expect(criteria.ask_more_questions).toMatch(/UNA pregunta/);
+      } else if (key === "needs_human_call") {
+        const criteria = question.criteria as Record<string, string>;
+        expect(Object.keys(criteria)).toEqual(Object.keys(frozen.criteria));
+        expect(criteria.true).toContain("pregunta comercial material");
+        expect(criteria.true).toContain("capacidad documentada");
+        expect(criteria.false).toEqual((frozen.criteria as Record<string, string>).false);
       } else expect(question.criteria).toEqual(frozen.criteria);
     }
   });

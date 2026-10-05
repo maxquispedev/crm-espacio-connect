@@ -324,3 +324,28 @@ describe("hotfix 015 — casos reales A–E", () => {
     expect(tables.lead![0]!.lastJevDecision).toMatchObject({ plan: { nextAction: "show_operations_demo", demoGuardReason: null } });
   });
 });
+
+
+describe("016 — unknown → handoff silencioso real antes del sender", () => {
+  it.each([false, true])("unknown bloquea texto/video/facts/jobs (sandbox=%s)", async isTest => {
+    tables.conversation![0]!.isTest = isTest;
+    tables.conversation!.push({ ...tables.conversation![0], id: "cv_b", organizationId: "org_b" });
+    await seed("demo_enrollment_panel");
+    mocks.writer.mockResolvedValue({ ok: true, commercialEvidence: "unknown", text: "Creo que sí se integra" });
+    await turn();
+    expect(out()).toHaveLength(0); expect(mocks.graph).not.toHaveBeenCalled();
+    expect(mocks.upload).not.toHaveBeenCalled(); expect(mocks.follow).not.toHaveBeenCalled();
+    expect(tables.conversation![0]).toMatchObject({ handoffReason: "commercial", handoffAt: expect.any(Date) });
+    expect(tables.conversation![1]).not.toHaveProperty("handoffAt");
+    expect(tables.lead![0]).toMatchObject({ automationLane: "human", demoShownAt: null,
+      lastJevDecision: { decision: { nextAction: { choice: "show_operations_demo" } },
+        plan: { nextAction: "schedule_call", shouldHandoff: true, commercialEvidenceReason: "unknown" } } });
+  });
+  it("fallo de writer escala sin enviar ni marcar facts", async () => {
+    mocks.writer.mockResolvedValue({ ok: false, error: "invalid_output", detail: "fixture" });
+    await turn();
+    expect(out()).toHaveLength(0); expect(mocks.graph).not.toHaveBeenCalled();
+    expect(tables.lead![0]!.automationLane).toBe("human");
+    expect(tables.conversation![0]!.handoffReason).toBe("commercial");
+  });
+});

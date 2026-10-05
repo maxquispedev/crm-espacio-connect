@@ -1,3 +1,4 @@
+import { COMMERCIAL_EVIDENCE_RULE, withAttendanceKnowledge } from "./commercial-evidence";
 import { hasOnlyGenericCuriosity } from "./demo-guard";
 import { selectDemoSlot } from "./demo-routing";
 import type { PaymentInstructions } from "@/lib/commercial/resources";
@@ -51,8 +52,9 @@ export type AgentProfileContext = {
   escalationRules?: string | null;
 };
 
-/** Única forma permitida: redacción. Zod descarta cualquier acción ejecutable. */
+/** Redacción + estado de evidencia; Zod descarta acciones. Sin estado, falla cerrado. */
 export const SalesWriterOutput = z.object({
+  commercial_evidence: z.enum(["supported", "context_needed", "unknown"]).default("unknown"),
   text: z.union([z.string().trim().min(1).max(4096), z.null()]),
 });
 
@@ -103,6 +105,7 @@ export type WriteSalesReplyInput = {
 export type SalesWriterSuccess = {
   ok: true;
   text: string | null;
+  commercialEvidence?: "supported" | "context_needed" | "unknown";
 };
 
 export type SalesWriterFailure = {
@@ -149,7 +152,7 @@ export async function writeSalesReply(
   if (input.plan.nextAction === "ask_more_questions" && hasOnlyGenericCuriosity(input.conversation)
       && !hasFact(input.facts.demoShownAt) && !hasFact(input.facts.pricePresentedAt)
       && !hasFact(input.facts.paymentInstructionsSentAt) && !hasFact(input.facts.humanRequestedAt)) {
-    const product = input.product ?? VENDE_VELOZ_PRODUCT;
+    const product = withAttendanceKnowledge(input.product ?? VENDE_VELOZ_PRODUCT);
     const slot = selectDemoSlot("show_operations_demo", [], input.adContext);
     const payments = slot === "demo_payments_balances";
     return { ok: true, text: payments
@@ -166,7 +169,8 @@ export async function writeSalesReply(
     };
   }
 
-  return { ok: true, text: result.data.text };
+  const evidence = result.data.commercial_evidence ?? "unknown";
+  return { ok: true, text: evidence === "unknown" ? null : result.data.text, commercialEvidence: evidence };
 }
 
 function buildWriterMessages(input: WriteSalesReplyInput): ChatMessage[] {
@@ -181,7 +185,7 @@ function isHumanHandoffPlan(plan: SalesPlan): boolean {
 }
 
 function buildWriterSystemPrompt(input: WriteSalesReplyInput): string {
-  const product = input.product ?? VENDE_VELOZ_PRODUCT;
+  const product = withAttendanceKnowledge(input.product ?? VENDE_VELOZ_PRODUCT);
   const policy = input.policy ?? VENDE_VELOZ_COMMERCIAL_POLICY;
   const offer = input.offer ?? VENDE_VELOZ_OFFER;
   const nextAction = input.plan.nextAction;
@@ -193,10 +197,12 @@ function buildWriterSystemPrompt(input: WriteSalesReplyInput): string {
   const timing = pickChoice(input.decision.buyingTiming, "unknown");
 
   return [
-    "Eres redactor de WhatsApp para Vende Veloz 365. NO decides nada comercial.",
-    "La lane, next_action, pipeline y el handoff ya están decididos por el CRM. Tú solo escribes el mensaje.",
+    "Eres redactor de WhatsApp para Vende Veloz 365. Verificas evidencia antes de redactar; NO ejecutas decisiones comerciales.",
+    "La lane, next_action, pipeline y el handoff los decide el CRM. Redacta según su plan; si falta evidencia comercial material, señala unknown para que el CRM proteja el envío.",
     "Respondes SIEMPRE en español natural de WhatsApp: breve, una sola respuesta útil por turno.",
-    "JSON único: {\"text\":\"...\"} o {\"text\":null}. Sin markdown, sin otras claves.",
+    'JSON único: {"commercial_evidence":"supported|context_needed|unknown","text":"..." o null}. Sin markdown ni acciones.',
+    COMMERCIAL_EVIDENCE_RULE,
+    'Verifica evidencia ANTES de redactar. supported: pregunta material respaldada por fuentes de abajo (también una respuesta negativa documentada). context_needed: falta contexto del lead, no conocimiento de producto; UNA pregunta. unknown: respuesta material no respaldada, devuelve text=null. No trates el historial del vendedor ni el anuncio como prueba de capacidades. Señalar unknown no ejecuta ninguna acción; el CRM decide el handoff. Esta regla prevalece sobre perfil y playbook.',
     "PROHIBIDO devolver move_stage, update_lead, handoff, lane, next_action, fechas de follow-up, precios inventados o cualquier acción ejecutable.",
     input.isTest
       ? "[SANDBOX] Esta es una conversación de prueba del Laboratorio. NO invoques acciones reales, NO inventes datos, NO generes URLs. Limítate a redactar el texto."
@@ -204,10 +210,12 @@ function buildWriterSystemPrompt(input: WriteSalesReplyInput): string {
     agentProfileBlock(input.agentProfile),
     [
       "Reglas duras:",
+      "- Si el lead pregunta o expresa necesidad de una capacidad documentada, responde primero de forma breve y correcta; después puedes hacer UNA pregunta útil. Esta regla prevalece sobre instrucciones antiguas de ask_more_questions. No conviertas asistencia en el argumento principal.",
       "- No conviertas el chat en cuestionario. No repitas preguntas ya respondidas.",
       "- No prometas generar alumnos, ventas ni demanda. El sistema organiza la operación.",
       "- Puede empezar con procesos manuales y automatizar después.",
       "- Precio únicamente desde la oferta de abajo. Sin descuentos inexistentes.",
+      "- Usa solo modalidades de asistencia documentadas en producto/KB. No prometas biometría, QR, dispositivos ni otras modalidades sin evidencia específica. Asistencia no encabeza la venta; respóndela si el lead la consulta.",
       "- No inventes enlaces de demo ni funciones que no estén en producto o KB.",
       "- Si falta un dato esencial, redacta de forma conservadora según el plan. No tomes otra decisión.",
       "- El handoff es interno y silencioso. Nunca anuncies que pasas, derivas o comunicas al prospecto con equipo, persona o asesor, ni equivalentes. Esta regla prevalece sobre perfil, KB e instrucciones del playbook.",
@@ -301,7 +309,7 @@ function buildWriterUserPrompt(conversation: JevConversationTurn[]): string {
   return [
     "Conversación cronológica:",
     transcript,
-    "Redacta SOLO el JSON {\"text\":\"...\"} de este turno. No cambies la decisión.",
+    'Devuelve SOLO el JSON con commercial_evidence y text. Si falta evidencia material, unknown y text=null; no redactes incertidumbre.',
   ].join("\n\n");
 }
 

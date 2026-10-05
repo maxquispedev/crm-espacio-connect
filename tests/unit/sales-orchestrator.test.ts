@@ -115,19 +115,15 @@ const CONVERSATION = {
 };
 
 function queueHappyPath(nextAction: string, laneWas = "auto") {
-  // SELECTs consumidos en el happy path (orden estricto):
-  //  1) loadLeadContext (lead + current stage joined)
-  //  2) resolveStageId (stages para match semántico)
-  //  3) moveLeadStage: SELECT current lead (gateway A)
-  //  4) moveLeadStage: SELECT destination stage (gateway B) — solo si hay move
-  //  5) loadKb (entradas de KB para el writer) — irrelevante cuando shouldWrite=false
-  //  6) scheduleNextFollowUp → loadAgentProfile (null → no-op)
+  // SELECTs: lead/contexto, KB antes de Jev, perfil para writer,
+  // resolución de etapas y gateway al persistir el plan efectivo; follow-up.
   selectQueue.push(
     [{ lead: { ...LEAD, automationLane: laneWas }, stage: STAGES[0] }],
+    [], // KB antes de Jev
+    [], // perfil antes de persistir plan efectivo
     STAGES,
     [{ id: "ld_1", organizationId: "org_1", stageId: "st_new" }],
     STAGES,
-    [],
     []
   );
   evaluateJev.mockResolvedValue({
@@ -244,7 +240,7 @@ describe("runSalesOrchestratorTurn", () => {
     });
     expect(deliverReply).not.toHaveBeenCalled();
     expect(leadPatches.some((p) => "pricePresentedAt" in p)).toBe(false);
-    expect(applyHandoff).not.toHaveBeenCalled();
+    expect(applyHandoff).toHaveBeenCalledWith("cv_1", "org_1", "commercial");
   });
 
   it("schedule_call → HUMAN + handoff commercial aun si el writer falla", async () => {

@@ -47,6 +47,10 @@ export function aiMockCompletion(messages: InMessage[]): string {
     return JSON.stringify({ text: "¿Seguimos en contacto cuando te quede bien?" });
   }
 
+  if (system.includes("commercial_evidence")) {
+    return JSON.stringify({ commercial_evidence: "context_needed", text: "¿Cómo llevas hoy el control de tu academia?" });
+  }
+
   const text = lastUser.toLowerCase();
 
   // Persona pide_humano (el regex de respaldo captura la frase canónica; esta

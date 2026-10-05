@@ -1,3 +1,35 @@
+# Checkpoint 2026-10-05 — Spec 016: evidencia comercial / handoff silencioso
+
+Conocimiento de Vende Veloz: asistencia de alumnos, control/consumo de sesiones
+cuando corresponde, búsqueda por DNI/nombre/apellido y confirmación del registro.
+Confirmado en código del producto `clientes-vendeveloz365@c3928c6` (AccessControl).
+Bootstrap y runtime protegen Published anteriores sin reescribirlas; asistencia
+conserva prioridad terciaria. Precio/oferta/campañas y lógica del hotfix 015 intactos.
+
+Jev recibe KB comercial scoped sin IDs/metadata y reglas de next_action /
+needs_human_call. Writer señala `commercial_evidence`; unknown, ausencia de
+clasificación o fallo de writer → plan HUMAN/schedule_call antes del envío y
+persistencia de efectos comerciales. Handoff existente silencioso marca pending
+para Por atender / Atención humana y pausa IA por handoff_at. Sin texto/video,
+facts de entrega ni nuevos follow-ups. Capacidades documentadas responden;
+falta contexto de academia conserva pregunta. Propuesta Jev original auditada.
+
+Gates finales verdes: typecheck, lint (3 warnings preexistentes), build y test
+(**1374 pass, 9 skipped**, 118 archivos). E2E comercial 028 **32/32**, incluye
+Roberto, unknown, known, DNI/nombre, contexto, clasificación ausente, 503, pausa
+IA, UI real y sandbox. Regresión demos/hotfix 015 E2E 021 **44/44**. App Next +
+PostgreSQL exclusiva + proveedores HTTP mock; Playwright condujo /inbox.
+**Sin proveedores reales, WhatsApp real, mutación de Published real ni deploy.**
+Evidencia/comandos/limitaciones: `specs/016-commercial-evidence-handoff/tasks.md`.
+
+Commit identificable: `fix(sales): hand off unsupported commercial questions silently`.
+Siguiente paso: desplegar por el mecanismo habitual; no requiere migraciones
+ni republicar playbook. Validación semántica de proveedores reales en sandbox
+pendiente; pendientes históricos no relacionados conservados. Decisión comercial
+unknown → humano silencioso a sincronizar en Obsidian.
+
+---
+
 # Checkpoint 2026-10-05 — Spec 015: hotfix demos prematuros
 
 Objetivo: anuncio pagos/saldos + «¡Hola! Quiero más información» no envía video;

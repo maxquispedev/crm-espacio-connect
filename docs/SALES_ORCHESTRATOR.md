@@ -201,7 +201,7 @@ Congelado. Sincronizado desde `jevveloz/config/product.json` (referencia validad
     "Disciplinas y actividades",
     "Horarios y cupos",
     "Pagos, ventas, saldos y caja",
-    "Asistencia y sesiones",
+    "Control de asistencia: registro de asistencia de alumnos y control/consumo de sesiones cuando corresponda. Búsqueda por DNI, nombre o apellido y confirmación del registro.",
     "Renovaciones",
     "Promociones, cupones, productos e inventario",
     "Matrícula online opcional"
@@ -765,3 +765,42 @@ won, voucher validado o activación permanece en lógica interna, sin disclaimer
 customer-facing. HUMAN prioritario conserva precedencia sin entregar pago ni demo.
 No publicación ni reescritura del playbook productivo. Evidencia en tasks del 012;
 decisión comercial a sincronizar en Obsidian.
+
+## Evidencia comercial — spec 016 (2026-10-05)
+
+El bootstrap omitía asistencia en core_jobs, aunque el fallback mencionaba
+«Asistencia y sesiones». Ahora ambos y el refuerzo runtime para Published
+anteriores de **Vende Veloz 365** incluyen registro de asistencia de alumnos,
+control/consumo de sesiones y búsqueda por DNI, nombre o apellido con
+confirmación del registro. Prioridad terciaria intacta. Fuente ejecutable:
+`clientes-vendeveloz365@c3928c6`, `app/Filament/Pages/AccessControl.php`:
+lookup (90–116), registerAttendance (147–207), y vista access-control.blade.php
+(27–42). La sesión se consume en planes no ilimitados; no prometer biometría,
+QR ni hardware. No se modificó el producto ni su repositorio.
+
+Jev recibe la KB comercial del tenant en `state.commercial_knowledge` (solo
+pregunta/respuesta/contenido, sin IDs ni metadata). Las instrucciones runtime
+refuerzan next_action/needs_human_call sin cambiar tipos/opciones ni la fixture
+upstream. Capacidad documentada → respuesta normal; falta contexto de academia
+→ ask_more_questions; pregunta material sin evidencia → schedule_call/HUMAN.
+El bloque de oferta continúa exclusivo del writer/CRM; no se modifican precios.
+
+El writer comprueba fuentes completas antes de redactar y devuelve
+`commercial_evidence: supported | context_needed | unknown`. No ejecuta efectos.
+Unknown suprime text aunque el proveedor incluya uno; clasificación ausente
+falla cerrado a unknown. Formato inválido/fallo de writer → atención humana
+sin texto de error al prospecto. Sin regex de frases ni motor comercial nuevo.
+Los mensajes determinísticos existentes (opener/pago) conservan su camino;
+HUMAN puro sigue omitiendo el LLM. La ruta legacy y follow-up writer no cambian.
+
+El CRM convierte unknown en plan schedule_call/HUMAN **antes de persistir
+pipeline y antes de enviar texto/media**. Audita la propuesta Jev original y
+`plan.commercialEvidenceReason` (`unknown` / `writer_unavailable`). Reutiliza
+applyHandoff(commercial): handoff_at pausa IA y marca la atención pending en
+conversaciones reales. No outbound ni facts de entrega ni nuevos follow-ups.
+Sandbox conserva silencio y no crea atención operativa ni toca Graph.
+La UI ya muestra Por atender / Atención humana; no se modificó.
+
+Evidencia y comandos finales en `specs/016-commercial-evidence-handoff/tasks.md`.
+No mutación automática de Published ni deploy. Política comercial nueva de
+unknown → humano silencioso debe sincronizarse en Obsidian.

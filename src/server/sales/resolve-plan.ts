@@ -51,6 +51,7 @@ export type SalesPlan = {
   lane: AutomationLane;
   nextAction: NextActionChoice;
   paymentDeliveryAuthorized?: boolean;
+  commercialEvidenceReason?: "unknown" | "writer_unavailable";
   demoGuardReason?: "generic_curiosity_only";
   shouldReply: boolean;
   shouldHandoff: boolean;

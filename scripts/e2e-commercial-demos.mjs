@@ -38,7 +38,7 @@ export async function runCommercialDemoSelftest({ BASE, api, ok, waitFor }) {
       if (req.url === "/jev") {
         res.end(JSON.stringify({ model: "demo-e2e", answers: { real_operational_need: { type: "noul", noul: 0.16 }, purchase_intent: { type: "score", score: 0.1 }, product_fit: { type: "score", score: 0.5 }, next_action: { type: "choice", choice: action }, needs_human_call: { type: "noul", noul: 0.1 } } })); return;
       }
-      res.end(JSON.stringify({ choices: [{ message: { content: JSON.stringify({ text: "Así funciona esta parte del sistema." }) } }] }));
+      res.end(JSON.stringify({ choices: [{ message: { content: JSON.stringify({ commercial_evidence: "supported", text: "Así funciona esta parte del sistema." }) } }] }));
     } catch { res.statusCode = 500; res.end("{}"); }
   });
   await new Promise((resolve, reject) => { provider.once("error", reject); provider.listen(3033, "127.0.0.1", resolve); });

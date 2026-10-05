@@ -1,3 +1,4 @@
+import { withCommercialEvidenceQuestions, commercialEvidenceHandoff } from "./commercial-evidence";
 import { loadPaymentInstructions, renderPaymentInstructions, PAYMENT_UNAVAILABLE_TEXT } from "@/server/sales/payment-resource";
 import { asc, eq } from "drizzle-orm";
 import { getDb, schema } from "@/lib/db";
@@ -111,9 +112,10 @@ export async function runSalesOrchestratorTurn(
   const jevQuestions =
     playbook?.config.jev_questions ?? JEV_SALES_QUESTIONS_V2;
 
+  const kb = await loadKb(organizationId);
   const jev = await evaluateJev({
-    state: built.state,
-    questions: jevQuestions,
+    state: { ...built.state, commercial_knowledge: kb.map(({ question, answer, content }) => ({ question, answer, content })) },
+    questions: withCommercialEvidenceQuestions(jevQuestions),
   });
   if (!jev.ok) {
     console.error("[sales] Jev falló:", jev.error);
@@ -125,7 +127,7 @@ export async function runSalesOrchestratorTurn(
     return;
   }
 
-  const plan = resolveSalesPlan({
+  let plan = resolveSalesPlan({
     decision: jev.decision,
     conversation: built.state.conversation,
     currentSalesState: {
@@ -150,6 +152,7 @@ export async function runSalesOrchestratorTurn(
       lane: plan.lane,
       nextAction: plan.nextAction,
       demoGuardReason: plan.demoGuardReason ?? null,
+      commercialEvidenceReason: plan.commercialEvidenceReason ?? null,
       shouldHandoff: plan.shouldHandoff,
       paymentDeliveryAuthorized: plan.paymentDeliveryAuthorized === true,
     },
@@ -160,21 +163,27 @@ export async function runSalesOrchestratorTurn(
     playbook_version_number: playbook?.version_number ?? null,
   };
 
-  await persistDecision({
-    organizationId,
-    conversationId,
-    lead: leadCtx.lead,
-    stage: leadCtx.stage,
-    plan,
-    snapshot: snapshotBase,
-    playbook,
-  });
+  const persistEffectiveDecision = async () => {
+    snapshotBase.plan = { ...snapshotBase.plan, lane: plan.lane, nextAction: plan.nextAction,
+      shouldHandoff: plan.shouldHandoff, paymentDeliveryAuthorized: plan.paymentDeliveryAuthorized === true,
+      commercialEvidenceReason: plan.commercialEvidenceReason ?? null };
+    await persistDecision({
+      organizationId,
+      conversationId,
+      lead: leadCtx.lead,
+      stage: leadCtx.stage,
+      plan,
+      snapshot: snapshotBase,
+      playbook,
+    });
+  };
 
   const skipRepeatStop =
     leadCtx.lead.automationLane === "stop" && plan.lane === "stop";
   const shouldWrite = plan.shouldReply && !skipRepeatStop;
 
   if (shouldWrite && plan.paymentDeliveryAuthorized) {
+    await persistEffectiveDecision();
     // Entrega estándar autorizada ANTES de handoff. Sin LLM/KB ni retry incierto.
     try {
       const payment = await loadPaymentInstructions(organizationId);
@@ -200,7 +209,6 @@ export async function runSalesOrchestratorTurn(
     const demoSlot = plan.lane !== "human" && plan.lane !== "stop" && !plan.shouldHandoff
       ? selectDemoSlot(plan.nextAction, built.state.conversation, built.state.ad_context) : null;
     const demo = demoSlot ? await loadDemoVideo(organizationId, demoSlot) : null;
-    const kb = await loadKb(organizationId);
     // T307 — overrides para el writer: el playbook gana sobre los
     // defaults VENDE_VELOZ_*. Si llega `null` o no hay override,
     // `writeSalesReply` cae al default existente.
@@ -232,7 +240,12 @@ export async function runSalesOrchestratorTurn(
       agentProfile: await loadAgentProfileContext(organizationId),
     });
 
-    if (written.ok && written.text) {
+    if (!written.ok || written.commercialEvidence === "unknown") {
+      plan = commercialEvidenceHandoff(plan, written.ok ? "unknown" : "writer_unavailable");
+    }
+    await persistEffectiveDecision();
+
+    if (written.ok && written.text && !plan.shouldHandoff) {
       // deliverReply persiste is_test localmente sin llamar a WhatsApp.
       // Su resultado también gobierna los facts durables del sandbox.
       let demoDelivered = false;
@@ -261,6 +274,8 @@ export async function runSalesOrchestratorTurn(
       console.error("[sales] writer falló:", written.error);
     }
   }
+
+  if (!shouldWrite) await persistEffectiveDecision();
 
   // text=null en HUMAN puro omite outbound, pero conserva el efecto interno.
   if (plan.shouldHandoff) {
