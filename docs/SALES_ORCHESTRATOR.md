@@ -1,3 +1,45 @@
+# Contrato conversacional vigente — spec 020 (2026-10-06)
+
+Jev propone; Espacio Connect valida y autoriza; Writer redacta. Este corte corrige
+cuatro incidentes reales sin cambiar el motor ni la oferta:
+
+- Opener genérico: headline primero y body como fallback determinan tema
+  pagos/saldos, verano, centralización o control operativo. Beneficio breve y UNA
+  pregunta; anuncio no prueba dolor, no autoriza demo. Sin anuncio: control general.
+- «Todos/todo/varios/todos esos» inmediatamente ante priorización explícita de
+  categorías operativas es necesidad amplia. Solo si Jev pide otra pregunta y no
+  hay prioridades superiores ni demo/precio/pago/humano previos, resolver autoriza
+  show_operations_demo general. «Esos temas» requiere lista próxima del vendedor;
+  fuera de este contexto no inferir necesidad. No nueva clasificación/scoring.
+- Antes de enviar texto comercial, CRM compara últimos 10 textos salientes IA
+  no fallidos de esa conversación/tenant (también pending), con Unicode NFC,
+  lowercase, trim y whitespace colapsado. Un duplicado habilita UN retry del mismo
+  Writer, omitiendo opener fijo y señalando texto ya enviado. Si repite: silencio
+  seguro, IA operable, sin outbound/facts/jobs/movimiento de etapa. Fallo/unknown
+  conserva handoff silencioso de 016. Se compara texto final, incluido fallback
+  por demo ausente; destinos de pago autorizados y follow-ups no cambian.
+- Precio: primero S/247 hasta 50 activos; implementación asistida incluida; primer
+  pago inicia implementación y cubre primeros 30 días; desde 51 +S/1; sin permanencia.
+  70 activos sigue S/267. Sin setup/fee/cláusulas ni dominio si no viene al caso.
+  Bootstrap/fallback alineados; copy runtime de Vende Veloz prevalece sobre
+  instrucciones Published antiguas sin mutar sus filas ni valores de oferta.
+
+Snapshot lastJevDecision conserva decision original, plan.nextAction efectivo,
+questionLoopGuardReason=broad_operational_need y, si agotó retry duplicado,
+replyGuardReason=duplicate_retry_exhausted con shouldReply=false. No tablas nuevas.
+Writer responde al último mensaje, amplía «más información», no reinicia opener
+ni repite preguntas contestadas, máximo UNA pregunta. Questions canónicas intactas;
+refuerzo runtime next_action protege también Published anteriores.
+
+Reservas, ledger, confirmación de entrega, fresh-turn, media opaca, tenant y
+sandbox conservan 015–018. Regresiones: tests/unit/sales-conversation-guards,
+sales-writer y sales-demo-delivery; E2E 031 incluye A–I y 021 entero. Evidencia y
+límites finales en specs/020-conversational-production-fixes/tasks.md. Regla
+comercial nueva «Todos» ante priorización debe sincronizarse en Obsidian; no se
+escribe allí ni se duplica el detalle técnico.
+
+---
+
 # Contrato vigente — spec 017 (2026-10-05)
 
 Esta sección actualiza los contratos de entrega descritos en checkpoints
@@ -253,14 +295,14 @@ Congelado. Sincronizado desde `jevveloz/config/product.json` (referencia validad
   "how_it_starts": "El equipo puede registrar alumnos, matrículas y cobros desde el primer día. La web de matrícula y los pagos automáticos son opcionales.",
   "implementation": {
     "price": "Incluida, sin costo de implementación",
-    "kind": "incluida; el primer mes se paga por adelantado",
+    "kind": "incluida; el primer pago inicia la implementación y cubre los primeros 30 días",
     "includes": [
       "Entender cómo trabaja la academia",
       "Definir el uso del sistema",
       "Configuración con funciones existentes",
       "Carga inicial acordada",
       "Usuarios y capacitación",
-      "Primer mes pagado por adelantado",
+      "Primer pago inicia la implementación e incluye los primeros 30 días",
       "Sin permanencia obligatoria",
       "30 días de acompañamiento del uso real",
       "Dominio .com del primer año cuando la academia lo necesita; si ya tiene uno, se conecta el existente"
@@ -284,8 +326,8 @@ Congelado. Sincronizado desde `jevveloz/config/product.json` (referencia validad
 `VENDE_VELOZ_OFFER` sigue existiendo como ayuda determinística del writer/CRM (no va en el State de Jev):
 
 - moneda: PEN
-- implementación: **incluida, sin costo de setup** (no hay fee por adelantado)
-- primer mes: pagado por adelantado
+- implementación: **asistida e incluida**
+- primer pago: inicia la implementación e incluye los primeros 30 días
 - mensualidad: S/247 hasta 50 alumnos activos
 - desde el alumno activo 51: +S/1 por alumno activo
 - permanencia: no obligatoria

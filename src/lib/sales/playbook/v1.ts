@@ -1,3 +1,4 @@
+import { CONVERSATION_PROGRESS_RULE, NATURAL_PRICE_INSTRUCTION } from "@/server/sales/conversation-guards";
 import { ATTENDANCE_KNOWLEDGE } from "@/server/sales/commercial-evidence";
 import { DEMO_EVIDENCE_RULE } from "@/lib/sales/demo-evidence";
 /**
@@ -65,7 +66,7 @@ const VENDE_VELOZ_PLAYBOOK_V1_RAW: ConfigV1 = {
         "Usuarios y capacitación",
         "Primeras operaciones reales asistidas",
         "Acompañamiento de adopción durante 30 días",
-        "Primer mes pagado por adelantado",
+        "Primer pago inicia la implementación e incluye los primeros 30 días",
         "Sin permanencia obligatoria",
         "Dominio .com del primer año cuando la academia lo necesita; si ya tiene uno, se conecta el existente",
       ],
@@ -122,13 +123,12 @@ const VENDE_VELOZ_PLAYBOOK_V1_RAW: ConfigV1 = {
   },
   writer: {
     ask_more_questions:
-      "Si el lead consulta una capacidad documentada (incluida asistencia/sesiones), responde primero de forma breve y correcta; luego puedes hacer UNA pregunta útil. Si falta evidencia material, handoff silencioso. Identifica qué bloque operativo está más desordenado hoy (alumnos, pagos, horarios, saldos) y formula UNA sola pregunta concreta para entender el contexto. No conviertas la conversación en una encuesta ni repitas preguntas ya respondidas.",
+      `${CONVERSATION_PROGRESS_RULE} Si el lead consulta una capacidad documentada (incluida asistencia/sesiones), responde primero de forma breve y correcta; luego puedes hacer UNA pregunta útil. Si falta evidencia material, handoff silencioso. Identifica qué bloque operativo está más desordenado hoy (alumnos, pagos, horarios, saldos) y formula UNA sola pregunta concreta para entender el contexto. No conviertas la conversación en una encuesta ni repitas preguntas ya respondidas.`,
     show_operations_demo:
       "Mensaje breve que muestra cómo se centralizan alumnos, pagos, ventas, saldos, horarios y operación diaria en un solo lugar. Invita a verlo con un video corto o un recorrido de 3-4 pantallas reales. Evita prometer funcionalidades que no se demostraron.",
     show_online_enrollment_demo:
       "Cuando el prospecto menciona matrícula online, explica cómo funciona el formulario de inscripción, qué datos captura y cómo llegan los registros al sistema sin digitación manual. Aclara que es opcional y se activa cuando la academia lo necesita.",
-    present_price:
-      "Presenta la oferta vigente con claridad y sin rodeos: la implementación asistida está incluida y no tiene costo de setup, así que no existe fee por adelantado; el primer mes se paga por adelantado; la mensualidad es S/247 al mes hasta 50 alumnos activos y desde el alumno 51 se suma +S/1 por alumno activo adicional; no hay permanencia obligatoria. Menciona el dominio .com del primer año solo si la academia lo necesita. No menciones la renovación del dominio: desde el segundo año se cobra aparte y no encabeza el pitch. No ofrezcas descuentos que no existen, no negocies el precio base por WhatsApp y no entregues un resumen de contrato, condiciones legales ni letra chica: si el prospecto los pide, escala a una persona.",
+    present_price: NATURAL_PRICE_INSTRUCTION,
     schedule_call:
       "Handoff interno silencioso: devuelve text=null. No anuncies derivación a equipo, persona o asesor, ni generes una transición artificial. El humano toma la conversación desde el CRM.",
     schedule_follow_up:
@@ -231,13 +231,13 @@ const VENDE_VELOZ_PLAYBOOK_V1_RAW: ConfigV1 = {
         "Decide la siguiente acción comercial. En esta fase de aprendizaje el objetivo es filtrar tráfico y avanzar solo a los leads que muestran intención, no forzar el cierre autónomo de punta a punta. Pide el contexto mínimo indispensable con UNA sola pregunta concreta cuando falte un dato que cambia la decisión, y nunca conviertas la conversación en una encuesta. No repreguntes lo ya respondido, no inventes dolores y no persigas a quien no ha reaccionado. Si hay avance comercial genuino o el prospecto pide hablar con una persona, la acción correcta es escalar, no insistir.",
       criteria: {
         ask_more_questions:
-          "Curiosidad inicial o falta de contexto: hola / quiero información / más información requieren un beneficio breve y UNA pregunta útil, sin demo.",
+          "Falta UN dato que cambia la decisión: curiosidad inicial requiere un beneficio breve y UNA pregunta útil, sin demo. No repetir priorización respondida ni obligar a elegir una categoría si dice todos/varios; no preguntar porque toca.",
         show_operations_demo:
-          "El prospecto expresó una necesidad operativa concreta o pidió explícitamente un demo/ver cómo funciona. El anuncio no prueba necesidad. Ante curiosidad genérica usar ask_more_questions.",
+          "El prospecto expresó una necesidad operativa concreta o amplia (todos ante priorización de alumnos/pagos/horarios/saldos), o pidió explícitamente un demo/ver cómo funciona. El anuncio no prueba necesidad. Ante curiosidad genérica usar ask_more_questions.",
         show_online_enrollment_demo:
           "El prospecto expresó una necesidad concreta de matrícula online o pidió explícitamente ver ese proceso. El anuncio y la curiosidad genérica no bastan: usar ask_more_questions.",
         present_price:
-          "El prospecto ya entiende el valor relevante, existe suficiente contexto y muestra interés concreto para presentar la propuesta económica.",
+          "El prospecto pregunta directamente precio (responder primero sin exigir cantidad de alumnos) o ya entiende el valor relevante y muestra interés para presentar la propuesta económica.",
         schedule_call:
           "Pregunta material sin evidencia confiable: handoff humano silencioso. También complejidad de operación, múltiples sedes/decisores, necesidades especiales o solicitud explícita de humano. Una capacidad o integración documentada se responde sin handoff innecesario.",
         schedule_follow_up:

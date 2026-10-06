@@ -112,7 +112,7 @@ describe("corte 2 — el bootstrap refleja la oferta vigente", () => {
   it("la implementación se declara incluida, con primer mes adelantado y sin permanencia", () => {
     expect(OFFER.implementation.purpose).toMatch(/incluida/i);
     const includes = OFFER.implementation.includes.join(" | ");
-    expect(includes).toMatch(/primer mes pagado por adelantado/i);
+    expect(includes).toMatch(/primer pago inicia la implementación e incluye los primeros 30 días/i);
     expect(includes).toMatch(/sin permanencia obligatoria/i);
     expect(includes).toMatch(/dominio/i);
     expect(includes).toMatch(/si ya tiene uno, se conecta el existente/i);
@@ -134,13 +134,12 @@ describe("corte 2 — el bootstrap refleja la oferta vigente", () => {
 
   it("present_price del playbook: S/247, 50 incluidos, +S/1, sin permanencia, sin briefings", () => {
     const price = WRITER.present_price;
-    expect(price).toContain("S/247");
-    expect(price).toContain("50");
-    expect(price).toContain("+S/1");
+    expect(price).toContain("oferta vigente");
     expect(price).toMatch(/no hay permanencia obligatoria/i);
-    expect(price).toMatch(/primer mes se paga por adelantado/i);
-    expect(price).toMatch(/no entregues un resumen de contrato/i);
-    expect(price).toMatch(/no menciones la renovaci[oó]n del dominio/i);
+    expect(price).toContain("primer pago inicia la implementación");
+    expect(price).toContain("primeros 30 días");
+    expect(price).toContain("No uses setup, fee");
+    expect(price).toContain("No menciones dominio si no lo pregunta");
     // Los precios de la cohorte anterior no pueden quedar en la instrucción.
     expect(price).not.toMatch(/497/);
     expect(price).not.toMatch(/\b197\b/);

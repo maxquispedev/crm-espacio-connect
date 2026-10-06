@@ -44,7 +44,14 @@ const provider = http.createServer(async (req,res) => {
   }
   if(writerDelay) await new Promise(resolve=>setTimeout(resolve,writerDelay));
   if(writerFail) {res.statusCode=503;res.end('{}');return;}
-  res.end(JSON.stringify({choices:[{message:{content:JSON.stringify({commercial_evidence:'supported',text:'¿Retomamos lo que conversamos?'})}}]}));
+  const messages = JSON.parse(body).messages ?? [];
+  const commercial = messages.some(m => m.role === 'system' && m.content.includes('Eres redactor de WhatsApp'));
+  // El mock comercial debe avanzar al segundo inbound, igual que el contrato 020.
+  // El writer de follow-up conserva su fixture y su motor no se modifica.
+  const text = commercial ? (JSON.stringify(messages).includes('LEAD: sigo aquí')
+    ? 'El primer pago incluye tus primeros 30 días y la implementación asistida.'
+    : 'S/247 al mes hasta 50 alumnos activos.') : '¿Retomamos lo que conversamos?';
+  res.end(JSON.stringify({choices:[{message:{content:JSON.stringify({commercial_evidence:'supported',text})}}]}));
 });
 await new Promise(resolve => provider.listen(providerPort,'127.0.0.1',resolve));
 

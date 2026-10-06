@@ -26,6 +26,7 @@ const TABLE = Symbol.for("lab.test.table");
 
 vi.mock("drizzle-orm", () => ({
   eq: (col: string, value: unknown) => ({ kind: "eq", col, value }),
+  ne: (col: string, value: unknown) => ({ kind: "ne", col, value }),
   and: (...clauses: unknown[]) => ({ kind: "and", clauses }),
   or: (...clauses: unknown[]) => ({ kind: "or", clauses }),
   isNull: (col: string) => ({ kind: "null", col }),
@@ -70,7 +71,7 @@ function resetTables(): void {
 }
 
 type Clause =
-  | { kind: "eq"; col: string; value: unknown }
+  | { kind: "eq" | "ne"; col: string; value: unknown }
   | { kind: "and"; clauses: Clause[] }
   | { kind: "or"; clauses: Clause[] }
   | { kind: "null" | "notNull"; col: string }
@@ -84,6 +85,7 @@ function valueOf(row: Row, col: string): unknown {
 
 function evalClause(clause: Clause | undefined, row: Row): boolean {
   if (!clause) return true;
+  if (clause.kind === "ne") return valueOf(row, clause.col) !== clause.value;
   if (clause.kind === "eq") {
     const right = typeof clause.value === "string" && clause.value.includes(".")
       ? valueOf(row, clause.value) : clause.value;

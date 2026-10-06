@@ -59,7 +59,11 @@ export async function runProductionMessagingSafetySelftest({ BASE, api, ok, wait
       }
       writerCalls++;
       if (suspendWriterNext) { suspendWriterNext = false; suspended = true; await new Promise(resolve => { releaseProvider = resolve; }); suspended = false; }
-      const text = action === "present_price" ? "S/247 al mes hasta 50 alumnos activos." : JSON.stringify(body.messages).includes("LATEST-SAFETY") ? "Respuesta LATEST-SAFETY." : "Así funciona esta parte del sistema.";
+      const transcript = JSON.stringify(body.messages);
+      // El segundo turno vigente amplía el precio: no repetir el fixture inicial (020).
+      const text = action === "present_price" ? (transcript.includes("LEAD: Nueva evidencia vigente")
+        ? "La implementación asistida está incluida y el primer pago cubre tus primeros 30 días."
+        : "S/247 al mes hasta 50 alumnos activos.") : transcript.includes("LATEST-SAFETY") ? "Respuesta LATEST-SAFETY." : "Así funciona esta parte del sistema.";
       res.end(JSON.stringify({ choices: [{ message: { content: JSON.stringify(legacy ? { action: "reply", text } : { commercial_evidence: "supported", text }) } }] }));
     } catch (err) { res.statusCode = 500; res.end(JSON.stringify({ error: String(err) })); }
   });

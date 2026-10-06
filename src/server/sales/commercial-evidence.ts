@@ -1,3 +1,4 @@
+import { CONVERSATION_PROGRESS_RULE } from "./conversation-guards";
 import type { JevQuestions } from "./questions";
 import type { VendeVelozProduct } from "./vende-veloz";
 import type { SalesPlan } from "./resolve-plan";
@@ -15,7 +16,7 @@ export function withAttendanceKnowledge(product: VendeVelozProduct): VendeVelozP
 export function withCommercialEvidenceQuestions(questions: JevQuestions): JevQuestions {
   return Object.fromEntries(Object.entries(questions).map(([key, question]) => [key,
     key === "next_action" || key === "needs_human_call"
-      ? { ...question, instructions: `${question.instructions} ${COMMERCIAL_EVIDENCE_RULE}` }
+      ? { ...question, instructions: `${question.instructions} ${COMMERCIAL_EVIDENCE_RULE} ${key === "next_action" ? CONVERSATION_PROGRESS_RULE : ""}` }
       : question])) as JevQuestions;
 }
 

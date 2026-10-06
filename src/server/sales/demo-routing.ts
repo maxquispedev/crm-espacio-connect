@@ -1,3 +1,4 @@
+import { hasBroadPrioritizationReply } from "./conversation-guards";
 import type { DemoResourceSlot } from "@/lib/commercial/resources";
 import type { NextActionChoice } from "./answers";
 import type { JevAdContext, JevConversationTurn } from "./state";
@@ -12,6 +13,7 @@ export function selectDemoSlot(
 ): DemoResourceSlot | null {
   if (action === "show_online_enrollment_demo") return "demo_online_enrollment";
   if (action !== "show_operations_demo") return null;
+  if (hasBroadPrioritizationReply(conversation)) return "demo_enrollment_panel";
   for (const turn of [...conversation].reverse()) {
     if (turn.from !== "lead") continue;
     const text = turn.text.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
@@ -33,4 +35,17 @@ export function selectDemoSlot(
     return selectDemoSlot(action, [{ from: "lead", text: `${adContext.headline ?? ""} ${adContext.body ?? ""}` }]);
   }
   return "demo_enrollment_panel";
+}
+
+/** Tema del anuncio, sin atribuirle al prospecto un problema ni usar source_id. */
+export function adOpeningTopic(adContext?: JevAdContext): "payments" | "summer" | "centralization" | "control" {
+  const topic = (value: string | null | undefined) => {
+    const text = (value ?? "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+    if (/\b(?:verano|temporada alta)\b/.test(text)) return "summer" as const;
+    if (/\b(?:un solo lugar|centraliz\w*)\b/.test(text)) return "centralization" as const;
+    if (/\b(?:bajo control|control operativo)\b/.test(text)) return "control" as const;
+    if (/\b(?:pagos?|saldos?)\b/.test(text)) return "payments" as const;
+    return null;
+  };
+  return topic(adContext?.headline) ?? topic(adContext?.body) ?? "control";
 }

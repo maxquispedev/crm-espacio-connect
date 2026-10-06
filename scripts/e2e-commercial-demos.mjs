@@ -8,6 +8,7 @@ export async function runCommercialDemoSelftest({ BASE, api, ok, waitFor }) {
   const dbUrl = process.env.E2E_COMMERCIAL_DATABASE_URL ?? process.env.DATABASE_URL;
   if (!dbUrl || !local(BASE) || !local(dbUrl) || !/^(commercial_resources_test|vocero_e2e)(_|$)/.test(new URL(dbUrl).pathname.slice(1)) ||
       process.env.WA_MOCK_ENABLED !== "true" || process.env.NODE_ENV === "production") throw new Error("021 requiere app/BD locales dedicadas y mocks");
+  if (!process.env.JEV_MODEL) throw new Error("021/031 requiere JEV_MODEL ficticio para ejercitar Jev HTTP, no el canned mock");
   const health = await fetch(`${BASE}/api/health`);
   if (!health.ok) throw new Error(`021 app/BD no saludables: ${health.status}`);
   for (const key of ["META_GRAPH_BASE_URL", "TYPESAFE_JEV_ENDPOINT", "OPENROUTER_BASE_URL"]) {
@@ -21,6 +22,8 @@ export async function runCommercialDemoSelftest({ BASE, api, ok, waitFor }) {
   let failMedia = false;
   let action = "show_operations_demo";
   let providerCalls = 0;
+  let writerCalls = [];
+  let writerResponse = () => "Así funciona esta parte del sistema.";
   const provider = http.createServer(async (req, res) => {
     try {
       const chunks = []; for await (const chunk of req) chunks.push(chunk);
@@ -39,7 +42,10 @@ export async function runCommercialDemoSelftest({ BASE, api, ok, waitFor }) {
       if (req.url === "/jev") {
         res.end(JSON.stringify({ model: "demo-e2e", answers: { real_operational_need: { type: "noul", noul: 0.16 }, purchase_intent: { type: "score", score: 0.1 }, product_fit: { type: "score", score: 0.5 }, next_action: { type: "choice", choice: action }, needs_human_call: { type: "noul", noul: 0.1 } } })); return;
       }
-      res.end(JSON.stringify({ choices: [{ message: { content: JSON.stringify({ commercial_evidence: "supported", text: "Así funciona esta parte del sistema." }) } }] }));
+      const request = JSON.parse(body.toString());
+      writerCalls.push(request);
+      const reply = writerResponse(request);
+      res.end(JSON.stringify({ choices: [{ message: { content: JSON.stringify({ commercial_evidence: "supported", text: reply }) } }] }));
     } catch { res.statusCode = 500; res.end("{}"); }
   });
   await new Promise((resolve, reject) => { provider.once("error", reject); provider.listen(providerPort, "127.0.0.1", resolve); });
@@ -73,8 +79,9 @@ export async function runCommercialDemoSelftest({ BASE, api, ok, waitFor }) {
       const oldMessages = await sql`SELECT id FROM message WHERE organization_id=${org} AND direction='out'`;
       const oldIds = new Set(oldMessages.map(m => m.id));
       const before = (await api("/api/dev/wa-mock/outbox")).json?.outbox ?? [];
+      const started = Date.now();
       ok(`021 · inbound ${label}`, (await api("/api/dev/wa-mock/inbound", { method: "POST", body: JSON.stringify({ phoneNumberId: pn, from: phone, name: label, text, ...(opts.referral ? { referral: opts.referral } : {}), waMessageId: `wamid.demo.${label}.${Date.now()}` }) })).res.ok);
-      const messages = await waitFor(async () => {
+      const messages = opts.expectedSilence ? [] : await waitFor(async () => {
         const rows = await sql`SELECT m.*, a.caption, a.file_name FROM message m JOIN conversation c ON c.id=m.conversation_id
           JOIN contact ct ON ct.id=c.contact_id LEFT JOIN media_asset a ON a.id=m.media_asset_id AND a.organization_id=m.organization_id
           WHERE m.organization_id=${org} AND ct.name=${label} AND m.direction='out' ORDER BY m.created_at`;
@@ -82,6 +89,12 @@ export async function runCommercialDemoSelftest({ BASE, api, ok, waitFor }) {
         return fresh.length && fresh.every(m => m.status === "failed" || m.wa_message_id) ? fresh : null;
       }, 30000);
       if (!messages) throw new Error(`021 sin outbound ${label}`);
+      if (opts.expectedSilence) {
+        const silent = await waitFor(async () => (await sql`SELECT l.last_jev_decision FROM lead l JOIN contact c ON c.id=l.contact_id
+          WHERE l.organization_id=${org} AND c.name=${label} AND l.last_jev_evaluated_at >= ${new Date(started).toISOString()}`)[0]?.last_jev_decision?.plan?.replyGuardReason === "duplicate_retry_exhausted", 30000);
+        if (!silent) throw new Error(`031 sin silencio durable ${label}`);
+      }
+      const beforeFact = (await sql`SELECT l.demo_shown_at FROM lead l JOIN contact c ON c.id=l.contact_id WHERE l.organization_id=${org} AND c.name=${label}`)[0]?.demo_shown_at;
       // Explicit provider status confirms effects; Graph wamid alone is pending.
       for (const message of messages.filter(m => m.wa_message_id && m.status !== "failed")) {
         const status = await api("/api/dev/wa-mock/status", { method: "POST", body: JSON.stringify({ waMessageId: message.wa_message_id, status: "sent" }) });
@@ -92,7 +105,7 @@ export async function runCommercialDemoSelftest({ BASE, api, ok, waitFor }) {
       const after = (await api("/api/dev/wa-mock/outbox")).json?.outbox ?? [];
       const lead = (await sql`SELECT l.last_jev_decision, c.id AS contact_id FROM lead l JOIN contact c ON c.id=l.contact_id WHERE l.organization_id=${org} AND c.name=${label}`)[0];
       const panel = await api(`/api/contacts/${lead.contact_id}`);
-      return { messages, fact, phone, panel: panel.json, decision: lead?.last_jev_decision, outbox: after.filter(m => !before.some(b => b.n === m.n)) };
+      return { messages, fact, beforeFact, phone, panel: panel.json, decision: lead?.last_jev_decision, outbox: after.filter(m => !before.some(b => b.n === m.n)) };
     };
     for (const [index, text] of ["muéstrame matrícula y alumnos", "muéstrame pagos y saldos", "matrícula online"].entries()) {
       action = index === 2 ? "show_online_enrollment_demo" : "show_operations_demo";
@@ -124,6 +137,14 @@ export async function runCommercialDemoSelftest({ BASE, api, ok, waitFor }) {
     ok("015 · pedido explícito genérico usa anuncio", genericDemo.messages[0]?.file_name === "demo_payments_balances.mp4");
     const e = await send("organic-opener", "Hola, quiero información");
     ok("015 E · orgánico pregunta sin demo", e.messages[0]?.type === "text" && (e.messages[0].text.match(/\?/g) ?? []).length === 1 && e.outbox[0]?.type === "text" && !e.fact && e.decision?.plan?.nextAction === "ask_more_questions");
+    if (process.env.E2E_SECTION === "031") {
+      const { runConversationalProductionCases } = await import("./e2e-conversational-production.mjs");
+      await runConversationalProductionCases({ api, sql, org, pn, send, ok,
+        setAction: value => { action = value; },
+        setWriter: fn => { writerResponse = fn; writerCalls = []; },
+        getWriterCalls: () => writerCalls });
+      writerResponse = () => "Así funciona esta parte del sistema.";
+    }
     action = "show_operations_demo"; failMedia = true;
     const failed = await send("rejected", "muéstrame pagos");
     ok("021 · rechazo media visible, sin fact ni segundo envío", failed.messages.length === 1 && failed.messages[0].status === "failed" && failed.messages[0].origin === "ai" && !failed.fact && failed.outbox.length === 0);

@@ -186,3 +186,44 @@ describe("016 — evidencia antes de redactar", () => {
     expect(await writeSalesReply({ decision, plan, conversation: [{ from: "lead", text: "Necesito algo para controlar mejor mi academia" }], kb: [], facts: BASE_FACTS })).toMatchObject({ text: "¿Qué te cuesta más controlar hoy?", commercialEvidence: "context_needed" });
   });
 });
+
+describe("020 — opener por anuncio y copy runtime", () => {
+  const decision = makeDecision({ nextAction: "ask_more_questions" });
+  const plan = resolveSalesPlan({ decision, currentSalesState: BASE_FACTS, currentPipelineStage: "new" });
+  it.each([
+    ["Controla pagos y saldos pendientes", /quién pagó.*cuánto pagó.*cuánto falta cobrar/],
+    ["Prepárate antes del verano", /verano.*alumnos, pagos, horarios y consultas/],
+    ["Toda tu academia, en un solo lugar", /centraliza alumnos, apoderados, planes y horarios/],
+    ["Ten tu academia bajo control", /operación.*Excel, papel y WhatsApp/],
+  ])("%s: beneficio y una pregunta, sin asumir dolor", async (headline, content) => {
+    const result = await writeSalesReply({ decision, plan, facts: BASE_FACTS, kb: [],
+      conversation: [{ from: "lead", text: "¡Hola! Quiero más información" }],
+      adContext: { source_type: "ad", headline: String(headline), body: "Pagos y saldos" } });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.text).toMatch(content as RegExp);
+    expect(result.text!.match(/\?/g)).toHaveLength(1);
+    expect(result.text!.length).toBeLessThan(260);
+    expect(result.text).not.toMatch(/tienes deudas|tus morosos|se te pierden/);
+  });
+  it("retry omite camino fijo, explicita texto enviado y última respuesta", async () => {
+    chatJson.mockReset();
+    chatJson.mockResolvedValue({ ok: true, data: { commercial_evidence: "supported", text: "Además puedes consultar los saldos por alumno." } });
+    const result = await writeSalesReply({ decision, plan, facts: BASE_FACTS, kb: [], rejectedReply: "Opener enviado",
+      conversation: [{ from: "lead", text: "Hola" }, { from: "seller", text: "Opener enviado" }, { from: "lead", text: "Más información" }] });
+    expect(chatJson).toHaveBeenCalledOnce();
+    const prompt = JSON.stringify(chatJson.mock.calls[0]![1]);
+    expect(prompt).toContain("Opener enviado"); expect(prompt).toContain("No repitas la misma pregunta");
+    expect(prompt).toContain("Más información"); expect(result).toMatchObject({ text: expect.stringContaining("Además") });
+  });
+  it("precio ignora copy antiguo de override y da instrucciones naturales", async () => {
+    chatJson.mockReset(); chatJson.mockResolvedValue({ ok: true, data: { commercial_evidence: "supported", text: "S/247 al mes" } });
+    const d = makeDecision({ nextAction: "present_price" });
+    await writeSalesReply({ decision: d, plan: resolveSalesPlan({ decision: d, currentSalesState: BASE_FACTS, currentPipelineStage: "new" }), facts: BASE_FACTS, kb: [],
+      conversation: [{ from: "lead", text: "Precio" }], writerInstructions: { present_price: "ANTIGUA: no tiene costo de setup, no existe fee por adelantado" } });
+    const prompt = JSON.stringify(chatJson.mock.calls[0]![1]);
+    expect(prompt).not.toContain("ANTIGUA"); expect(prompt).not.toContain("sin costo de setup");
+    expect(prompt).toContain("primeros 30 días"); expect(prompt).toContain("Empieza por el precio");
+    expect(prompt).toContain("no exijas esa cantidad"); expect(prompt).toContain("S/247");
+  });
+});

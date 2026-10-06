@@ -1,9 +1,10 @@
+import { duplicatesAutomaticText } from "./conversation-guards";
 import { readTurnInbound, StaleTurnError, withCurrentTurn, captureTurnToken, isTurnCurrent, isOpaqueInbound, type TurnToken } from "@/server/ai/turn-safety";
 import { reserveDemoSlot, type DeliveryMetadata } from "@/server/sales/delivery-ledger";
 import { newId } from "@/lib/db/ids";
 import { withCommercialEvidenceQuestions, commercialEvidenceHandoff } from "./commercial-evidence";
 import { loadPaymentInstructions, renderPaymentInstructions, PAYMENT_UNAVAILABLE_TEXT } from "@/server/sales/payment-resource";
-import { asc, eq } from "drizzle-orm";
+import { asc, desc, eq, ne } from "drizzle-orm";
 import { getDb, schema } from "@/lib/db";
 import { scoped } from "@/lib/db/tenant";
 import { getConfigByVersionId, type LoadedPlaybookVersion } from "@/lib/sales/playbook/loader";
@@ -168,6 +169,9 @@ export async function runSalesOrchestratorTurn(
       lane: plan.lane,
       nextAction: plan.nextAction,
       demoGuardReason: plan.demoGuardReason ?? null,
+      questionLoopGuardReason: plan.questionLoopGuardReason ?? null,
+      replyGuardReason: plan.replyGuardReason ?? null,
+      shouldReply: plan.shouldReply,
       commercialEvidenceReason: plan.commercialEvidenceReason ?? null,
       shouldHandoff: plan.shouldHandoff,
       paymentDeliveryAuthorized: plan.paymentDeliveryAuthorized === true,
@@ -183,7 +187,8 @@ export async function runSalesOrchestratorTurn(
     if (!await current()) return false;
     snapshotBase.plan = { ...snapshotBase.plan, lane: plan.lane, nextAction: plan.nextAction,
       shouldHandoff: plan.shouldHandoff, paymentDeliveryAuthorized: plan.paymentDeliveryAuthorized === true,
-      commercialEvidenceReason: plan.commercialEvidenceReason ?? null };
+      commercialEvidenceReason: plan.commercialEvidenceReason ?? null,
+      replyGuardReason: plan.replyGuardReason ?? null, shouldReply: plan.shouldReply };
     try { return await persistDecision({
       organizationId,
       conversationId,
@@ -238,7 +243,7 @@ export async function runSalesOrchestratorTurn(
     const writerInstructions: WriterInstructions | null =
       (playbook?.config.writer as WriterInstructions | undefined) ?? null;
 
-    const written = await writeSalesReply({
+    const writerInput = {
       decision: jev.decision,
       plan,
       demo: demoSlot ? { slot: demoSlot, available: demo !== null } : undefined,
@@ -259,7 +264,25 @@ export async function runSalesOrchestratorTurn(
       writerInstructions: writerInstructions ?? undefined,
       isTest,
       agentProfile: await loadAgentProfileContext(organizationId),
-    });
+    };
+    let written = await writeSalesReply(writerInput);
+    if (!await current()) return;
+    const outgoingText = () => written.ok && written.text
+      ? demoSlot && !demo ? DEMO_UNAVAILABLE_TEXT : written.text : null;
+    let text = outgoingText();
+    if (text && !plan.shouldHandoff && await isRepeatedReply(organizationId, conversationId, text)) {
+      if (!await current()) return;
+      written = await writeSalesReply({ ...writerInput, rejectedReply: text });
+      if (!await current()) return;
+      text = outgoingText();
+      if (text && await isRepeatedReply(organizationId, conversationId, text)) {
+        // No evidencia ausente ni razón de negocio para humano: silencio, IA operable.
+        plan = { ...plan, shouldReply: false, desiredPipelineSemantic: null,
+          factUpdates: {}, followUpDirective: { kind: "none" }, replyGuardReason: "duplicate_retry_exhausted" };
+        await persistEffectiveDecision();
+        return;
+      }
+    }
 
     if (!written.ok || written.commercialEvidence === "unknown") {
       plan = commercialEvidenceHandoff(plan, written.ok ? "unknown" : "writer_unavailable");
@@ -282,7 +305,7 @@ export async function runSalesOrchestratorTurn(
           { token, leadId: leadCtx.lead.id, plan, demoSlot, scheduleFollowUp: true });
         sent = demoDelivered;
       } else {
-        sent = await deliverReply(conversation, demoSlot ? DEMO_UNAVAILABLE_TEXT : written.text,
+        sent = await deliverReply(conversation, text!,
           { token, leadId: leadCtx.lead.id, plan, scheduleFollowUp: !demoSlot });
       }
       if (sent && isTest && await current()) {
@@ -590,4 +613,14 @@ function publishConversation(organizationId: string, conversationId: string): vo
 
 function sanitizeError(detail: string): string {
   return detail.replace(/Bearer\s+\S+/gi, "Bearer [redacted]").slice(0, 500);
+}
+
+/** Incluye pending: una aceptación aún sin status tampoco autoriza repetir texto. */
+async function isRepeatedReply(organizationId: string, conversationId: string, text: string): Promise<boolean> {
+  const rows = await getDb().select({ text: schema.message.text }).from(schema.message)
+    .where(scoped(schema.message.organizationId, organizationId,
+      eq(schema.message.conversationId, conversationId), eq(schema.message.direction, "out"),
+      eq(schema.message.type, "text"), eq(schema.message.aiGenerated, true), ne(schema.message.status, "failed")))
+    .orderBy(desc(schema.message.createdAt)).limit(10);
+  return duplicatesAutomaticText(text, rows.flatMap(row => row.text ? [row.text] : []));
 }

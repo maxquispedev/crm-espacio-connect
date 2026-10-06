@@ -108,8 +108,8 @@ describe("contrato congelado Jev V2 / producto / política", () => {
 
   it("con setup 0 la implementación se declara incluida y la renovación de dominio va aparte", () => {
     expect(VENDE_VELOZ_OFFER.implementation.purpose).toMatch(/incluida/i);
-    expect(VENDE_VELOZ_OFFER.implementation.includes.join(" ")).toMatch(/incluida|adelantado/i);
-    expect(VENDE_VELOZ_OFFER.implementation.includes.join(" ")).toMatch(/primer mes pagado por adelantado/i);
+    expect(VENDE_VELOZ_OFFER.implementation.includes.join(" ")).toMatch(/incluida|primer pago/i);
+    expect(VENDE_VELOZ_OFFER.implementation.includes.join(" ")).toMatch(/primer pago inicia la implementación e incluye los primeros 30 días/i);
     expect(VENDE_VELOZ_OFFER.implementation.includes.join(" ")).toMatch(/sin permanencia obligatoria/i);
     expect(VENDE_VELOZ_OFFER.neverPromise.join(" ")).toMatch(/renovaci[oó]n del dominio/i);
     // El fallback no puede seguir anunciando los precios de la cohorte anterior.

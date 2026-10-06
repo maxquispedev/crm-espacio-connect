@@ -121,6 +121,7 @@ function queueHappyPath(nextAction: string, laneWas = "auto") {
     [{ lead: { ...LEAD, automationLane: laneWas }, stage: STAGES[0] }],
     [], // KB antes de Jev
     [], // perfil antes de persistir plan efectivo
+    ...(["schedule_call", "send_payment_instructions"].includes(nextAction) ? [] : [[]]), // textos IA recientes
     STAGES,
     [{ id: "ld_1", organizationId: "org_1", stageId: "st_new" }],
     STAGES,

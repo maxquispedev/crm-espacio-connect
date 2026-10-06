@@ -41,7 +41,8 @@ function match(row: Row, condition: SQL) {
     (row.payload as { sandboxConversationId?: string } | undefined)?.sandboxConversationId === q.params[Number(m[1]) - 1]);
   const nulls = [...q.sql.matchAll(/"\w+"\."(\w+)" is (not )?null/g)].every(m => m[2] ? row[camel(m[1]!)] != null : row[camel(m[1]!)] == null);
   const members = [...q.sql.matchAll(/"\w+"\."(\w+)" in \(([^)]+)\)/g)].every(m => [...m[2]!.matchAll(/\$(\d+)/g)].some(p => row[camel(m[1]!)] === q.params[Number(p[1]) - 1]));
-  return payload && nulls && members && [...q.sql.matchAll(/"\w+"\."(\w+)" = \$(\d+)/g)].every(m => row[camel(m[1]!)] === q.params[Number(m[2]) - 1]);
+  const unequal = [...q.sql.matchAll(/"\w+"\."(\w+)" <> \$(\d+)/g)].every(m => row[camel(m[1]!)] !== q.params[Number(m[2]) - 1]);
+  return unequal && payload && nulls && members && [...q.sql.matchAll(/"\w+"\."(\w+)" = \$(\d+)/g)].every(m => row[camel(m[1]!)] === q.params[Number(m[2]) - 1]);
 }
 function project(row: Row, projection?: Record<string, unknown>) {
   if (!projection) return { ...row };
@@ -352,5 +353,89 @@ describe("016 — unknown → handoff silencioso real antes del sender", () => {
     expect(out()).toHaveLength(0); expect(mocks.graph).not.toHaveBeenCalled();
     expect(tables.lead![0]!.automationLane).toBe("human");
     expect(tables.conversation![0]!.handoffReason).toBe("commercial");
+  });
+});
+
+describe("020 — pre-send guard en pipeline real", () => {
+  function askWithPrevious(text = "Opener ya enviado", org = "org_a", ai = true) {
+    mocks.jev.mockResolvedValue({ ok: true, decision: makeDecision({ nextAction: "ask_more_questions" }), snapshot: {} });
+    mocks.build.mockResolvedValue({ ok: true, persist: { leadId: "ld_a" }, playbook: null,
+      state: { conversation: [{ from: "seller", text }, { from: "lead", text: "Más información" }], product: {}, commercial_policy: {} } });
+    tables.message!.push({ id: "previous", organizationId: org, conversationId: "cv_a", direction: "out", type: "text", aiGenerated: ai, text, status: "sent", createdAt: new Date() });
+    return text;
+  }
+  it.each([false, true])("duplicado rechazado, retry único avanza (sandbox=%s)", async isTest => {
+    const previous = askWithPrevious(); tables.conversation![0]!.isTest = isTest;
+    mocks.writer.mockResolvedValueOnce({ ok: true, text: `  ${previous.toUpperCase()}  ` })
+      .mockResolvedValueOnce({ ok: true, commercialEvidence: "supported", text: "También puedes consultar el saldo de cada alumno." });
+    await turn();
+    expect(mocks.writer).toHaveBeenCalledTimes(2);
+    expect(mocks.writer.mock.calls[1]![0].rejectedReply.trim().toLowerCase()).toBe(previous.toLowerCase());
+    expect(out()).toHaveLength(2); expect(out()[1]!.text).toContain("También");
+    expect(tables.conversation![0]!.handoffAt).toBeUndefined();
+    expect(mocks.graph).toHaveBeenCalledTimes(isTest ? 0 : 1);
+  });
+  it("retry duplicado: silencio auditable sin facts/jobs/handoff ni loop; siguiente turno operable", async () => {
+    const previous = askWithPrevious();
+    mocks.writer.mockResolvedValue({ ok: true, text: previous });
+    await turn();
+    expect(mocks.writer).toHaveBeenCalledTimes(2); expect(out()).toHaveLength(1);
+    expect(mocks.graph).not.toHaveBeenCalled(); expect(mocks.follow).not.toHaveBeenCalled();
+    expect(tables.conversation![0]!.handoffAt).toBeUndefined(); expect(fact()).toBeNull();
+    expect(tables.lead![0]!.lastJevDecision).toMatchObject({ plan: { shouldReply: false, replyGuardReason: "duplicate_retry_exhausted" } });
+    mocks.writer.mockResolvedValue({ ok: true, text: "Información adicional sobre alumnos y horarios." });
+    await turn(); expect(out()).toHaveLength(2); expect(mocks.graph).toHaveBeenCalledOnce();
+  });
+  it.each(["unknown", "failure"])("retry %s conserva handoff 016", async mode => {
+    const previous = askWithPrevious();
+    mocks.writer.mockResolvedValueOnce({ ok: true, text: previous }).mockResolvedValueOnce(mode === "unknown"
+      ? { ok: true, text: null, commercialEvidence: "unknown" } : { ok: false, error: "provider_error" });
+    await turn(); expect(out()).toHaveLength(1); expect(mocks.graph).not.toHaveBeenCalled();
+    expect(tables.conversation![0]!.handoffReason).toBe("commercial");
+  });
+  it.each(["pending", "failed"])("texto %s se compara según aceptación/entrega", async status => {
+    const previous = askWithPrevious();
+    tables.message!.find(m => m.id === "previous")!.status = status;
+    mocks.writer.mockResolvedValue({ ok: true, text: previous });
+    await turn();
+    expect(mocks.writer).toHaveBeenCalledTimes(status === "pending" ? 2 : 1);
+    expect(mocks.graph).toHaveBeenCalledTimes(status === "pending" ? 0 : 1);
+  });
+  it.each([["org_b", true], ["org_a", false]])("no compara tenant %s / ai=%s", async (org, ai) => {
+    const previous = askWithPrevious(undefined, org as string, ai as boolean);
+    mocks.writer.mockResolvedValue({ ok: true, text: previous });
+    await turn(); expect(mocks.writer).toHaveBeenCalledOnce(); expect(mocks.graph).toHaveBeenCalledOnce();
+  });
+  it("compara fallback de demo ausente realmente enviable, no texto bruto del Writer", async () => {
+    const { DEMO_UNAVAILABLE_TEXT } = await import("@/server/sales/demo-resource");
+    askWithPrevious(DEMO_UNAVAILABLE_TEXT);
+    mocks.jev.mockResolvedValue({ ok: true, decision: makeDecision({ nextAction: "show_operations_demo" }), snapshot: {} });
+    mocks.build.mockResolvedValue({ ok: true, persist: { leadId: "ld_a" }, playbook: null,
+      state: { conversation: [{ from: "lead", text: "Muéstrame pagos" }], product: {}, commercial_policy: {} } });
+    mocks.writer.mockResolvedValue({ ok: true, text: "Texto distinto del Writer, el recurso no existe" });
+    await turn(); expect(mocks.writer).toHaveBeenCalledTimes(2); expect(out()).toHaveLength(1);
+    expect(mocks.writer.mock.calls[1]![0].rejectedReply).toBe(DEMO_UNAVAILABLE_TEXT);
+    expect(mocks.graph).not.toHaveBeenCalled(); expect(fact()).toBeNull();
+    expect(tables.lead![0]!.lastJevDecision).toMatchObject({ plan: { replyGuardReason: "duplicate_retry_exhausted", shouldReply: false } });
+  });
+  it("nuevo inbound durante retry invalida envío y snapshot preparado", async () => {
+    const previous = askWithPrevious();
+    mocks.writer.mockResolvedValueOnce({ ok: true, text: previous }).mockImplementationOnce(async () => {
+      tables.conversation![0]!.latestInboundMessageId = "in_new";
+      return { ok: true, text: "texto obsoleto" };
+    });
+    await turn(); expect(out()).toHaveLength(1); expect(mocks.graph).not.toHaveBeenCalled();
+    expect(tables.lead![0]!.lastJevDecision).toBeUndefined();
+  });
+  it("Todos en primera priorización: demo general, propuesta y reason auditados", async () => {
+    await seed("demo_enrollment_panel");
+    mocks.jev.mockResolvedValue({ ok: true, decision: makeDecision({ nextAction: "ask_more_questions" }), snapshot: {} });
+    mocks.build.mockResolvedValue({ ok: true, persist: { leadId: "ld_a" }, playbook: null,
+      state: { conversation: [{ from: "seller", text: "¿Qué se te desordena más: alumnos, pagos, horarios o saldos?" }, { from: "lead", text: "Todos" }],
+        ad_context: { headline: "Controla pagos", source_type: "ad", body: null }, product: {}, commercial_policy: {} } });
+    await turn(); expect(out()).toHaveLength(1); expect(out()[0]!.type).toBe("video"); expect(fact()).toBeNull();
+    expect(mocks.writer.mock.calls[0]![0].demo.slot).toBe("demo_enrollment_panel");
+    expect(tables.lead![0]!.lastJevDecision).toMatchObject({ decision: { nextAction: { choice: "ask_more_questions" } },
+      plan: { nextAction: "show_operations_demo", questionLoopGuardReason: "broad_operational_need" } });
   });
 });

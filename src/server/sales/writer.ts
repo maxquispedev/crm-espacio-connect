@@ -1,6 +1,7 @@
 import { COMMERCIAL_EVIDENCE_RULE, withAttendanceKnowledge } from "./commercial-evidence";
 import { hasOnlyGenericCuriosity } from "./demo-guard";
-import { selectDemoSlot } from "./demo-routing";
+import { adOpeningTopic } from "./demo-routing";
+import { CONVERSATION_PROGRESS_RULE, NATURAL_PRICE_INSTRUCTION } from "./conversation-guards";
 import type { PaymentInstructions } from "@/lib/commercial/resources";
 import { renderPaymentInstructions, PAYMENT_UNAVAILABLE_TEXT } from "@/server/sales/payment-resource";
 import { z } from "zod";
@@ -65,6 +66,8 @@ export type WriteSalesReplyInput = {
   plan: SalesPlan;
   conversation: JevConversationTurn[];
   adContext?: JevAdContext;
+  /** Un único reintento autorizado por CRM; omite el opener fijo. */
+  rejectedReply?: string;
   kb: KbEntry[];
   facts: DurableSalesFacts;
   demo?: { slot: string; available: boolean };
@@ -149,15 +152,18 @@ export async function writeSalesReply(
   if (isHumanHandoffPlan(input.plan)) return { ok: true, text: null };
 
   // Opener sin contexto operativo: respuesta acotada incluso con Published antigua.
-  if (input.plan.nextAction === "ask_more_questions" && hasOnlyGenericCuriosity(input.conversation)
+  if (!input.rejectedReply && input.plan.nextAction === "ask_more_questions" && hasOnlyGenericCuriosity(input.conversation)
       && !hasFact(input.facts.demoShownAt) && !hasFact(input.facts.pricePresentedAt)
       && !hasFact(input.facts.paymentInstructionsSentAt) && !hasFact(input.facts.humanRequestedAt)) {
     const product = withAttendanceKnowledge(input.product ?? VENDE_VELOZ_PRODUCT);
-    const slot = selectDemoSlot("show_operations_demo", [], input.adContext);
-    const payments = slot === "demo_payments_balances";
-    return { ok: true, text: payments
-      ? `Claro 😊 ${product.name} te ayuda a llevar pagos, saldos y alumnos desde un solo lugar. ¿Hoy cómo controlas lo que ya te pagaron y lo que todavía queda pendiente?`
-      : `Claro 😊 ${product.one_liner} ¿Hoy cómo llevas el control de tus alumnos y matrículas?` };
+    const topic = adOpeningTopic(input.adContext);
+    const openings = {
+      payments: `te ayuda a ordenar pagos, saldos y saber quién pagó, cuánto pagó y cuánto falta cobrar. ¿Hoy cómo controlas esos pagos en tu academia?`,
+      summer: `te ayuda a preparar el verano con alumnos, pagos, horarios y consultas organizados para la temporada alta. ¿Cómo llevas hoy el control de tu academia?`,
+      centralization: `centraliza alumnos, apoderados, planes y horarios en un solo lugar. ¿Hoy dónde llevas esa información de tu academia?`,
+      control: `te ayuda a tener la operación de tu academia en un solo lugar, sin depender de información dispersa entre Excel, papel y WhatsApp. ¿Cómo llevas hoy ese control?`,
+    };
+    return { ok: true, text: `Claro 😊 ${product.name} ${openings[topic]}` };
   }
 
   const result = await chatJson(SalesWriterOutput, buildWriterMessages(input));
@@ -211,7 +217,8 @@ function buildWriterSystemPrompt(input: WriteSalesReplyInput): string {
     [
       "Reglas duras:",
       "- Si el lead pregunta o expresa necesidad de una capacidad documentada, responde primero de forma breve y correcta; después puedes hacer UNA pregunta útil. Esta regla prevalece sobre instrucciones antiguas de ask_more_questions. No conviertas asistencia en el argumento principal.",
-      "- No conviertas el chat en cuestionario. No repitas preguntas ya respondidas.",
+      `- ${CONVERSATION_PROGRESS_RULE}`,
+      "- No repitas textualmente información ya enviada ni preguntas contestadas. Si dice más información, aporta información adicional o avanza; no repitas el opener.",
       "- No prometas generar alumnos, ventas ni demanda. El sistema organiza la operación.",
       "- Puede empezar con procesos manuales y automatizar después.",
       "- Precio únicamente desde la oferta de abajo. Sin descuentos inexistentes.",
@@ -232,7 +239,8 @@ function buildWriterSystemPrompt(input: WriteSalesReplyInput): string {
     input.demo
       ? `Recurso comercial ${input.demo.slot}: ${input.demo.available ? "disponible. Tu texto será SOLO el caption del video nativo: máximo 300 caracteres, sin enlaces ni afirmar entrega pasada." : "NO disponible. Responde brevemente que el video no está disponible ahora; no digas te envié, no inventes enlaces ni uses demos de KB."}`
       : "",
-    `Instrucción de este turno:\n${nextActionInstruction(nextAction, input.writerInstructions)}`,
+    `Instrucción de este turno:\n${nextActionInstruction(nextAction, input.writerInstructions, product.name)}`,
+    input.rejectedReply ? `El CRM rechazó esta respuesta porque ya fue enviada: ${JSON.stringify(input.rejectedReply)}. Redacta otra que avance la conversación y responda al último mensaje del prospecto. No repitas la misma pregunta ni vuelvas al opener. Máximo UNA pregunta.` : "",
   ].join("\n\n");
 }
 
@@ -244,7 +252,7 @@ function offerBlock(offer: VendeVelozOffer): string {
   return [
     "Oferta vigente (única fuente de precio):",
     setup === 0
-      ? "- Implementación asistida incluida, sin costo de setup."
+      ? "- Implementación asistida incluida. El primer pago inicia la implementación y cubre los primeros 30 días."
       : `- Implementación: S/${setup} una sola vez.`,
     `- Mensualidad: S/${offer.monthlyBase} hasta ${offer.includedActiveStudents} alumnos activos.`,
     `- Desde el alumno activo ${offer.includedActiveStudents + 1}: +S/${offer.extraPerActiveStudent} por alumno activo.`,
@@ -270,8 +278,10 @@ function factsBlock(facts: DurableSalesFacts): string {
  */
 function nextActionInstruction(
   action: SalesPlan["nextAction"],
-  instructions?: WriterInstructions
+  instructions?: WriterInstructions,
+  productName?: string
 ): string {
+  if (action === "present_price" && productName === VENDE_VELOZ_PRODUCT.name) return NATURAL_PRICE_INSTRUCTION;
   const override = instructions?.[action];
   if (override && override.trim().length > 0) return override;
   return defaultNextActionInstruction(action);
@@ -286,7 +296,7 @@ function defaultNextActionInstruction(action: SalesPlan["nextAction"]): string {
     case "show_online_enrollment_demo":
       return "Centra la respuesta en matrícula o inscripción online: el lead expresó esa necesidad. No inventes URL.";
     case "present_price":
-      return "Presenta la oferta vigente con claridad: la implementación asistida está incluida y no tiene costo de setup; el primer mes se paga por adelantado; S/247/mes hasta 50 alumnos activos; +S/1 por alumno activo desde el 51; sin permanencia obligatoria. Sin descuentos inventados y sin briefing de contrato.";
+      return NATURAL_PRICE_INSTRUCTION;
     case "send_payment_instructions":
       return "Sin autorización expresa de entrega, no generar mensaje ni destinos de pago. Handoff interno silencioso.";
     case "schedule_call":

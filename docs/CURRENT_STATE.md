@@ -1,3 +1,60 @@
+# Checkpoint 2026-10-06 — Spec 020: correcciones conversacionales de producción
+
+Implementados los cuatro incidentes reales de Vende Veloz 365 en un corte
+cohesivo. Jev propone; Espacio Connect valida y autoriza; Writer redacta.
+
+1. Opener antes binario (pagos/general): ahora headline/body distinguen pagos,
+   verano, centralización y control operativo, con beneficio + UNA pregunta,
+   sin asumir dolor ni autorizar demo. Sin campaña nueva ni lógica por IDs.
+2. Resolver no consumía «Todos» como respuesta de priorización: guard conservador
+   reconoce solo respuesta breve ante pregunta explícita/lista próxima y permite
+   demo general si Jev vuelve a preguntar, sin prioridades superiores ni demo
+   previa. Snapshot conserva propuesta original y questionLoopGuardReason.
+3. No había comparación textual pre-envío: últimos 10 textos IA no fallidos,
+   también pending, scoped por tenant/conversación; NFC/case/whitespace. UN retry
+   del Writer; repetición persistente deja silencio auditable con IA operable,
+   cero outbound/facts/jobs/movimiento. Unknown/fallo mantiene handoff 016.
+4. Bootstrap y fallback inducían copy setup/fee: ahora precio primero, implementación
+   asistida incluida, primer pago inicia implementación y cubre primeros 30 días,
+   adicional desde 51 y sin permanencia. S/247 / 50 / +S/1 intactos; 70 → S/267.
+   Refuerzo runtime para Published antiguas de Vende Veloz; no muta sus filas.
+
+Estado durable y comandos: specs/020-conversational-production-fixes/tasks.md.
+Contrato: docs/SALES_ORCHESTRATOR.md. Regresiones nuevas: 55 unit/integración
+(priorización/ambigüedad/prioridades; A–D; duplicados/retry/fallo/freshness/
+manual/tenant/pending/failed/fallback final) y E2E 031 A–I + sandbox.
+
+| Verificación | Resultado |
+|---|---|
+| typecheck / lint | exit 0 ambos; lint 3 warnings preexistentes |
+| build | exit 0 (advertencia CSS duration preexistente) |
+| pnpm test | 1547 pass / 9 skipped; 124 archivos pass + 1 skipped; exit 0 |
+| E2E 031 (incluye 021/015 entero) | 83/83, exit 0 |
+| E2E 028 (016) | 32/32, exit 0 |
+| E2E 029 (017) | 55/55, exit 0 |
+| E2E follow-ups (018) | 48/48, exit 0 |
+
+App Next dev :3020 + PostgreSQL 18.4 :55441 en bases exclusivas
+commercial_resources_test_conversation / commercial_resources_test_safety,
+proveedores HTTP :3033 y Chromium para 029. Webhook → outbox/texto/caption
+observables → status → facts/ledger/jobs; happy y unhappy. Cero WhatsApp real.
+
+Arneses follow-ups/029 ajustan solo sus mocks comerciales, que repetían el precio
+al segundo inbound y ahora deben ampliar para permitir verificar reanudación;
+ningún runtime de follow-ups, horario, addressing, sender ni exportador cambió.
+Sin schema/servicios/UI/LLM nuevos; preguntas canónicas Jev siguen hash-frozen.
+
+Límites: no interpretación de proveedores reales ni suite E2E histórica completa
+(reconocer pendientes documentados de 018); 9 tests opt-in siguen omitidos. La
+regla comercial nueva «Todos» ante priorización debe sincronizarse en Obsidian,
+sin duplicar allí detalle técnico. No se cambian otras decisiones comerciales.
+Sin push/deploy ni mutación de Published productiva. Cierre en commit único local
+`fix(sales): advance conversations without repeated questions or replies`.
+Siguiente paso: push/deploy por el flujo habitual del operador; sin migración
+nueva (0011 de 017 continúa siendo precondición de instalaciones anteriores).
+
+---
+
 # Checkpoint 2026-10-06 — Spec 019: dataset comercial JSON
 
 Implementado **Conversaciones → Bandeja → Exportar dataset comercial**. Usuario

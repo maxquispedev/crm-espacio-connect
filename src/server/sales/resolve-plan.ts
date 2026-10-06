@@ -1,3 +1,4 @@
+import { hasBroadPrioritizationReply } from "./conversation-guards";
 import { hasOnlyGenericCuriosity } from "./demo-guard";
 import type { JevConversationTurn } from "./state";
 import type { NextActionChoice, NormalizedNoul } from "@/server/sales/answers";
@@ -53,6 +54,8 @@ export type SalesPlan = {
   paymentDeliveryAuthorized?: boolean;
   commercialEvidenceReason?: "unknown" | "writer_unavailable";
   demoGuardReason?: "generic_curiosity_only";
+  questionLoopGuardReason?: "broad_operational_need";
+  replyGuardReason?: "duplicate_retry_exhausted";
   shouldReply: boolean;
   shouldHandoff: boolean;
   handoffReason: "commercial" | null;
@@ -132,6 +135,15 @@ export function resolveSalesPlan(input: ResolveSalesPlanInput): SalesPlan {
 
   if (alreadyInClose(input.currentSalesState)) {
     return autoClosePlan(nextAction, stage);
+  }
+
+  if (nextAction === "ask_more_questions" && facts.automationLane !== "human" && facts.automationLane !== "stop"
+      && !hasFact(facts.demoShownAt) && !hasFact(facts.humanRequestedAt)
+      && stage !== "won" && stage !== "lost" && hasBroadPrioritizationReply(input.conversation ?? [])) {
+    return { ...makePlan({ lane: "auto", nextAction: "show_operations_demo",
+      shouldReply: true, shouldHandoff: false,
+      desiredPipelineSemantic: pipelineIntent("active_conversation", stage),
+      followUpDirective: { kind: "none" } }), questionLoopGuardReason: "broad_operational_need" };
   }
 
   if (
