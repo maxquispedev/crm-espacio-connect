@@ -1,7 +1,12 @@
+import { scoped } from "@/lib/db/tenant";
+import { StaleTurnError, captureTurnToken, isTurnCurrent } from "@/server/ai/turn-safety";
+import { recordDelivery, invalidateDeliveries, type DeliveryMetadata } from "@/server/sales/delivery-ledger";
+import { bindOutboundWamid } from "@/server/inbox/status";
 import { eq } from "drizzle-orm";
 import { getDb, schema } from "@/lib/db";
 import { newId } from "@/lib/db/ids";
-import { graphRequest, MetaApiError, normalizeRecipient } from "@/lib/meta/client";
+import { graphRequest, MetaApiError } from "@/lib/meta/client";
+import { resolveMessageAddress, type MessageAddress } from "@/server/whatsapp/addressing";
 import { publishMessageNew } from "@/server/events/message-new";
 import {
   getCredentialsByOrg,
@@ -43,11 +48,26 @@ export class SendError extends Error {
 }
 
 type SendResult = { messageId: string };
+export { StaleTurnError } from "@/server/ai/turn-safety";
+export type AutomaticSendOptions = {
+  aiGenerated?: boolean;
+  deliveryMetadata?: DeliveryMetadata;
+  preSendGuard?: () => Promise<boolean>;
+};
+export async function ensureAutomaticSendCurrent(input: AutomaticSendOptions & { organizationId: string; conversationId: string }): Promise<void> {
+  if (input.aiGenerated && !input.deliveryMetadata) {
+    const token = await captureTurnToken(input.organizationId, input.conversationId);
+    if (!token) throw new StaleTurnError();
+    input.deliveryMetadata = { token };
+  }
+  if (input.deliveryMetadata && !await isTurnCurrent(input.deliveryMetadata.token)) throw new StaleTurnError();
+  if (input.preSendGuard && !await input.preSendGuard()) throw new StaleTurnError();
+}
 
 type SendTarget = {
   conversation: typeof schema.conversation.$inferSelect;
   credentials: Credentials;
-  recipient: string;
+  recipient: MessageAddress;
 };
 
 /**
@@ -102,11 +122,7 @@ async function prepareSend(
     );
   }
 
-  // 003: el destinatario es el teléfono normalizado o, si el contacto llegó
-  // por BSUID sin teléfono, su Business-Scoped User ID.
-  const recipient = row.contact.phone
-    ? normalizeRecipient(row.contact.phone)
-    : row.contact.waUserId;
+  const recipient = resolveMessageAddress(row.contact);
   if (!recipient) {
     throw new SendError(
       "meta_error",
@@ -117,7 +133,7 @@ async function prepareSend(
   return { conversation: row.conversation, credentials, recipient };
 }
 
-async function persistOutbound(input: {
+export async function persistOutbound(input: {
   organizationId: string;
   conversationId: string;
   waMessageId: string | null;
@@ -126,93 +142,64 @@ async function persistOutbound(input: {
   status: "pending" | "failed";
   error?: string | null;
   aiGenerated?: boolean;
-  origin: "ai" | "operator";
+  origin: "ai" | "operator" | "template";
+  deliveryMetadata?: DeliveryMetadata;
   mediaAssetId?: string | null;
   media?: typeof schema.mediaAsset.$inferSelect | null;
 }): Promise<string> {
   const db = getDb();
-  const inserted = await db
-    .insert(schema.message)
-    .values({
-      id: newId("message"),
-      organizationId: input.organizationId,
-      conversationId: input.conversationId,
-      waMessageId: input.waMessageId,
-      direction: "out",
-      type: input.type,
-      text: input.text,
-      status: input.status,
-      error: input.error ?? null,
-      aiGenerated: input.aiGenerated ?? false,
-      origin: input.origin,
-      mediaAssetId: input.mediaAssetId ?? null,
-    })
-    .returning();
-  const message = inserted[0]!;
-
-  await db
-    .update(schema.conversation)
-    .set({ lastMessageAt: new Date(), updatedAt: new Date() })
-    .where(eq(schema.conversation.id, input.conversationId));
-
-  await publishMessageNew({
-    organizationId: input.organizationId,
-    conversationId: input.conversationId,
-    message: serializeMessage(message, input.media ?? null),
+  const message = await db.transaction(async tx => {
+    const [inserted] = await tx.insert(schema.message).values({
+      id: newId("message"), organizationId: input.organizationId, conversationId: input.conversationId,
+      waMessageId: input.waMessageId, direction: "out", type: input.type, text: input.text,
+      status: input.status, error: input.error ?? null, aiGenerated: input.aiGenerated ?? false,
+      origin: input.origin, mediaAssetId: input.mediaAssetId ?? null,
+    }).returning();
+    if (!inserted) throw new Error("outbound_insert_failed");
+    if (input.deliveryMetadata) await recordDelivery(tx, inserted.id, input.deliveryMetadata);
+    await tx.update(schema.conversation).set({ lastMessageAt: new Date(), updatedAt: new Date() })
+      .where(scoped(schema.conversation.organizationId, input.organizationId, eq(schema.conversation.id, input.conversationId)));
+    return inserted;
   });
-
-  // Solo invalida la secuencia si el operador envío se aceptó; un failed
-  // (p. ej. media upload/Graph) no debe tumbar follow-ups automáticos.
-  if (input.origin === "operator" && input.status !== "failed") {
-    await cancelFollowUpsOnManualReply({
-      organizationId: input.organizationId,
-      conversationId: input.conversationId,
-    });
-    // 013 C1 - El dueño respondió desde el CRM: se espera al cliente
-    // ("waiting_client"). Best-effort, y sin efecto en un envío de la IA
-    // (`origin='ai'`), que no es una respuesta humana.
-    await bestEffortAttention(`outbound del operador ${input.conversationId}`, () =>
-      markAttentionWaitingClient({
-        organizationId: input.organizationId,
-        conversationId: input.conversationId,
-      })
-    );
-  }
-
+  await publishMessageNew({ organizationId: input.organizationId, conversationId: input.conversationId,
+    message: serializeMessage(message, input.media ?? null) });
   return message.id;
+}
+
+export async function finalizeAcceptedOutbound(input: { organizationId: string; conversationId: string; messageId: string; waMessageId: string; aiGenerated?: boolean }): Promise<void> {
+  await bindOutboundWamid(input.organizationId, input.messageId, input.waMessageId);
+  if (!input.aiGenerated) {
+    await invalidateDeliveries(input.organizationId, input.conversationId);
+    await cancelFollowUpsOnManualReply({ organizationId: input.organizationId, conversationId: input.conversationId });
+    await bestEffortAttention(`outbound del operador ${input.conversationId}`, () =>
+      markAttentionWaitingClient({ organizationId: input.organizationId, conversationId: input.conversationId }));
+  }
+}
+
+export async function failPersistedOutbound(organizationId: string, messageId: string, err: unknown): Promise<void> {
+  await getDb().update(schema.message).set({ status: "failed", error: err instanceof SendError ? err.message : "No se pudo completar el envío a WhatsApp" })
+    .where(scoped(schema.message.organizationId, organizationId, eq(schema.message.id, messageId), eq(schema.message.status, "pending")));
 }
 
 /** Envía un mensaje de texto libre por WhatsApp. */
 export async function sendText(input: {
-  conversationId: string;
-  organizationId: string;
-  text: string;
-  aiGenerated?: boolean;
-}): Promise<SendResult> {
-  const { credentials, recipient } = await prepareSend(
-    input.conversationId,
-    input.organizationId
-  );
-
-  const waMessageId = await callGraphSend(credentials, {
-    messaging_product: "whatsapp",
-    to: recipient,
-    type: "text",
-    text: { body: input.text },
-  });
-
-  const messageId = await persistOutbound({
-    organizationId: input.organizationId,
-    conversationId: input.conversationId,
-    waMessageId,
-    type: "text",
-    text: input.text,
-    status: "pending",
-    aiGenerated: input.aiGenerated,
-    origin: input.aiGenerated ? "ai" : "operator",
-  });
-
-  return { messageId };
+  conversationId: string; organizationId: string; text: string;
+} & AutomaticSendOptions): Promise<SendResult> {
+  const { credentials, recipient } = await prepareSend(input.conversationId, input.organizationId);
+  await ensureAutomaticSendCurrent(input);
+  const messageId = await persistOutbound({ ...input, waMessageId: null, type: "text", text: input.text,
+    status: "pending", origin: input.aiGenerated ? "ai" : "operator" });
+  try {
+    await ensureAutomaticSendCurrent(input);
+    const waMessageId = await callGraphSend(credentials, { messaging_product: "whatsapp", ...recipient,
+      type: "text", text: { body: input.text } });
+    await finalizeAcceptedOutbound({ ...input, messageId, waMessageId });
+    return { messageId };
+  } catch (err) {
+    await failPersistedOutbound(input.organizationId, messageId, err);
+    if (err instanceof SendError) err.messageId = messageId;
+    throw err;
+  }
 }
 
 /**
@@ -237,6 +224,8 @@ export async function sendMediaMessage(input: {
   aiGenerated?: boolean;
   /** Override tipado del kind (ver `validateOutgoing` para constraints). */
   kind?: FileMediaKind;
+  deliveryMetadata?: DeliveryMetadata;
+  preSendGuard?: () => Promise<boolean>;
 }): Promise<SendResult> {
   // Validación previa (FR-007): tipo y tamaño antes de tocar disco o red.
   // El override (typed contract) decide qué límites aplicar; el servidor
@@ -262,6 +251,8 @@ export async function sendMediaMessage(input: {
     input.organizationId
   );
 
+  await ensureAutomaticSendCurrent(input);
+
   const db = getDb();
   const assetId = newId("mediaAsset");
   const storagePath = await saveMediaFile(
@@ -285,13 +276,18 @@ export async function sendMediaMessage(input: {
     .returning();
   const asset = assetRows[0]!;
 
+  const messageId = await persistOutbound({ ...input, waMessageId: null, type: kind, text: null,
+    status: "pending", origin: input.aiGenerated ? "ai" : "operator", mediaAssetId: assetId, media: asset });
   try {
+    await ensureAutomaticSendCurrent(input);
     const waMediaId = await uploadGraphMedia(credentials, uploadFile);
     await db
       .update(schema.mediaAsset)
       .set({ waMediaId, updatedAt: new Date() })
       .where(eq(schema.mediaAsset.id, assetId));
 
+    // Upload may take seconds: validate inbound + permissions AFTER upload.
+    await ensureAutomaticSendCurrent(input);
     const mediaPayload: Record<string, unknown> = { id: waMediaId };
     if (input.caption && kind !== "audio") mediaPayload.caption = input.caption;
     if (kind === "document" && input.file.fileName) {
@@ -299,23 +295,12 @@ export async function sendMediaMessage(input: {
     }
     const waMessageId = await callGraphSend(credentials, {
       messaging_product: "whatsapp",
-      to: recipient,
+      ...recipient,
       type: kind,
       [kind]: mediaPayload,
     });
 
-    const messageId = await persistOutbound({
-      organizationId: input.organizationId,
-      conversationId: input.conversationId,
-      waMessageId,
-      type: kind,
-      text: null,
-      status: "pending",
-      origin: input.aiGenerated ? "ai" : "operator",
-      aiGenerated: input.aiGenerated,
-      mediaAssetId: assetId,
-      media: asset,
-    });
+    await finalizeAcceptedOutbound({ ...input, messageId, waMessageId });
     return { messageId };
   } catch (err) {
     let sendErr: SendError;
@@ -334,20 +319,9 @@ export async function sendMediaMessage(input: {
         "No se pudo subir el adjunto a WhatsApp"
       );
     }
-    // El contenido NO se pierde: mensaje failed con el asset ya en disco.
-    sendErr.messageId = await persistOutbound({
-      organizationId: input.organizationId,
-      conversationId: input.conversationId,
-      waMessageId: null,
-      type: kind,
-      text: null,
-      status: "failed",
-      error: sendErr.message,
-      origin: input.aiGenerated ? "ai" : "operator",
-      aiGenerated: input.aiGenerated,
-      mediaAssetId: assetId,
-      media: asset,
-    });
+    await failPersistedOutbound(input.organizationId, messageId, sendErr);
+    sendErr.messageId = messageId;
+    if (err instanceof StaleTurnError) throw err;
     throw sendErr;
   }
 }
@@ -387,12 +361,6 @@ export async function sendStructured(
           })),
         };
 
-  const waMessageId = await callGraphSend(credentials, {
-    messaging_product: "whatsapp",
-    to: recipient,
-    ...payload,
-  });
-
   const db = getDb();
   const assetRows = await db
     .insert(schema.mediaAsset)
@@ -409,7 +377,7 @@ export async function sendStructured(
   const messageId = await persistOutbound({
     organizationId: input.organizationId,
     conversationId: input.conversationId,
-    waMessageId,
+    waMessageId: null,
     type: input.kind,
     text: null,
     status: "pending",
@@ -417,6 +385,19 @@ export async function sendStructured(
     mediaAssetId: asset.id,
     media: asset,
   });
+  try {
+  const waMessageId = await callGraphSend(credentials, {
+    messaging_product: "whatsapp",
+    ...recipient,
+    ...payload,
+  });
+
+    await finalizeAcceptedOutbound({ ...input, messageId, waMessageId });
+  } catch (err) {
+    await failPersistedOutbound(input.organizationId, messageId, err);
+    if (err instanceof SendError) err.messageId = messageId;
+    throw err;
+  }
   return { messageId };
 }
 

@@ -163,8 +163,11 @@ async function runSection021() {
 
 async function main() {
   // Cortes aislados: UI, demos, pago, la cola "Por atender" de 013 y la Agenda.
-  if (["020", "021", "022", "023", "024", "025", "026", "027", "028"].includes(process.env.E2E_SECTION)) {
-    if (process.env.E2E_SECTION === "028") {
+  if (["020", "021", "022", "023", "024", "025", "026", "027", "028", "029"].includes(process.env.E2E_SECTION)) {
+    if (process.env.E2E_SECTION === "029") {
+      const { runProductionMessagingSafetySelftest } = await import("./e2e-production-messaging-safety.mjs");
+      await runProductionMessagingSafetySelftest({ BASE, api, ok, waitFor, getCookie: () => cookie });
+    } else if (process.env.E2E_SECTION === "028") {
       const { runCommercialEvidenceSelftest } = await import("./e2e-commercial-evidence.mjs");
       await runCommercialEvidenceSelftest({ BASE, api, ok, waitFor, getCookie: () => cookie });
     } else if (process.env.E2E_SECTION === "027") {
@@ -6280,7 +6283,10 @@ async function runSection020() {
       const response = page.waitForResponse((res) => res.url().endsWith(`/videos/${slot}`) && res.request().method() === "PUT");
       await page.locator(`[data-resource-slot="${slot}"] input`).setInputFiles({ name, mimeType: "video/mp4", buffer: payload });
       ok(`020 · ${name} UI rechaza`, (await response).status() === status);
-      await page.getByRole("alert").waitFor();
+      // El locator por rol (“alert”) también resolvía al `#__next-route-announcer__`
+      // que Next inyecta en el cliente: en modo strict eso son dos elementos y el
+      // check moría por ambigüedad, no por la ausencia del error real.
+      await page.locator('[role="alert"]:not(#__next-route-announcer__)').first().waitFor();
       await page.waitForFunction(() => !document.querySelector('[data-resource-slot] input').disabled);
       ok(`020 · ${name} conserva vínculo`, (await api("/api/commercial-resources")).json.videos[0].media.assetId === snapshot.videos[0].media.assetId);
     }

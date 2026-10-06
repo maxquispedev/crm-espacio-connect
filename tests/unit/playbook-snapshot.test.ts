@@ -251,3 +251,13 @@ describe("snapshot persistence (T308)", () => {
     expect(decision?.playbook_version_id).toBeNull();
   });
 });
+
+// These tests isolate legacy business/flag contracts; 017 safety has real-module regressions.
+vi.mock("@/server/ai/turn-safety", async original => ({
+  ...await original<object>(),
+  captureTurnToken: async (organizationId: string, conversationId: string) => ({ organizationId, conversationId, inboundMessageId: "msg_1", manualMessageId: null }),
+  readTurnInbound: async () => ({ id: "msg_1", type: "text" }),
+  isTurnCurrent: async () => true,
+  withCurrentTurn: async (_token: unknown, effect: (db: unknown) => Promise<unknown>) => effect((await import("@/lib/db")).getDb()),
+}));
+vi.mock("@/server/sales/delivery-ledger", async original => ({ ...await original<object>(), reserveDemoSlot: async () => true }));

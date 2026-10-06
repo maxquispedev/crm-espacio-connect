@@ -1,16 +1,16 @@
 import { and, eq } from "drizzle-orm";
 import { getDb, schema } from "@/lib/db";
 import { newId } from "@/lib/db/ids";
-import { graphRequest, MetaApiError, normalizeRecipient } from "@/lib/meta/client";
+import { graphRequest, MetaApiError } from "@/lib/meta/client";
 import { scoped } from "@/lib/db/tenant";
-import { publishMessageNew } from "@/server/events/message-new";
 import {
   getCredentialsByOrg,
   getCredentialsByWabaId,
   markReconnectRequired,
 } from "@/server/whatsapp/credentials";
-import { callGraphSend, SendError } from "@/server/inbox/send";
-import { serializeMessage } from "@/server/inbox/ingest";
+import { resolveMessageAddress } from "@/server/whatsapp/addressing";
+import type { AutomaticSendOptions } from "@/server/inbox/send";
+import { ensureAutomaticSendCurrent, persistOutbound, finalizeAcceptedOutbound, failPersistedOutbound, callGraphSend, SendError } from "@/server/inbox/send";
 import type { WebhookValue } from "@/server/inbox/webhook";
 import {
   buildTemplateGraphMessage,
@@ -435,7 +435,7 @@ export async function sendTemplate(input: {
   variables?: string[];
   /** Sufijo del botón URL dinámico (componente `button` / `sub_type: url`). */
   urlButtonSuffix?: string;
-}): Promise<{ messageId: string }> {
+} & AutomaticSendOptions): Promise<{ messageId: string }> {
   const db = getDb();
 
   const templates = await db
@@ -491,10 +491,9 @@ export async function sendTemplate(input: {
     throw new TemplateError("reconnect_required", "Reconecta el número");
   }
 
-  // 003: destinatario = teléfono normalizado o BSUID.
-  const templateRecipient = row.contact.phone
-    ? normalizeRecipient(row.contact.phone)
-    : row.contact.waUserId;
+  const templateRecipient = resolveMessageAddress(row.contact, {
+    requiresPhoneNumber: template.category.toUpperCase() === "AUTHENTICATION",
+  });
   if (!templateRecipient) {
     throw new TemplateError(
       "meta_error",
@@ -502,9 +501,15 @@ export async function sendTemplate(input: {
     );
   }
 
+  await ensureAutomaticSendCurrent(input);
+  const messageId = await persistOutbound({ ...input, waMessageId: null, type: "template",
+    text: renderBody(template.body, resolved.values), status: "pending",
+    origin: input.aiGenerated ? "ai" : "template" });
+  try {
+    await ensureAutomaticSendCurrent(input);
   const waMessageId = await callGraphSend(creds, {
     messaging_product: "whatsapp",
-    to: templateRecipient,
+    ...templateRecipient,
     type: "template",
     template: buildTemplateGraphMessage({
       name: template.name,
@@ -513,33 +518,11 @@ export async function sendTemplate(input: {
       urlButtonSuffix: input.urlButtonSuffix,
     }),
   });
-
-  const inserted = await db
-    .insert(schema.message)
-    .values({
-      id: newId("message"),
-      organizationId: input.organizationId,
-      conversationId: input.conversationId,
-      waMessageId,
-      direction: "out",
-      type: "template",
-      text: renderBody(template.body, resolved.values),
-      status: "pending",
-      origin: "template",
-    })
-    .returning();
-  const message = inserted[0]!;
-
-  await db
-    .update(schema.conversation)
-    .set({ lastMessageAt: new Date(), updatedAt: new Date() })
-    .where(eq(schema.conversation.id, input.conversationId));
-
-  await publishMessageNew({
-    organizationId: input.organizationId,
-    conversationId: input.conversationId,
-    message: serializeMessage(message),
-  });
-
-  return { messageId: message.id };
+    await finalizeAcceptedOutbound({ ...input, messageId, waMessageId });
+  } catch (err) {
+    await failPersistedOutbound(input.organizationId, messageId, err);
+    if (err instanceof SendError) err.messageId = messageId;
+    throw err;
+  }
+  return { messageId };
 }

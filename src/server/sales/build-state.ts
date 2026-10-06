@@ -420,6 +420,7 @@ function toTurn(
   message: typeof schema.message.$inferSelect | null | undefined,
   media: typeof schema.mediaAsset.$inferSelect | null
 ): JevConversationTurn | null {
+  if (message?.direction === "out" && ["pending", "failed"].includes(message.status)) return null;
   const text = turnText(message, media);
   if (!text) return null;
   return {
@@ -436,6 +437,7 @@ function turnText(
   message: typeof schema.message.$inferSelect | null | undefined,
   media: typeof schema.mediaAsset.$inferSelect | null
 ): string | null {
+  if (message?.direction === "in" && message.type !== "text") return null;
   const real = (message?.text ?? media?.caption ?? "").trim();
   if (real) return real;
   return mediaPlaceholder(media?.kind ?? message?.type ?? "unknown");

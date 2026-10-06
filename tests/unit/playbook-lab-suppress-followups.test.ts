@@ -158,11 +158,11 @@ describe("lab sandbox suppress follow-ups (T308)", () => {
     // Sandbox entrega localmente y suprime la cola durable.
     expect(scheduleNextFollowUp).not.toHaveBeenCalled();
     expect(deliverReply).toHaveBeenCalledWith(
-      expect.objectContaining({ isTest: true }), "mensaje de prueba"
+      expect.objectContaining({ isTest: true }), "mensaje de prueba", expect.any(Object)
     );
   });
 
-  it("corrida is_test=false → sigue creando follow-ups normalmente", async () => {
+  it("corrida is_test=false → adjunta autorización para crear follow-ups tras status", async () => {
     getPublishedConfigForOrg.mockResolvedValue(null);
     selectQueue.push(
       [{ lead: { ...LEAD }, stage: STAGES[0] }],
@@ -210,6 +210,17 @@ describe("lab sandbox suppress follow-ups (T308)", () => {
 
     expect(writeSalesReply).toHaveBeenCalledTimes(1);
     expect(deliverReply).toHaveBeenCalledTimes(1);
-    expect(scheduleNextFollowUp).toHaveBeenCalledTimes(1);
+    expect(scheduleNextFollowUp).not.toHaveBeenCalled();
+    expect(deliverReply.mock.calls[0]?.[2]).toMatchObject({ scheduleFollowUp: true });
   });
 });
+
+// These tests isolate legacy business/flag contracts; 017 safety has real-module regressions.
+vi.mock("@/server/ai/turn-safety", async original => ({
+  ...await original<object>(),
+  captureTurnToken: async (organizationId: string, conversationId: string) => ({ organizationId, conversationId, inboundMessageId: "msg_1", manualMessageId: null }),
+  readTurnInbound: async () => ({ id: "msg_1", type: "text" }),
+  isTurnCurrent: async () => true,
+  withCurrentTurn: async (_token: unknown, effect: (db: unknown) => Promise<unknown>) => effect((await import("@/lib/db")).getDb()),
+}));
+vi.mock("@/server/sales/delivery-ledger", async original => ({ ...await original<object>(), reserveDemoSlot: async () => true }));

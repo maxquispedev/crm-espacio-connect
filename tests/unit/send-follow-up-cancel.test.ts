@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { createMemDb, type Tables } from "../fixtures/mem-db";
 
 /**
  * Un envío operator con status=failed (media/Graph) NO debe cancelar
@@ -42,70 +43,25 @@ vi.mock("@/server/events/message-new", () => ({
 
 vi.mock("@/lib/db/ids", () => ({ newId: () => "id_test" }));
 
-function thenableChain(rows: unknown[]) {
-  const chain: Record<string, unknown> = {};
-  for (const m of ["from", "innerJoin", "leftJoin", "where", "orderBy", "limit"]) {
-    chain[m] = () => chain;
-  }
-  (chain as { then: unknown }).then = (resolve: (v: unknown) => void) =>
-    Promise.resolve(rows).then(resolve);
-  return chain;
-}
-
-const selectQueue: unknown[][] = [];
-const insertedMessages: Record<string, unknown>[] = [];
-
-vi.mock("@/lib/db", () => ({
-  getDb: () => ({
-    select: () => thenableChain(selectQueue.shift() ?? []),
-    insert: () => ({
-      values: (values: Record<string, unknown>) => {
-        if (values.direction === "out") insertedMessages.push(values);
-        const row = { id: "msg_1", createdAt: new Date(), ...values };
-        return {
-          returning: () => Promise.resolve([row]),
-        };
-      },
-    }),
-    update: () => ({
-      set: () => ({
-        where: () => Promise.resolve([]),
-      }),
-    }),
-  }),
-  schema: new Proxy(
-    {},
-    {
-      get: (_t, tableName) =>
-        new Proxy(
-          {},
-          { get: (_t2, col) => `${String(tableName)}.${String(col)}` }
-        ),
-    }
-  ),
+const tables: Tables = { conversation: [], contact: [], message: [], media_asset: [],
+  agent_profile: [], sales_outbound_delivery: [], sales_demo_reservation: [],
+  wa_status_receipt: [], sales_follow_up_job: [], conversation_attention: [] };
+const db = createMemDb(tables);
+const insertedMessages = tables.message!;
+vi.mock("@/lib/db", async () => ({
+  schema: await import("@/lib/db/schema"), getDb: () => db,
 }));
 
 describe("persistOutbound y cancelación de follow-ups", () => {
   beforeEach(() => {
-    selectQueue.length = 0;
-    insertedMessages.length = 0;
-    cancelFollowUpsOnManualReply.mockReset();
-    graphRequest.mockReset();
-    uploadGraphMedia.mockReset();
-    saveMediaFile.mockReset();
-    getCredentialsByOrg.mockReset();
-
-    selectQueue.push([
-      {
-        conversation: {
-          id: "cv_1",
-          organizationId: "org_1",
-          isTest: false,
-          lastInboundAt: new Date(),
-        },
-        contact: { id: "ct_1", phone: "5215511111111", waUserId: null },
-      },
-    ]);
+    vi.clearAllMocks();
+    for (const bucket of Object.values(tables)) bucket!.length = 0;
+    tables.conversation!.push({ id: "cv_1", organizationId: "org_1", contactId: "ct_1",
+      isTest: false, aiEnabled: true, handoffAt: null, lastInboundAt: new Date(), latestInboundMessageId: "in_1" });
+    tables.contact!.push({ id: "ct_1", organizationId: "org_1", phone: "5215511111111", waUserId: null });
+    tables.message!.push({ id: "in_1", organizationId: "org_1", conversationId: "cv_1",
+      direction: "in", type: "text", text: "Hola", createdAt: new Date(), status: "delivered" });
+    tables.agent_profile!.push({ organizationId: "org_1", enabled: true });
     getCredentialsByOrg.mockResolvedValue({
       organizationId: "org_1",
       phoneNumberId: "pn_1",

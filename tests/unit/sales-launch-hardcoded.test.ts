@@ -291,11 +291,11 @@ describe("lanzamiento: builder + orquestador + resolver reales", () => {
       expect(Object.keys(input.questions)).toContain("custom_question");
       expect(input.questions.custom_question).toMatchObject({ type: "score", instructions: "CUSTOM" });
 
-      expect(deliverReply).toHaveBeenLastCalledWith(conv, "Oferta conocida");
-      expect(scheduleNextFollowUp).toHaveBeenLastCalledWith(expect.objectContaining({ organizationId: orgId, conversationId, leadId: "ld_1" }));
+      expect(deliverReply).toHaveBeenLastCalledWith(conv, "Oferta conocida", expect.objectContaining({ scheduleFollowUp: true }));
+      expect(scheduleNextFollowUp).not.toHaveBeenCalled();
 
       // T933 (invertido): la versión usada SE AUDITA en lead y decision.
-      const patch = leadPatches.at(-2);
+      const patch = leadPatches.at(-1);
       expect(patch).toMatchObject({
         automationLane: "auto_close",
         lastJevPlaybookVersionId: `spv_${version}`,
@@ -306,7 +306,7 @@ describe("lanzamiento: builder + orquestador + resolver reales", () => {
           playbook_version_number: version,
         }),
       });
-      expect(leadPatches.at(-1)?.pricePresentedAt).toBeInstanceOf(Date);
+      expect(leadPatches.some(p => "pricePresentedAt" in p)).toBe(false);
       // Tenant-safe: toda query del turno cerró por su propia org.
       expect(scopedSpy.mock.calls.every((args) => args[1] === orgId)).toBe(true);
       scopedSpy.mockClear();
@@ -397,3 +397,13 @@ describe("runtime publicado en producción — el corte 3 ENCIENDE el runtime", 
     expect(VENDE_VELOZ_OFFER.extraPerActiveStudent).toBe(1);
   });
 });
+
+// These tests isolate legacy business/flag contracts; 017 safety has real-module regressions.
+vi.mock("@/server/ai/turn-safety", async original => ({
+  ...await original<object>(),
+  captureTurnToken: async (organizationId: string, conversationId: string) => ({ organizationId, conversationId, inboundMessageId: "msg_1", manualMessageId: null }),
+  readTurnInbound: async () => ({ id: "msg_1", type: "text" }),
+  isTurnCurrent: async () => true,
+  withCurrentTurn: async (_token: unknown, effect: (db: unknown) => Promise<unknown>) => effect((await import("@/lib/db")).getDb()),
+}));
+vi.mock("@/server/sales/delivery-ledger", async original => ({ ...await original<object>(), reserveDemoSlot: async () => true }));

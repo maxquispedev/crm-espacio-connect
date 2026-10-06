@@ -1,3 +1,119 @@
+# Checkpoint 2026-10-06 — Spec 017: seguridad de mensajería productiva
+
+**Los siete incidentes están implementados, integrated y verificados en vivo.
+Gates verdes. E2E 029 55/55.** Cero proveedores reales, cero WhatsApp real,
+cero deploy, cero push.
+
+Récord durable: `specs/017-production-messaging-safety/` (spec, plan, tasks e
+`integration-evidence.md` con el entorno exacto y los límites).
+
+**El contrato que cambia de fondo.** Un `wamid` de Graph significa **pending**, no
+entrega comercial. Mensaje y ledger se persisten *antes* del request; el primer
+status exitoso `sent`/`delivered`/`read` aplica facts y scheduling en la misma
+transacción tenant-scoped. `failed` es terminal para la autorización comercial:
+invalida los efectos y jobs ligados a ese outbound, conserva hechos anteriores
+independientes y deja atención humana segura, sin retry automático ni LOST. Un
+receipt que llega antes de la respuesta Graph se guarda y se reconcilia al ligar
+el `wamid`; duplicados y estados exitosos fuera de orden no repiten efectos.
+
+**Media opaca pasa a humano.** Audio, imagen, video, documento, sticker y
+ubicación persisten inbound y asset, cancelan seguimientos y producen handoff
+silencioso `unsupported_media`: cero Jev, cero writer, cero outbound, cero facts,
+cero jobs. Un caption no equivale a interpretar el archivo.
+
+**Turnos frescos.** Cada turno captura el inbound vigente y lo revalida antes de
+cada efecto comercial, hecho, movimiento de pipeline y envío — también después
+del upload de media. Una ráfaga durante el proveedor deja **una sola** respuesta,
+la del último mensaje, tanto en legacy como en orquestador.
+
+**Dirección de mensajes.** Una abstracción servidor única: BSUID va en
+`recipient` y nunca en `to`; teléfono normalizado va en `to` y nunca en
+`recipient`; las plantillas de autenticación conservan la excepción que exige
+teléfono. Nunca se fabrica un teléfono a partir de un BSUID ni al revés, y
+sandbox no toca Graph.
+
+**Reservas de demo durables.** UNIQUE `(organization_id, conversation_id, slot)`
+reserva el slot antes del video automático: repetirlo —pendiente, fallido o
+incierto— falla cerrado con `duplicate_demo` silencioso, sin caption huérfano ni
+segundo video. La incertidumbre de Graph no autoriza retry. Slots distintos y el
+envío manual conservan sus reglas.
+
+## Verificación ejecutada
+
+| Gate | Resultado |
+|---|---|
+| `pnpm typecheck` | exit 0 |
+| `pnpm lint` | exit 0 — 0 errores, 3 warnings preexistentes |
+| `pnpm build` | exit 0 |
+| `pnpm test` | **1446 pass / 9 skipped**, 119 archivos pass + 1 skipped |
+| E2E 029 (spec017) | **55/55**, exit 0 |
+| E2E 021 / 022 / 028 / 020 | **44/44 · 27/27 · 32/32 · 44/44**, exit 0 |
+
+App Next real, webhook HTTP firmado, PostgreSQL 18.4 en base exclusiva
+`commercial_resources_test_safety`, proveedores deterministas locales y Chromium
+conduciendo la Bandeja. Ningún check verde por status 2xx: se comprueba texto
+emitido, payload Graph, contadores, hechos/jobs durables y estado en pantalla.
+En PostgreSQL **físico** se observaron los rechazos 23505 (reserva concurrente),
+23503 (FK compuesta entre tenants), 23505 (receipt duplicado) y el trigger de
+pausa que invalida la autorización pending sin que reactivar IA la recupere.
+
+Migración `drizzle/0011_messaging_safety.sql` aplicada y **re-ejecutable**
+(dos corridas seguidas, sin backfill).
+
+**Corrección colateral honesta:** la sección 020 no se había re-ejecutado desde
+spec 011 y moría por un locator ambiguo que también resolvía al
+`#__next-route-announcer__` de Next. Era arnés, no runtime: commit `89e6ba2`,
+ahora 44/44.
+
+## Pendientes que NO son opcionales
+
+1. **Aplicar la migración 0011 en el entorno destino antes de desplegar.** El
+   código consulta columnas y tablas que sólo existen después de ella.
+2. `020 · persistencia tras reinicio` quedó **PENDIENTE**: check opt-in que exige
+   `E2E_COMMERCIAL_RESTART_ARGV_JSON`. No se reporta como ejecutado.
+3. Validación semántica de proveedores reales (Jev/LLM) sigue pendiente, igual
+   que en 015/016; aquí todo se verificó contra fixtures deterministas.
+4. Sin backfill de hechos ni reservas históricas: los mensajes y facts previos no
+   se inventan ni se reescriben.
+5. T008 **cerrado**: `main` LOCAL ya tiene **un único commit** con todo el Spec
+   017 (squash de los commits de los tres workers y del integrador). Árbol
+   limpio y ancestry verificados. Sin push, sin deploy, sin limpiar worktrees.
+6. La decisión «media opaca → humano silencioso» sigue pendiente de sincronizar
+   en el cerebro de negocio (Obsidian); este corte no escribe allí.
+
+Commits identificables del cierre de integración: `89e6ba2` (arnés 020),
+`8e1f1c8` (evidencia de integración), `ca0340b` (contrato de entrega en docs de
+dominio + runbook 029). Los tres descendientes (`messaging-addressing`,
+`messaging-safety`, `messaging-integrator`) quedaron **contenidos** en el
+integrador: nada quedó sin commit ni fuera de la integración. Siguiente paso
+exacto: aplicar 0011 en el entorno destino y desplegar por el mecanismo habitual.
+
+## Verificación replicada por el coordinador
+
+El coordinador **no heredó** los resultados del integrador: repetió los cuatro
+gates, los unitarios de la 017 y los cinco cortes E2E contra el árbol integrado,
+con sus propias instancias de app. Resultado **idéntico**:
+
+| Verificación | Resultado |
+|---|---|
+| `pnpm typecheck` / `pnpm lint` / `pnpm build` | exit 0 los tres (lint: 0 errores, 3 warnings preexistentes) |
+| `pnpm test` | **1446 pass / 9 skipped**, exit 0 |
+| Unitarios 017 (safety + addressing) | **70/70 pass** |
+| E2E 029 | **55/55**, exit 0 |
+| E2E 021 / 022 / 028 / 020 | **44/44 · 27/27 · 32/32 · 44/44**, exit 0 |
+| Migración 0011 | aplicada y re-ejecutable (dos corridas) |
+
+Dos condiciones del **entorno de prueba** (no de código) que hubo que resolver:
+Chromium no arrancaba por `libnspr4.so` ausente en el host (se resolvió con
+`LD_LIBRARY_PATH` a las libs ya presentes) y `ffmpeg` no estaba en `PATH` para
+el MP4 sintético del self-test (binario estático **sólo de prueba**; nada se
+añadió a `package.json` ni al runtime). Además, la instancia de app que el
+integrador dejó corriendo tenía `.next` corrupto por compartir entre `build` y
+`dev`, así que el coordinador levantó instancias propias en puertos limpios. Los
+worktrees de los workers **no se tocaron**.
+
+---
+
 # Checkpoint 2026-10-05 — Spec 016: evidencia comercial / handoff silencioso
 
 Conocimiento de Vende Veloz: asistencia de alumnos, control/consumo de sesiones

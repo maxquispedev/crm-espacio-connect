@@ -19,10 +19,18 @@ process.env.TZ = 'America/Lima';
 let writerFail = false;
 let writerDelay = 0;
 const answers = {real_operational_need:{type:'noul',noul:0.62},product_fit:{type:'score',score:2.4},motivation_to_change:{type:'score',score:1.8},purchase_intent:{type:'score',score:1.5},buying_timing:{type:'choice',choice:'unknown'},main_value_proposition:{type:'choice',choice:'operational_control'},next_action:{type:'choice',choice:'present_price'},needs_human_call:{type:'noul',noul:0.12}};
+const providerPort = Number(process.env.E2E_COMMERCIAL_PROVIDER_PORT ?? 3022);
 const provider = http.createServer(async (req,res) => {
-  let body = "";
-  for await (const chunk of req) { body += chunk; }
+  const chunks = []; for await (const chunk of req) chunks.push(chunk);
+  const raw = Buffer.concat(chunks);
+  let body = raw.toString();
   res.setHeader('content-type','application/json');
+  if (req.url.startsWith('/graph/')) {
+    const upstream = await fetch(`${process.env.APP_BASE_URL}/api/dev/wa-mock${req.url}`, {
+      method: req.method, headers: { authorization: req.headers.authorization ?? '', 'content-type': req.headers['content-type'] ?? 'application/json' },
+      ...(req.method === 'POST' ? { body: raw } : {}) });
+    res.statusCode = upstream.status; res.end(await upstream.text()); return;
+  }
   if(req.url === '/jev') {
     const payload = JSON.parse(body);
     const invalid = Object.entries(payload.questions).find(([, q]) =>
@@ -38,7 +46,7 @@ const provider = http.createServer(async (req,res) => {
   if(writerFail) {res.statusCode=503;res.end('{}');return;}
   res.end(JSON.stringify({choices:[{message:{content:JSON.stringify({commercial_evidence:'supported',text:'¿Retomamos lo que conversamos?'})}}]}));
 });
-await new Promise(resolve => provider.listen(3022,'127.0.0.1',resolve));
+await new Promise(resolve => provider.listen(providerPort,'127.0.0.1',resolve));
 
 const BASE = process.env.APP_BASE_URL ?? "http://localhost:3000";
 
@@ -80,7 +88,6 @@ async function api(path, opts = {}) {
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const PN = "PN-E2E-1";
-const PN_B = "PN-E2E-2";
 const FROM_FU = "521555019901";
 const FROM_FU_E = "521555019902";
 
@@ -115,7 +122,6 @@ async function main() {
     });
   }
   ok("follow-ups · signup/login operador", reg.res.ok, JSON.stringify(reg.json));
-  const cookieA = cookie;
 
   // El registro NO crea organización (Better Auth organization plugin sin
   // `createOrganizationOnSignUp`): sin un tenant, `requireSession` responde
@@ -147,6 +153,14 @@ async function main() {
   // Fixture exclusivamente de esta BD local efímera.
 
   const sql = postgres(process.env.DATABASE_URL, { onnotice: () => {} });
+  const confirmPending = async () => {
+    const pending = await sql`SELECT wa_message_id FROM message WHERE organization_id=${orgA.id} AND direction='out' AND status='pending' AND wa_message_id IS NOT NULL`;
+    for (const row of pending) {
+      const status = await api('/api/dev/wa-mock/status', {method:'POST', body:JSON.stringify({waMessageId:row.wa_message_id,status:'sent'})});
+      if (!status.res.ok) throw Error('follow-ups explicit status rejected');
+      if (!await waitFor(async () => (await sql`SELECT status FROM message WHERE organization_id=${orgA.id} AND wa_message_id=${row.wa_message_id}`)[0]?.status === 'sent')) throw Error('follow-ups status not applied');
+    }
+  };
   await sql`delete from contact where organization_id=${orgA.id}`;
   await sql`insert into agent_profile (id, organization_id, enabled, sales_orchestrator_enabled, sales_follow_ups_enabled)
     values ('ap_launch', ${orgA.id}, true, true, true) on conflict (organization_id) do nothing`;
@@ -199,6 +213,7 @@ async function main() {
   }, 25000);
   ok("A el agente respondió", Boolean(fuAgentOut), JSON.stringify(fuAgentOut));
 
+  await confirmPending();
   const fuContactId = fuConv?.contact?.id;
   const fuDetail = fuContactId
     ? await api(`/api/contacts/${fuContactId}`)
@@ -245,6 +260,7 @@ async function main() {
     `${outBeforeB} → ${outAfterB}`
   );
 
+  await confirmPending();
   await api("/api/dev/wa-mock/inbound", {
     method: "POST",
     body: JSON.stringify({
@@ -270,6 +286,7 @@ async function main() {
   ok('C job siguiente cancelado durablemente por inbound', cancelledInbound.length > 0);
 
   const fuAgentOut2 = await waitFor(async () => {
+    await confirmPending();
     if (!fuConv?.id) return null;
     const detail = await api(`/api/contacts/${fuContactId}`);
     return detail.json?.lead?.sales?.nextFollowUpAt ? detail.json : null;
@@ -286,6 +303,7 @@ async function main() {
       body: JSON.stringify({ expire: true, leadId: fuLeadId }),
     });
     ok(`D tick ${i + 1}/3`, tick.res.ok, JSON.stringify(tick.json));
+    await confirmPending();
     await sleep(300);
   }
   const afterD = fuContactId
@@ -336,6 +354,7 @@ async function main() {
     return list.find((c) => c.contact?.name === "Lead Ventana Cerrada") ?? null;
   });
   await waitFor(async () => {
+    await confirmPending();
     if (!eConv?.contact?.id) return null;
     const d = await api(`/api/contacts/${eConv.contact.id}`);
     return d.json?.lead?.sales?.nextFollowUpAt ? d.json : null;
@@ -401,7 +420,7 @@ async function main() {
   }
   const job = async (id) => (await sql`select * from sales_follow_up_job where id=${id}`)[0];
   const outCount = async () => ((await api('/api/dev/wa-mock/outbox')).json?.outbox ?? []).length;
-  const tick = () => api('/api/dev/follow-ups/run', {method:'POST',body:JSON.stringify({expire:false})});
+  const tick = async () => { const result = await api('/api/dev/follow-ups/run', {method:'POST',body:JSON.stringify({expire:false})}); await confirmPending(); return result; };
   const before = await outCount();
   const concurrentId = await seedJob();
   writerDelay = 500;
@@ -436,6 +455,7 @@ async function main() {
     retry.attempt_number===1 && retryLead.follow_up_count===0 && retryLead.due===retryDue && (await outCount())===retryBefore);
   writerFail = false;
   await api('/api/dev/follow-ups/run',{method:'POST',body:JSON.stringify({expire:true,leadId:ctx.lead})});
+  await confirmPending();
   ok('retry entrega el mismo job una sola vez', (await job(retryId)).status==='sent' &&
     (await job(retryId)).attempt_number===1 && (await outCount())===retryBefore+1);
 
@@ -465,6 +485,9 @@ async function main() {
     values (${`ld_${orgB}`},${orgB},${`ct_${orgB}`},${`st_${orgB}`})`;
   await sql`insert into conversation(id,organization_id,contact_id,is_test)
     values (${`cv_${orgB}`},${orgB},${`ct_${orgB}`},true)`;
+  // A durable follow-up is anchored in actual conversational evidence, including sandbox.
+  await sql`insert into message(id,organization_id,conversation_id,direction,type,text,status)
+    values (${`msg_${orgB}`},${orgB},${`cv_${orgB}`},'in','text','Contexto sandbox de seguimiento','delivered')`;
   const bCtx={org:orgB,lead:`ld_${orgB}`,conv:`cv_${orgB}`};
   const aId=await seedJob();const bId=await seedJob(bCtx);
   const tenantBefore=await outCount();await tick();

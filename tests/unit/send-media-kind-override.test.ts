@@ -11,6 +11,7 @@
  * sino que se declara el override tipado y el servidor lo aplica.
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { createMemDb, type Tables } from "../fixtures/mem-db";
 
 const uploadGraphMedia = vi.hoisted(() => vi.fn());
 const graphRequest = vi.hoisted(() => vi.fn());
@@ -54,53 +55,14 @@ vi.mock("@/server/sales/follow-ups/store", () => ({
 
 vi.mock("@/lib/db/ids", () => ({ newId: () => "id_test" }));
 
-function thenableChain(rows: unknown[]) {
-  const chain: Record<string, unknown> = {};
-  for (const m of ["from", "innerJoin", "where", "orderBy", "limit"]) {
-    chain[m] = () => chain;
-  }
-  (chain as { then: unknown }).then = (resolve: (v: unknown) => void) =>
-    Promise.resolve(rows).then(resolve);
-  return chain;
-}
-
-const selectQueue: unknown[][] = [];
-const insertedAssets: Record<string, unknown>[] = [];
-const insertedMessages: Record<string, unknown>[] = [];
-const updateCalls: { values: Record<string, unknown>; where: unknown }[] = [];
-
-vi.mock("@/lib/db", () => ({
-  getDb: () => ({
-    select: () => thenableChain(selectQueue.shift() ?? []),
-    insert: (table: { name?: string }) => ({
-      values: (values: Record<string, unknown>) => {
-        if (table?.name === "media_asset" || values?.storagePath !== undefined) {
-          insertedAssets.push(values);
-        }
-        if (values?.direction === "out") insertedMessages.push(values);
-        const row = { id: "row_test", createdAt: new Date(), ...values };
-        return { returning: () => Promise.resolve([row]) };
-      },
-    }),
-    update: () => ({
-      set: (values: Record<string, unknown>) => ({
-        where: () => {
-          updateCalls.push({ values, where: "x" });
-          return Promise.resolve([]);
-        },
-      }),
-    }),
-  }),
-  schema: new Proxy(
-    {},
-    {
-      get: (_t, tableName) =>
-        new Proxy(
-          {},
-          { get: (_t2, col) => `${String(tableName)}.${String(col)}` }
-        ),
-    }
-  ),
+const tables: Tables = { conversation: [], contact: [], message: [], media_asset: [],
+  agent_profile: [], sales_outbound_delivery: [], sales_demo_reservation: [],
+  wa_status_receipt: [], sales_follow_up_job: [], conversation_attention: [] };
+const db = createMemDb(tables);
+const insertedMessages = tables.message!;
+const insertedAssets = tables.media_asset!;
+vi.mock("@/lib/db", async () => ({
+  schema: await import("@/lib/db/schema"), getDb: () => db,
 }));
 
 describe("sendMediaMessage — override kind=document", () => {
@@ -111,22 +73,14 @@ describe("sendMediaMessage — override kind=document", () => {
     getCredentialsByOrg.mockReset();
     publishMessageNew.mockReset();
     cancelFollowUpsOnManualReply.mockReset();
-    selectQueue.length = 0;
-    insertedAssets.length = 0;
-    insertedMessages.length = 0;
-    updateCalls.length = 0;
-
-    selectQueue.push([
-      {
-        conversation: {
-          id: "cv_1",
-          organizationId: "org_1",
-          isTest: false,
-          lastInboundAt: new Date(),
-        },
-        contact: { id: "ct_1", phone: "5215511111111", waUserId: null },
-      },
-    ]);
+    vi.clearAllMocks();
+    for (const bucket of Object.values(tables)) bucket!.length = 0;
+    tables.conversation!.push({ id: "cv_1", organizationId: "org_1", contactId: "ct_1",
+      isTest: false, aiEnabled: true, handoffAt: null, lastInboundAt: new Date(), latestInboundMessageId: "in_1" });
+    tables.contact!.push({ id: "ct_1", organizationId: "org_1", phone: "5215511111111", waUserId: null });
+    tables.message!.push({ id: "in_1", organizationId: "org_1", conversationId: "cv_1",
+      direction: "in", type: "text", text: "Hola", createdAt: new Date(), status: "delivered" });
+    tables.agent_profile!.push({ organizationId: "org_1", enabled: true });
     getCredentialsByOrg.mockResolvedValue({
       organizationId: "org_1",
       phoneNumberId: "pn_1",
@@ -149,9 +103,7 @@ describe("sendMediaMessage — override kind=document", () => {
     });
 
     expect(result.messageId).toBeTruthy();
-    // El mock de newId devuelve "id_test" para message y "row_test" para
-    // mediaAsset (ver el orden de inserción: primero asset, luego message).
-    // Aquí validamos que el sender devuelve un ID, no el ID específico.
+    // Validamos el ID devuelto sin acoplar el contrato al generador del fixture.
     // Subido a Graph con application/octet-stream (NO con video/mp4) para
     // esquivar el chequeo de tamaño de video en la Cloud API.
     expect(uploadGraphMedia).toHaveBeenCalledTimes(1);
@@ -233,7 +185,7 @@ describe("sendMediaMessage — override kind=document", () => {
     const sent = graphRequest.mock.calls[0]![1].body;
     expect(sent).toMatchObject({ type: "video", video: { caption: "Así funciona" } });
     expect(insertedAssets[0]?.caption).toBe("Así funciona");
-    expect(insertedMessages[0]).toMatchObject({ origin: aiGenerated ? "ai" : "operator", aiGenerated, type: "video", text: null });
+    expect(insertedMessages.find(m => m.direction === "out")).toMatchObject({ origin: aiGenerated ? "ai" : "operator", aiGenerated, type: "video", text: null });
     expect(cancelFollowUpsOnManualReply).toHaveBeenCalledTimes(aiGenerated ? 0 : 1);
   });
 
@@ -244,7 +196,7 @@ describe("sendMediaMessage — override kind=document", () => {
     if (failure === "missing-id") graphRequest.mockResolvedValue({});
     await expect(sendMediaMessage({ conversationId: "cv_1", organizationId: "org_1", aiGenerated: true,
       file: { data: Buffer.from("video"), mimeType: "video/mp4" }, caption: "Demo" })).rejects.toThrow();
-    expect(insertedMessages[0]).toMatchObject({ status: "failed", origin: "ai", aiGenerated: true });
+    expect(insertedMessages.find(m => m.direction === "out")).toMatchObject({ status: "failed", origin: "ai", aiGenerated: true });
     expect(cancelFollowUpsOnManualReply).not.toHaveBeenCalled();
     expect(uploadGraphMedia).toHaveBeenCalledTimes(1);
     expect(graphRequest).toHaveBeenCalledTimes(failure === "upload" ? 0 : 1);

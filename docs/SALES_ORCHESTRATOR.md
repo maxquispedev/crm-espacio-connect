@@ -1,3 +1,41 @@
+# Contrato vigente — spec 017 (2026-10-05)
+
+Esta sección actualiza los contratos de entrega descritos en checkpoints
+históricos: obtener un `wamid` de Graph significa **pending**, no entrega
+comercial confirmada. Mensaje y ledger se persisten antes del request; receipts
+`sent`/`delivered`/`read` se reconcilian aun si llegan antes de la respuesta Graph.
+La primera confirmación aplica facts y scheduling en una transacción tenant-scoped;
+duplicados y estados exitosos fuera de orden no repiten efectos. `failed` es
+terminal: invalida efectos/jobs ligados a ese mensaje, conserva facts anteriores
+independientes y deja atención humana segura sin retry automático ni LOST.
+Pago multipart necesita confirmar todas las partes; se conserva su handoff
+comercial intencional, sin autorizar callbacks obsoletos de otros turnos.
+
+Audio, imagen, video, documento, sticker y ubicación sin interpretación fiable
+persisten inbound/asset y cancelan seguimientos, pero no consultan Jev/writer ni
+responden: handoff silencioso `unsupported_media`. Caption no equivale a interpretar
+el archivo. Historial opaco tampoco se presenta al modelo como contenido entendido.
+Cada turno captura el inbound vigente y lo revalida antes de efectos, writer/sender,
+facts y cambios de pipeline. Inbound nuevo, pausa o respuesta manual invalidan
+su autorización; esto aplica también a legacy y facts locales de sandbox.
+
+Una reserva durable UNIQUE por organización/conversación/slot precede al envío
+automático de demo. Repetir el slot pendiente, fallido o incierto no reenvía video;
+`duplicate_demo` solicita revisión humana silenciosa. Slots distintos y envío manual
+conservan sus reglas. BSUID usa `recipient` escalar; teléfono usa `to` normalizado.
+La abstracción compartida sirve texto/media/plantillas/follow-ups; authentication
+requiere teléfono. No usar BSUID como `to` ni fabricar teléfonos.
+
+Confirmación tardía puede registrar entrega sin reabrir 24h; inbound/manual/handoff
+obsoleto no crea seguimientos. Sandbox no toca Graph. Published, precios, Agenda,
+atribución y aislamiento tenant conservan sus contratos. Antes de desplegar este
+código se requiere migración **0011**; no hay backfill ficticio de entregas/reservas
+históricas. Evidencia reproducible: `specs/017-production-messaging-safety/integration-evidence.md`.
+La decisión de media opaca → humano silencioso queda pendiente de sincronizar en
+Obsidian; este corte no escribe en el cerebro de negocio.
+
+---
+
 ## Hotfix 015 — evidencia y routing de demos (2026-10-05)
 
 Un saludo/pedido genérico de información es curiosidad, no necesidad. El anuncio

@@ -131,7 +131,7 @@ function makeHarness() {
         aiEnabled: true,
         handoffAt: null,
         handoffReason: null,
-        lastInboundAt: null,
+        lastInboundAt: null, latestInboundMessageId: null,
         lastMessageAt: null,
         unreadCount: 0,
         createdAt: new Date(),

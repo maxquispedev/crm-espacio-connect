@@ -39,7 +39,9 @@ function match(row: Row, condition: SQL) {
   const q = dialect.sqlToQuery(condition);
   const payload = [...q.sql.matchAll(/->>'sandboxConversationId' = \$(\d+)/g)].every(m =>
     (row.payload as { sandboxConversationId?: string } | undefined)?.sandboxConversationId === q.params[Number(m[1]) - 1]);
-  return payload && [...q.sql.matchAll(/"\w+"\."(\w+)" = \$(\d+)/g)].every(m => row[camel(m[1]!)] === q.params[Number(m[2]) - 1]);
+  const nulls = [...q.sql.matchAll(/"\w+"\."(\w+)" is (not )?null/g)].every(m => m[2] ? row[camel(m[1]!)] != null : row[camel(m[1]!)] == null);
+  const members = [...q.sql.matchAll(/"\w+"\."(\w+)" in \(([^)]+)\)/g)].every(m => [...m[2]!.matchAll(/\$(\d+)/g)].some(p => row[camel(m[1]!)] === q.params[Number(p[1]) - 1]));
+  return payload && nulls && members && [...q.sql.matchAll(/"\w+"\."(\w+)" = \$(\d+)/g)].every(m => row[camel(m[1]!)] === q.params[Number(m[2]) - 1]);
 }
 function project(row: Row, projection?: Record<string, unknown>) {
   if (!projection) return { ...row };
@@ -58,7 +60,7 @@ const db = {
       if (joined && name === "message") rows = rows.map(r => ({ ...r, caption: tables.media_asset!.find(a => a.id === r.mediaAssetId && a.organizationId === r.organizationId)?.caption }));
       return rows.map(r => project(r, projection));
     };
-    const chain = { from(table: typeof schema.message) { name = getTableName(table); return chain; },
+    const chain = { for() { return chain; }, from(table: typeof schema.message) { name = getTableName(table); return chain; },
       where(c: SQL) { condition = c; return chain; }, innerJoin() { joined = true; return chain; },
       leftJoin() { joined = true; return chain; }, orderBy() { return chain; },
       limit(n: number) { return Promise.resolve(result().slice(0, n)); },
@@ -71,7 +73,7 @@ const db = {
       if (failure === name || failure === "persist" && name === "message") throw new Error("persist failed");
       const saved = { createdAt: new Date(), ...row }; tables[name]!.push(saved); return [saved];
     };
-    return { returning: () => Promise.resolve().then(insert), then: (resolve: (v: Row[]) => unknown, reject?: (e: unknown) => unknown) => Promise.resolve().then(insert).then(resolve, reject) };
+    return { onConflictDoNothing() { return this; }, returning: () => Promise.resolve().then(insert), then: (resolve: (v: Row[]) => unknown, reject?: (e: unknown) => unknown) => Promise.resolve().then(insert).then(resolve, reject) };
   } }; },
   update(table: typeof schema.message) { return { set(patch: Row) { return { where(condition: SQL) {
     const update = () => { const rows = tables[getTableName(table)]!.filter(r => match(r, condition)); rows.forEach(r => Object.assign(r, patch)); return rows; };
@@ -110,14 +112,14 @@ beforeEach(() => {
   mocks.jev.mockResolvedValue({ ok: true, decision: makeDecision({ nextAction: "show_operations_demo" }), snapshot: {} });
   mocks.build.mockResolvedValue({ ok: true, persist: { leadId: "ld_a" }, playbook: null,
     state: { conversation: [{ from: "lead", text: "matrícula" }], product: {}, commercial_policy: {} } });
-  tables = { commercial_resource: [], media_asset: [], message: [], kb_entry: [], agent_profile: [],
+  tables = { commercial_resource: [], media_asset: [], message: [{ id: "in_a", organizationId: "org_a", conversationId: "cv_a", direction: "in", type: "text", text: "matrícula", createdAt: new Date() }], kb_entry: [], agent_profile: [{ organizationId: "org_a", enabled: true, salesOrchestratorEnabled: true }], sales_demo_reservation: [], sales_outbound_delivery: [], wa_status_receipt: [], sales_follow_up_job: [], conversation_attention: [],
     contact: [{ id: "ct_a", organizationId: "org_a", phone: "51999000001" }],
     pipeline_stage: [{ id: "st_a", organizationId: "org_a", name: "En conversación", kind: "open" }],
-    conversation: [{ id: "cv_a", organizationId: "org_a", contactId: "ct_a", isTest: false, lastInboundAt: new Date() }],
+    conversation: [{ id: "cv_a", organizationId: "org_a", contactId: "ct_a", isTest: false, aiEnabled: true, latestInboundMessageId: "in_a", lastInboundAt: new Date() }],
     lead: [{ id: "ld_a", organizationId: "org_a", stageId: "st_a", automationLane: "auto", demoShownAt: null, pricePresentedAt: null, paymentInstructionsSentAt: null }] };
 });
 describe("pipeline demo nativa", () => {
-  it.each(DEMO_RESOURCE_SLOTS)("%s: Graph video+caption, hilo IA y fact después del sender", async slot => {
+  it.each(DEMO_RESOURCE_SLOTS)("%s: Graph video+caption, hilo IA pending y sin fact hasta status", async slot => {
     await seed(slot);
     if (slot === "demo_online_enrollment") mocks.jev.mockResolvedValue({ ok: true, decision: makeDecision({ nextAction: "show_online_enrollment_demo" }), snapshot: {} });
     if (slot === "demo_payments_balances") mocks.build.mockResolvedValue({ ok: true, persist: { leadId: "ld_a" }, playbook: null,
@@ -127,7 +129,7 @@ describe("pipeline demo nativa", () => {
     expect(mocks.graph).toHaveBeenCalledOnce(); expect(mocks.upload).toHaveBeenCalledOnce();
     expect(mocks.graph.mock.calls[0]![1].body).toMatchObject({ type: "video", video: { id: "uploaded", caption: "Así se registran los alumnos." } });
     expect(out()).toHaveLength(1); expect(out()[0]).toMatchObject({ type: "video", text: null, origin: "ai", aiGenerated: true, status: "pending" });
-    expect(fact()).toBeInstanceOf(Date); expect(mocks.manual).not.toHaveBeenCalled(); expect(mocks.follow).toHaveBeenCalledOnce();
+    expect(fact()).toBeNull(); expect(mocks.manual).not.toHaveBeenCalled(); expect(mocks.follow).not.toHaveBeenCalled();
     expect(tables.lead![0]!.pricePresentedAt).toBeNull();
   });
   it.each(["absent", "foreign", "lost", "corrupt"])("%s: texto honesto, sin video/fact/scheduling", async mode => {
@@ -150,7 +152,7 @@ describe("pipeline demo nativa", () => {
     await turn(); expect(fact()).toBeNull(); expect(mocks.follow).not.toHaveBeenCalled();
     expect(out().every(m => m.type === "video" && m.status === "failed" && m.origin === "ai" && m.aiGenerated === true)).toBe(true);
     expect(mocks.upload.mock.calls.length).toBeLessThanOrEqual(1); expect(mocks.graph.mock.calls.length).toBeLessThanOrEqual(1);
-    if (mode === "window") expect(tables.conversation![0]!.handoffReason).toBe("ventana");
+    if (mode === "window") { expect(mocks.jev).not.toHaveBeenCalled(); expect(out()).toHaveLength(0); }
   });
   it("HUMAN tiene precedencia: no lee ni entrega demo", async () => {
     await seed("demo_enrollment_panel"); mocks.jev.mockResolvedValue({ ok: true, decision: makeDecision({ nextAction: "show_operations_demo", needsHumanNoul: 0.9 }), snapshot: {} });
@@ -164,7 +166,7 @@ describe("pipeline demo nativa", () => {
     await turn(); expect(fact()).toBeInstanceOf(Date); expect(out()[0]).toMatchObject({ type: "video", text: null, status: "sent", origin: "ai", aiGenerated: true });
     const asset = tables.media_asset!.find(a => a.id === out()[0]!.mediaAssetId)!;
     expect(asset.caption).toBe("Así se registran los alumnos."); expect(await readFile(path.join(mediaDir, "org_a", String(asset.id)))).toEqual(bytes);
-    expect(await readSandboxMessages({ organizationId: "org_a", conversationId: "cv_a" })).toEqual([{ direction: "out", text: "Así se registran los alumnos." }]);
+    expect(await readSandboxMessages({ organizationId: "org_a", conversationId: "cv_a" })).toEqual([{ direction: "in", text: "matrícula" }, { direction: "out", text: "Así se registran los alumnos." }]);
     expect(await readSandboxMessages({ organizationId: "org_b", conversationId: "cv_a" })).toEqual([]);
     for (const check of [spy, textSpy, mocks.graph, mocks.upload, mocks.follow]) expect(check).not.toHaveBeenCalled();
   });
@@ -227,7 +229,7 @@ describe("pipeline instrucciones de pago", () => {
     expect(out()[0]!.text).toContain("Cuando realices el pago, envíanos el comprobante por aquí para confirmarlo y continuar con la implementación.");
     expect(out()[0]!.text).not.toMatch(/equipo|persona|asesor|handoff|confirmación de activación|Este mensaje no confirma/i);
     expect(out()[0]).toMatchObject({ origin: "ai", aiGenerated: true });
-    expect(paymentFact()).toBeInstanceOf(Date);
+    expect(paymentFact()).toBeNull();
     expect(tables.conversation![0]!.handoffReason).toBe("commercial");
     for (const check of [mocks.writer, mocks.upload, mocks.follow, mocks.manual]) expect(check).not.toHaveBeenCalled();
     expect(tables.lead![0]!.automationLane).toBe("human");
@@ -247,19 +249,22 @@ describe("pipeline instrucciones de pago", () => {
     if (mode === "id") mocks.graph.mockResolvedValue({});
     if (mode === "persist") failure = "persist";
     if (mode === "window") tables.conversation![0]!.lastInboundAt = new Date(0);
-    await turn(); expect(paymentFact()).toBeNull(); expect(tables.conversation![0]!.handoffReason).toBe("commercial");
+    await turn(); expect(paymentFact()).toBeNull();
+    if (mode === "window") expect(mocks.jev).not.toHaveBeenCalled();
+    else expect(tables.conversation![0]!.handoffReason).toBe("delivery_failed");
     expect(mocks.graph.mock.calls.length).toBeLessThanOrEqual(1); expect(mocks.follow).not.toHaveBeenCalled();
   });
-  it("segunda parte fallida no marca fact ni reintenta; conserva handoff", async () => {
+  it("segunda parte fallida queda visible sin fact ni retry; handoff delivery_failed", async () => {
     paymentTurn();
     seedPayment("org_a", { transfers: Array.from({ length: 5 }, () => ({ bank: "b".repeat(120), holder: "h".repeat(120), currency: "PEN", accountNumber: "0".repeat(40), cci: "1".repeat(40) })), yape: { phone: "999000001", holder: "y".repeat(120) }, paymentLink: "https://pay.example.test/" + "a".repeat(2000) });
     mocks.graph.mockResolvedValueOnce({ messages: [{ id: "wamid.first" }] }).mockRejectedValueOnce(new Error("second failed"));
     await turn();
     expect(mocks.graph).toHaveBeenCalledTimes(2);
-    expect(out()).toHaveLength(1);
+    expect(out()).toHaveLength(2);
+    expect(out()[1]!.status).toBe("failed");
     expect(out()[0]!.text).toContain("Transferencia");
     expect(paymentFact()).toBeNull();
-    expect(tables.conversation![0]!.handoffReason).toBe("commercial");
+    expect(tables.conversation![0]!.handoffReason).toBe("delivery_failed");
     expect(mocks.follow).not.toHaveBeenCalled();
   });
   it("HUMAN prioritario no entrega destinos ni fact", async () => {
@@ -309,7 +314,7 @@ describe("hotfix 015 — casos reales A–E", () => {
       plan: { nextAction: "ask_more_questions", demoGuardReason: "generic_curiosity_only" } });
     const { serializeLeadSalesState } = await import("@/server/sales/serialize-ui");
     expect(serializeLeadSalesState(tables.lead![0] as unknown as typeof schema.lead.$inferSelect).snapshot?.nextAction).toBe("ask_more_questions");
-    tables.message = []; state(["Hola, quiero información"], true); await turn();
+    tables.message = tables.message!.filter(m => m.direction === "in"); state(["Hola, quiero información"], true); await turn();
     expect(out()[0]!.type).toBe("text"); expect(String(out()[0]!.text).match(/\?/g)).toHaveLength(1);
   });
   it.each([
@@ -319,7 +324,7 @@ describe("hotfix 015 — casos reales A–E", () => {
     ["pedido sin tema", ["¡Hola! Quiero más información", "Enséñame el sistema"], "demo_payments_balances"],
   ])("%s permite video del slot vigente", async (_label, texts, slot) => {
     await seed(slot as DemoResourceSlot); state(texts as string[]); await turn();
-    expect(out()[0]!.type).toBe("video"); expect(fact()).toBeInstanceOf(Date);
+    expect(out()[0]!.type).toBe("video"); expect(fact()).toBeNull();
     expect(mocks.writer.mock.calls[0]![0].demo.slot).toBe(slot);
     expect(tables.lead![0]!.lastJevDecision).toMatchObject({ plan: { nextAction: "show_operations_demo", demoGuardReason: null } });
   });

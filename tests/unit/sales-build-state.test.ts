@@ -57,6 +57,20 @@ vi.mock("@/lib/db", () => ({
 }));
 
 describe("trimConversation", () => {
+  it("opaque captions and pending/failed outbound are not commercial evidence", async () => {
+    selectQueue.push([{ conversation: { id: "cv_1", organizationId: "org_1", contactId: "ct_1" }, contact: { id: "ct_1" } }], [], [
+      { message: { direction: "in", type: "image", text: "caption secret" }, media: { kind: "image", caption: "caption secret" } },
+      { message: { direction: "out", type: "text", text: "pending secret", status: "pending" }, media: null },
+      { message: { direction: "out", type: "text", text: "failed secret", status: "failed" }, media: null },
+      { message: { direction: "out", type: "text", text: "confirmed", status: "sent" }, media: null },
+    ], []);
+    const { buildJevSalesState } = await import("@/server/sales/build-state");
+    const result = await buildJevSalesState({ organizationId: "org_1", conversationId: "cv_1" });
+    expect(result.ok).toBe(true); if (!result.ok) return;
+    const serialized = JSON.stringify(result.state); expect(serialized).toContain("confirmed");
+    expect(serialized).not.toContain("[imagen]"); expect(serialized).not.toContain("secret");
+  });
+
   it("conserva lo más reciente y recorta turnos antiguos", () => {
     const turns = Array.from({ length: 100 }, (_, i) => ({
       from: i % 2 === 0 ? ("lead" as const) : ("seller" as const),

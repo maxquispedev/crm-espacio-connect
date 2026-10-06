@@ -97,7 +97,7 @@ function profile(salesOn: boolean) {
 }
 
 const inbound = [
-  { id: "msg_1", direction: "in", text: "hola", createdAt: new Date() },
+  { id: "msg_1", direction: "in", type: "text", text: "hola", createdAt: new Date() },
 ];
 
 describe("opt-in Sales Orchestrator en runAgentTurn", () => {
@@ -168,7 +168,7 @@ describe("opt-in Sales Orchestrator en runAgentTurn", () => {
       [
         {
           id: "msg_1",
-          direction: "in",
+          direction: "in", type: "text",
           text: "quiero hablar con un humano",
           createdAt: new Date(),
         },
@@ -180,3 +180,13 @@ describe("opt-in Sales Orchestrator en runAgentTurn", () => {
     expect(chatJson).not.toHaveBeenCalled();
   });
 });
+
+// These tests isolate legacy business/flag contracts; 017 safety has real-module regressions.
+vi.mock("@/server/ai/turn-safety", async original => ({
+  ...await original<object>(),
+  captureTurnToken: async (organizationId: string, conversationId: string) => ({ organizationId, conversationId, inboundMessageId: "msg_1", manualMessageId: null }),
+  readTurnInbound: async () => ({ id: "msg_1", type: "text" }),
+  isTurnCurrent: async () => true,
+  withCurrentTurn: async (_token: unknown, effect: (db: unknown) => Promise<unknown>) => effect((await import("@/lib/db")).getDb()),
+}));
+vi.mock("@/server/ai/delivery", () => ({ deliverReply: vi.fn(), applyHandoff: vi.fn() }));

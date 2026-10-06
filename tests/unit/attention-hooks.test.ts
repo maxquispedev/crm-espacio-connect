@@ -39,6 +39,8 @@ const tables: Tables = {
   message: [],
   lead: [],
   pipeline_stage: [],
+  sales_outbound_delivery: [], sales_demo_reservation: [], wa_status_receipt: [],
+  agent_profile: [], sales_follow_up_job: [],
 };
 const real = createMemDb(tables);
 
@@ -100,7 +102,7 @@ vi.mock("@/server/attribution/store", () => ({
 }));
 vi.mock("@/server/attribution/creativo", () => ({ guardarCreativo }));
 vi.mock("@/server/attribution/referral", () => ({ anuncioDeWhatsapp: () => null }));
-vi.mock("@/server/inbox/status", () => ({ applyStatusUpdate }));
+vi.mock("@/server/inbox/status", async original => ({ ...await original<object>(), applyStatusUpdate }));
 vi.mock("@/lib/meta/client", async (importOriginal) => {
   const original = await importOriginal<typeof import("@/lib/meta/client")>();
   return {
@@ -143,6 +145,10 @@ function seedConversation(input: {
     updatedAt: new Date("2026-10-05T11:00:00Z"),
   } as Row;
   tables.conversation!.push(row);
+  tables.message!.push({ id: `in_${row.id}`, organizationId: row.organizationId,
+    conversationId: row.id, direction: "in", type: "text", text: "Hola", createdAt: new Date(), status: "delivered" });
+  row.latestInboundMessageId = `in_${row.id}`;
+  tables.agent_profile!.push({ organizationId: row.organizationId, enabled: true });
   return row;
 }
 
@@ -514,13 +520,27 @@ describe("013 C1 — enganche 6: respuesta manual (echo) y outbound del operador
     seedConversation({ id: "cv_1", handoff: true });
     await applyHandoff("cv_1", ORG_A, "cliente");
 
-    await sendText({
+    await expect(sendText({
       conversationId: "cv_1",
       organizationId: ORG_A,
       text: "respuesta del agente",
       aiGenerated: true,
-    });
+    })).rejects.toMatchObject({ name: "StaleTurnError" });
+    expect(graphRequest).not.toHaveBeenCalled();
     expect(attentionOf("cv_1")).toMatchObject({ state: "pending" });
+  });
+
+  it("un envío IA vigente conserva la atención pending sin marcar respuesta humana", async () => {
+    const conversation = seedConversation({ id: "cv_1", handoff: true });
+    await applyHandoff("cv_1", ORG_A, "cliente");
+    // Reactivate permissions while retaining the pending attention fixture.
+    conversation.handoffAt = null;
+    conversation.handoffReason = null;
+    await sendText({ conversationId: "cv_1", organizationId: ORG_A, text: "respuesta vigente", aiGenerated: true });
+    expect(attentionOf("cv_1")).toMatchObject({ state: "pending" });
+    expect(cancelFollowUpsOnManualReply).not.toHaveBeenCalled();
+    expect(tables.message!.find(row => row.direction === "out")).toMatchObject({ status: "pending", waMessageId: "wamid.1", origin: "ai" });
+    expect(tables.sales_outbound_delivery![0]!.confirmedAt).toBeUndefined();
   });
 
   it("best-effort: si la atención falla, el mensaje se envía igual", async () => {

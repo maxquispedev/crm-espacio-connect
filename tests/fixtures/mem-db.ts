@@ -96,6 +96,7 @@ function evalCondition(
 ): boolean {
   const query = dialect.sqlToQuery(condition);
   // "col" = $N   (scoped() siempre emite el organization_id como el primero)
+  const differs = [...query.sql.matchAll(/"\w+"\."(\w+)"\s*<>\s*\$(\d+)/g)];
   const equals = [...query.sql.matchAll(/"\w+"\."(\w+)"\s*=\s*\$(\d+)/g)];
   // "t1"."col" = "t2"."col"   (entre tablas, sin parámetros)
   const columnEquals = [...query.sql.matchAll(/"(\w+)"\."(\w+)"\s*=\s*"(\w+)"\."(\w+)"/g)];
@@ -121,7 +122,11 @@ function evalCondition(
     return own[camel(column)];
   };
   for (const match of equals) {
-    if (value(match[1]!) !== query.params[Number(match[2]!) - 1]) return false;
+    const left = value(match[1]!), right = query.params[Number(match[2]!) - 1];
+    if (left instanceof Date ? left.getTime() !== new Date(right as string | Date).getTime() : left !== right) return false;
+  }
+  for (const match of differs) {
+    if (value(match[1]!) === query.params[Number(match[2]!) - 1]) return false;
   }
   for (const match of nulls) {
     const isNull = value(match[1]!) === null || value(match[1]!) === undefined;
@@ -139,8 +144,8 @@ function evalCondition(
 
   // Cada parámetro emitido debe estar cubierto: si Drizzle genera una forma que
   // este doble no reconoce, el test falla aquí en vez de pasar en silencio.
-  expect(equals.length + inPlaceholders).toBe(query.params.length);
-  expect(equals.length + inPlaceholders + nulls.length + columnEquals.length)
+  expect(equals.length + differs.length + inPlaceholders).toBe(query.params.length);
+  expect(equals.length + differs.length + inPlaceholders + nulls.length + columnEquals.length)
     .toBeGreaterThan(0);
   return true;
 }
@@ -201,6 +206,7 @@ function sortRows(rows: Row[], conditions: SQL[]): Row[] {
 }
 
 type Chain = {
+  for: (mode: string) => Chain;
   where: (condition: SQL) => Chain;
   orderBy: (...conditions: SQL[]) => Chain;
   limit: (n: number) => Promise<Row[]>;
@@ -213,6 +219,7 @@ type Chain = {
 /** Cadena awaitable con `.where`, `.orderBy` y `.limit` encadenables. */
 function chain(run: () => Row[]): Chain {
   const self = {
+    for: () => self,
     where: (condition: SQL) =>
       chain(() => run().filter((row) => matches(row, condition))),
     orderBy: (...conditions: SQL[]) => chain(() => sortRows(run(), conditions)),
@@ -250,7 +257,7 @@ export function createMemDb(tables: Tables) {
     return bucket;
   };
 
-  return {
+  const db = {
     tables,
 
     /**
@@ -340,6 +347,7 @@ export function createMemDb(tables: Tables) {
         const state: { rows: Joined[] } = { rows: build() };
         const api = Object.assign(
           {
+            for: () => api,
             where: (condition: SQL) => {
               state.rows = state.rows.filter((joined) =>
                 evalCondition((table) => joined[table], nameOf(base), condition)
@@ -386,6 +394,9 @@ export function createMemDb(tables: Tables) {
 
     insert: (table: unknown) => ({
       values: (value: Row) => ({
+        then: (resolve: (rows: Row[]) => unknown, reject?: (err: unknown) => unknown) => Promise.resolve().then(() => {
+          const row = applySchemaDefaults({ ...value }); bucketOf(table).push(row); return [{ ...row }];
+        }).then(resolve, reject),
         onConflictDoUpdate: (conflict: {
           target: PgColumn[];
           set: Row;
@@ -445,18 +456,14 @@ export function createMemDb(tables: Tables) {
 
     update: (table: unknown) => ({
       set: (patch: Row) => ({
-        where: (condition: SQL) => ({
-          returning: () => {
-            const bucket = bucketOf(table);
-            const touched = bucket.filter((row) => matches(row, condition));
-            for (const row of touched) {
-              for (const [key, entry] of Object.entries(patch)) {
-                row[key] = resolveSetValue(row, entry);
-              }
-            }
-            return touched.map((row) => ({ ...row }));
-          },
-        }),
+        where: (condition: SQL) => {
+          const run = () => {
+            const touched = bucketOf(table).filter(row => matches(row, condition));
+            for (const row of touched) for (const [key, entry] of Object.entries(patch)) row[key] = resolveSetValue(row, entry);
+            return touched.map(row => ({ ...row }));
+          };
+          return { returning: run, then: (resolve: (rows: Row[]) => unknown, reject?: (err: unknown) => unknown) => Promise.resolve().then(run).then(resolve, reject) };
+        },
       }),
     }),
 
@@ -471,6 +478,17 @@ export function createMemDb(tables: Tables) {
       }),
     }),
   };
+  let lastTransaction: Promise<unknown> = Promise.resolve();
+  const transaction = <T>(run: (tx: typeof db) => Promise<T>): Promise<T> => {
+    const next = lastTransaction.then(async () => {
+      const before = structuredClone(tables);
+      try { return await run(db); }
+      catch (err) { for (const key of Object.keys(tables)) tables[key] = before[key]!; throw err; }
+    });
+    lastTransaction = next.catch(() => undefined);
+    return next;
+  };
+  return { ...db, transaction };
 }
 
 export type MemDb = ReturnType<typeof createMemDb>;

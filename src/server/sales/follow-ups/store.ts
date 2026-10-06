@@ -1,3 +1,4 @@
+import type { SafetyDb } from "@/server/ai/turn-safety";
 import { and, asc, eq, inArray } from "drizzle-orm";
 import { getDb, schema } from "@/lib/db";
 import { newId } from "@/lib/db/ids";
@@ -50,7 +51,8 @@ export async function scheduleNextFollowUp(input: {
   conversationId: string;
   plan: FollowUpPlan;
   anchorAt: Date;
-}): Promise<FollowUpJob | null> {
+  sourceMessageId?: string;
+}, db: SafetyDb = getDb()): Promise<FollowUpJob | null> {
   if (!shouldStartFollowUp(input.plan)) return null;
 
   const reason = classifyFollowUpReason(input.plan);
@@ -59,10 +61,10 @@ export async function scheduleNextFollowUp(input: {
   const delayMs = nextFollowUpDelay(reason, 1);
   if (delayMs === null) return null;
 
-  const profile = await loadAgentProfile(input.organizationId);
+  const profile = await loadAgentProfile(input.organizationId, db);
   if (!profile?.salesFollowUpsEnabled) return null;
 
-  await cancelOpenJobs(input.organizationId, input.leadId, "replaced_by_new_sequence");
+  await cancelOpenJobs(input.organizationId, input.leadId, "replaced_by_new_sequence", db);
 
   const dueAt = new Date(input.anchorAt.getTime() + delayMs);
   const job = await insertJob({
@@ -73,14 +75,15 @@ export async function scheduleNextFollowUp(input: {
     attemptNumber: 1,
     dueAt,
     anchorAt: input.anchorAt,
-  });
+    sourceMessageId: input.sourceMessageId,
+  }, db);
 
   await patchLead(input.organizationId, input.leadId, {
     nextFollowUpAt: dueAt,
     followUpCount: 0,
     followUpReason: reason,
     updatedAt: new Date(),
-  });
+  }, db);
 
   return job;
 }
@@ -263,9 +266,9 @@ export async function getCurrentFollowUp(input: {
 async function cancelOpenJobs(
   organizationId: string,
   leadId: string,
-  error: string
+  error: string,
+  db: SafetyDb = getDb()
 ): Promise<number> {
-  const db = getDb();
   const now = new Date();
   const updated = await db
     .update(schema.salesFollowUpJob)
@@ -297,7 +300,8 @@ export async function enqueueFollowUpAttempt(input: {
   reason: SalesFollowUpReason;
   attemptNumber: number;
   anchorAt: Date;
-}): Promise<FollowUpJob | null> {
+  sourceMessageId?: string;
+}, db: SafetyDb = getDb()): Promise<FollowUpJob | null> {
   const delayMs = nextFollowUpDelay(input.reason, input.attemptNumber);
   if (delayMs === null) return null;
 
@@ -310,13 +314,14 @@ export async function enqueueFollowUpAttempt(input: {
     attemptNumber: input.attemptNumber,
     dueAt,
     anchorAt: input.anchorAt,
-  });
+    sourceMessageId: input.sourceMessageId,
+  }, db);
 
   await patchLead(input.organizationId, input.leadId, {
     nextFollowUpAt: dueAt,
     followUpReason: input.reason,
     updatedAt: new Date(),
-  });
+  }, db);
 
   return job;
 }
@@ -337,8 +342,10 @@ async function insertJob(input: {
   attemptNumber: number;
   dueAt: Date;
   anchorAt: Date;
-}): Promise<FollowUpJob> {
-  const db = getDb();
+  sourceMessageId?: string;
+},
+  db: SafetyDb = getDb()
+): Promise<FollowUpJob> {
   const now = new Date();
   const inserted = await db
     .insert(schema.salesFollowUpJob)
@@ -351,6 +358,7 @@ async function insertJob(input: {
       attemptNumber: input.attemptNumber,
       dueAt: input.dueAt,
       anchorAt: input.anchorAt,
+      sourceMessageId: input.sourceMessageId ?? null,
       status: "pending",
       runAttempts: 0,
       createdAt: now,
@@ -363,12 +371,12 @@ async function insertJob(input: {
 }
 
 async function loadAgentProfile(
-  organizationId: string
+  organizationId: string,
+  db: SafetyDb = getDb()
 ): Promise<{
   salesOrchestratorEnabled: boolean;
   salesFollowUpsEnabled: boolean;
 } | null> {
-  const db = getDb();
   const rows = await db
     .select({
       salesOrchestratorEnabled: schema.agentProfile.salesOrchestratorEnabled,
@@ -382,9 +390,9 @@ async function loadAgentProfile(
 
 async function loadLead(
   organizationId: string,
-  leadId: string
+  leadId: string,
+  db: SafetyDb = getDb()
 ): Promise<Lead | null> {
-  const db = getDb();
   const rows = await db
     .select()
     .from(schema.lead)
@@ -398,9 +406,9 @@ async function loadLead(
 async function patchLead(
   organizationId: string,
   leadId: string,
-  patch: Record<string, unknown>
+  patch: Record<string, unknown>,
+  db: SafetyDb = getDb()
 ): Promise<void> {
-  const db = getDb();
   await db
     .update(schema.lead)
     .set(patch)

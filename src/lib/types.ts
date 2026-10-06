@@ -38,7 +38,10 @@ export type HandoffReason =
   | "error"
   | "ventana"
   | "manual_reply"
-  | "commercial";
+  | "commercial"
+  | "unsupported_media"
+  | "duplicate_demo"
+  | "delivery_failed";
 
 /**
  * 013 C2 — Estado operativo de la atención humana, YA DERIVADO en lectura

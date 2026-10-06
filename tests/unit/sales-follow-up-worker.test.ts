@@ -279,7 +279,7 @@ describe("worker de follow-ups", () => {
     expect(writeFollowUpText).toHaveBeenCalledTimes(1);
   });
 
-  it("ventana abierta: writer + sender, job sent, programa intento 2; no Jev", async () => {
+  it("ventana abierta: writer + sender, job espera status sin count ni intento 2; no Jev", async () => {
     queueContext();
     queueOpenWindowSelects();
     const { runDueFollowUps } = await import("@/server/sales/follow-ups/worker");
@@ -287,10 +287,10 @@ describe("worker de follow-ups", () => {
     expect(writeFollowUpText).toHaveBeenCalledOnce();
     expect(sendText).toHaveBeenCalledOnce();
     expect(sendTemplate).not.toHaveBeenCalled();
-    expect(updates.some((u) => u.status === "sent")).toBe(true);
-    expect(updates.some((u) => u.followUpCount === 1)).toBe(true);
+    expect(updates.some((u) => u.status === "sent")).toBe(false);
+    expect(updates.some((u) => u.followUpCount === 1)).toBe(false);
     expect(inserts.some((v) => (v as { attemptNumber?: number }).attemptNumber === 2)).toBe(
-      true
+      false
     );
   });
 
@@ -320,7 +320,7 @@ describe("worker de follow-ups", () => {
     expect(updates.some((u) => u.status === "blocked")).toBe(true);
   });
 
-  it("tercer intento enviado → Dormant sin stageId lost", async () => {
+  it("tercer intento aceptado espera status antes de Dormant", async () => {
     claimRows = [rawJob({ attempt_number: 3 })];
     queueContext({ job: { attemptNumber: 3 } });
     queueOpenWindowSelects({ job: { attemptNumber: 3 } });
@@ -331,15 +331,11 @@ describe("worker de follow-ups", () => {
       false
     );
     const dormant = updates.find((u) => u.followUpReason === "no_reply_exhausted");
-    expect(dormant).toMatchObject({
-      automationLane: "stop",
-      followUpReason: "no_reply_exhausted",
-      nextFollowUpAt: null,
-    });
-    expect(dormant).not.toHaveProperty("stageId");
+    expect(dormant).toBeUndefined();
+    expect(sendText.mock.calls[0]?.[0]).toMatchObject({ deliveryMetadata: { followUpJobId: "sfj_1" } });
   });
 
-  it("scheduled_wait envía uno y no crea intento 2", async () => {
+  it("scheduled_wait aceptado espera status y no crea intento 2", async () => {
     claimRows = [rawJob({ reason: "scheduled_wait", attempt_number: 1 })];
     queueContext({
       job: { reason: "scheduled_wait" },
@@ -355,7 +351,7 @@ describe("worker de follow-ups", () => {
     expect(inserts.filter((v) => (v as { reason?: string }).reason === "scheduled_wait")).toHaveLength(
       0
     );
-    expect(updates.some((u) => u.nextFollowUpAt === null)).toBe(true);
+    expect(updates.some((u) => u.nextFollowUpAt === null)).toBe(false);
   });
 
   it("handoff activo cancela y no envía", async () => {
@@ -454,8 +450,8 @@ describe("worker de follow-ups", () => {
     await runDueFollowUps();
     expect(updates.some((u) => u.error === "due_mismatch")).toBe(false);
     expect(sendText).toHaveBeenCalledOnce();
-    expect(updates.some((u) => u.status === "sent")).toBe(true);
-    expect(updates.some((u) => u.followUpCount === 1)).toBe(true);
+    expect(updates.some((u) => u.status === "sent")).toBe(false);
+    expect(updates.some((u) => u.followUpCount === 1)).toBe(false);
   });
 
   it("agent profile.enabled=false no envía aunque orchestrator/follow-ups ON", async () => {
@@ -573,3 +569,12 @@ describe("worker de follow-ups", () => {
     expect(g.__voceroFollowUpTimer).toBe(first);
   });
 });
+
+// These tests isolate legacy business/flag contracts; 017 safety has real-module regressions.
+vi.mock("@/server/ai/turn-safety", async original => ({
+  ...await original<object>(),
+  captureTurnToken: async (organizationId: string, conversationId: string) => ({ organizationId, conversationId, inboundMessageId: "msg_1", manualMessageId: null }),
+  readTurnInbound: async () => ({ id: "msg_1", type: "text" }),
+  isTurnCurrent: async () => true,
+  withCurrentTurn: async (_token: unknown, effect: (db: unknown) => Promise<unknown>) => effect((await import("@/lib/db")).getDb()),
+}));

@@ -27,6 +27,9 @@ const MOTIVOS_HUMANO: Record<string, string> = {
   ventana: "La ventana de 24 h está cerrada.",
   manual_reply: "Respondiste desde el teléfono, así que la IA se pausó.",
   commercial: "El seguimiento comercial pidió que lo atendiera una persona.",
+  unsupported_media: "La IA no puede interpretar este archivo. Revisa el mensaje y responde al cliente.",
+  duplicate_demo: "Esta demo ya se intentó enviar. Revisa la conversación antes de continuar.",
+  delivery_failed: "Hubo un problema al enviar el mensaje. Revisa el error antes de continuar.",
 };
 
 /**

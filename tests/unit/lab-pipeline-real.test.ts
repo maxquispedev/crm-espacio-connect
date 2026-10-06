@@ -158,6 +158,7 @@ const fakeDb = {
     let cap = Infinity;
     const joins: { table: string; clause: Clause; left: boolean }[] = [];
     const q: Record<string, unknown> = {
+      for() { return q; },
       from(t: unknown) {
         table = tableNameOf(t);
         return q;
@@ -204,6 +205,8 @@ const fakeDb = {
     };
     return q;
   },
+
+  transaction: async (run: (tx: object) => Promise<unknown>): Promise<unknown> => run(fakeDb),
 
   insert(t: unknown) {
     const table = tableNameOf(t);
@@ -821,3 +824,12 @@ describe("parsePlaybookMode (T605)", () => {
     expect(parsePlaybookMode({})).toBeNull();
   });
 });
+
+// These tests isolate legacy business/flag contracts; 017 safety has real-module regressions.
+vi.mock("@/server/ai/turn-safety", async original => ({
+  ...await original<object>(),
+  captureTurnToken: async (organizationId: string, conversationId: string) => ({ organizationId, conversationId, inboundMessageId: "msg_1", manualMessageId: null }),
+  readTurnInbound: async () => ({ id: "msg_1", type: "text" }),
+  isTurnCurrent: async () => true,
+  withCurrentTurn: async (_token: unknown, effect: (db: unknown) => Promise<unknown>) => effect(fakeDb),
+}));

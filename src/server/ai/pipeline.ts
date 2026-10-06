@@ -1,3 +1,4 @@
+import { withCurrentTurn, StaleTurnError, captureTurnToken, isTurnCurrent, isOpaqueInbound, type TurnToken } from "@/server/ai/turn-safety";
 import { asc, desc, eq } from "drizzle-orm";
 import { getDb, schema } from "@/lib/db";
 import { scoped } from "@/lib/db/tenant";
@@ -113,15 +114,23 @@ export async function runAgentTurn(conversationId: string): Promise<void> {
   // comportamiento configurado aunque el agente aún no esté encendido.
   if (!conversation.isTest && !profile.enabled) return;
 
+  const token = await captureTurnToken(organizationId, conversationId);
+  if (!token) return;
+  const current = () => isTurnCurrent(token);
+
   const history = await db
     .select()
     .from(schema.message)
-    .where(eq(schema.message.conversationId, conversationId))
+    .where(scoped(schema.message.organizationId, organizationId, eq(schema.message.conversationId, conversationId)))
     .orderBy(desc(schema.message.createdAt))
     .limit(20);
   history.reverse();
-  const lastInbound = [...history].reverse().find((m) => m.direction === "in");
+  const lastInbound = history.find((m) => m.id === token.inboundMessageId);
   if (!lastInbound) return;
+  if (isOpaqueInbound(lastInbound.type)) {
+    await applyHandoff(conversationId, organizationId, "unsupported_media", undefined, { ...token, allowOpaqueInbound: true });
+    return;
+  }
 
   // Ventana cerrada: el agente JAMÁS envía texto libre → handoff 'ventana'.
   if (!conversation.isTest && !isWindowOpen(conversation.lastInboundAt)) {
@@ -131,11 +140,12 @@ export async function runAgentTurn(conversationId: string): Promise<void> {
 
   // Patrón de respaldo ANTES del LLM (FR-022). No pasa por Jev.
   if (lastInbound.text && matchesHandoffIntent(lastInbound.text)) {
+    if (!await current()) return;
     await persistClientHumanRequest({
       organizationId,
       contactId: conversation.contactId,
     });
-    await applyHandoff(conversationId, organizationId, "cliente");
+    if (await current()) await applyHandoff(conversationId, organizationId, "cliente", undefined, token);
     return;
   }
 
@@ -144,6 +154,7 @@ export async function runAgentTurn(conversationId: string): Promise<void> {
       organizationId,
       conversationId,
       conversation,
+      turnToken: { ...token, sales: true },
     });
     return;
   }
@@ -165,7 +176,7 @@ export async function runAgentTurn(conversationId: string): Promise<void> {
       content: buildAgentSystemPrompt({ profile, kb, stages }),
     },
     ...history
-      .filter((m) => m.text)
+      .filter((m) => m.text && !(m.direction === "in" && isOpaqueInbound(m.type)) && !(m.direction === "out" && ["pending", "failed"].includes(m.status)))
       .map((m) => ({
         role: m.direction === "in" ? ("user" as const) : ("assistant" as const),
         content: m.text!,
@@ -177,10 +188,11 @@ export async function runAgentTurn(conversationId: string): Promise<void> {
     if (result.error === "not_configured") return;
     // Fallo persistente del proveedor o salida imposible → escalar (FR-022).
     console.error(`[agente] fallo del proveedor (raw): ${result.detail}`);
-    await applyHandoff(conversationId, organizationId, "error");
+    if (await current()) await applyHandoff(conversationId, organizationId, "error", undefined, token);
     return;
   }
 
+  if (!await current()) return;
   let action: AgentActionType = result.data;
 
   if (action.action === "move_stage") {
@@ -190,13 +202,14 @@ export async function runAgentTurn(conversationId: string): Promise<void> {
     } else {
       // Corte A — la acción move_stage del agente inline pasa por la puerta
       // única de etapa con actor `agent`. Conserva `lastActivityAt` exacto.
-      await moveLeadToStage(organizationId, conversation.contactId, stage.id);
+      if (!await current()) return;
+      await moveLeadToStage(organizationId, conversation.contactId, stage.id, token);
       publish(organizationId, {
         type: "conversation.updated",
         data: { conversation: { id: conversationId } },
       });
       if (action.reply) {
-        await deliverReply(conversation, action.reply);
+        await deliverReply(conversation, action.reply, { token });
       }
       return;
     }
@@ -206,18 +219,19 @@ export async function runAgentTurn(conversationId: string): Promise<void> {
     case "none":
       return;
     case "reply":
-      await deliverReply(conversation, action.text);
+      await deliverReply(conversation, action.text, { token });
       return;
     case "update_lead": {
-      await appendLeadNote(organizationId, conversation.contactId, action.note);
-      if (action.reply) await deliverReply(conversation, action.reply);
+      if (!await current()) return;
+      await appendLeadNote(organizationId, conversation.contactId, action.note, token);
+      if (action.reply) await deliverReply(conversation, action.reply, { token });
       return;
     }
     case "handoff": {
       if (action.farewell) {
-        await deliverReply(conversation, action.farewell);
+        await deliverReply(conversation, action.farewell, { token });
       }
-      await applyHandoff(conversationId, organizationId, "modelo");
+      if (await current()) await applyHandoff(conversationId, organizationId, "modelo", undefined, token);
       return;
     }
   }
@@ -228,7 +242,8 @@ export { applyHandoff } from "@/server/ai/delivery";
 async function moveLeadToStage(
   organizationId: string,
   contactId: string,
-  stageId: string
+  stageId: string,
+  token: TurnToken
 ): Promise<void> {
   const db = getDb();
   // El gateway necesita el leadId; resolvemos por contactId con scope de
@@ -237,10 +252,10 @@ async function moveLeadToStage(
   const rows = await db
     .select({ id: schema.lead.id })
     .from(schema.lead)
-    .where(eq(schema.lead.contactId, contactId))
+    .where(scoped(schema.lead.organizationId, organizationId, eq(schema.lead.contactId, contactId)))
     .limit(1);
   const lead = rows[0];
-  if (!lead) return;
+  if (!lead || !await isTurnCurrent(token)) return;
   try {
     const result = await moveLeadStage({
       organizationId,
@@ -249,6 +264,7 @@ async function moveLeadToStage(
       lastActivityAt: new Date(),
       actor: "agent",
       reason: "ai_move_stage",
+      turnToken: token,
     });
 
     // 007 — Corte B: tras el commit exitoso del gateway, engancha CAPI.
@@ -269,6 +285,7 @@ async function moveLeadToStage(
       }
     }
   } catch (err) {
+    if (err instanceof StaleTurnError) return;
     if (err instanceof StageGatewayError) {
       console.warn(`[ai/pipeline] move_stage rechazado: ${err.message}`);
       return;
@@ -304,22 +321,23 @@ async function loadStageKindAndName(
 async function appendLeadNote(
   organizationId: string,
   contactId: string,
-  note: string
+  note: string,
+  token: TurnToken
 ): Promise<void> {
   const db = getDb();
   const rows = await db
     .select({ id: schema.contact.id, notes: schema.contact.notes })
     .from(schema.contact)
-    .where(eq(schema.contact.id, contactId))
+    .where(scoped(schema.contact.organizationId, organizationId, eq(schema.contact.id, contactId)))
     .limit(1);
   const contact = rows[0];
-  if (!contact) return;
+  if (!contact || !await isTurnCurrent(token)) return;
   const stamped = `[IA] ${note}`;
-  await db
+  await withCurrentTurn(token, async tx => { await tx
     .update(schema.contact)
     .set({
       notes: contact.notes ? `${contact.notes}\n${stamped}` : stamped,
       updatedAt: new Date(),
     })
-    .where(eq(schema.contact.id, contact.id));
+    .where(scoped(schema.contact.organizationId, organizationId, eq(schema.contact.id, contact.id))); });
 }

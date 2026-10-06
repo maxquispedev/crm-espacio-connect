@@ -1,3 +1,32 @@
+# Contrato vigente — confirmación durable (spec 017, 2026-10-05)
+
+Graph `wamid` deja el mensaje pending. Scheduling inicial, conteo comercial y
+encadenamiento dependen del primer status exitoso `sent`/`delivered`/`read`, en
+la misma transacción que el ledger/facts. Un job enviado queda
+`processing + message_id`, durable y no reclamable de nuevo mientras espera
+status; recuperar lease solo permite jobs sin mensaje asociado. Duplicados o
+éxitos fuera de orden no consumen otro intento ni crean otro job. Receipts tempranos
+se conservan y se reconcilian cuando queda ligado el wamid.
+
+Inbound nuevo, respuesta manual, pausa/handoff o fallo terminal invalidan la
+autorización anterior y cancelan jobs ligados al mensaje. Reactivar IA no revive
+esa autorización. Un failed tardío revoca únicamente los efectos y jobs propiedad
+de ese outbound; no borra un fact anterior independiente. Mensaje failed/incertidumbre
+no se reenvía ni implica LOST. Retries técnicos limitados siguen disponibles antes
+de crear el outbound (por ejemplo fallo del writer), sin gastar intento comercial.
+
+Media opaca cancela seguimientos y deja atención humana silenciosa. Guard de turno
+se revalida al enviar y al aplicar efectos; sandbox conserva efectos locales del
+turno vigente y cero WhatsApp real. Destinatarios comparten abstracción BSUID
+`recipient`/teléfono `to`; ventana 24h y plantillas aprobadas siguen vigentes.
+Un status tardío no abre la ventana ni programa sobre un inbound/manual obsoleto.
+Migración **0011** requerida antes del código; sin backfill de pruebas históricas.
+Evidencia final: `specs/017-production-messaging-safety/integration-evidence.md`.
+Las entradas de implementación inferiores son historia; sus referencias a entrega
+por aceptación Graph quedan sustituidas por este contrato.
+
+---
+
 # Sales Follow-ups — contrato del motor automático
 
 Fuente durable de contexto. Congela decisiones. El motor, worker, UI y
@@ -338,14 +367,17 @@ No confundir:
 | **FOLLOW-UP ATTEMPT** | Mensaje comercial 1, 2 o 3 de la secuencia. |
 | **RUN ATTEMPT** | Retry técnico del **mismo** job. |
 
-Un error transitorio del LLM/Meta puede reintentarse técnicamente **sin
-consumir** otro follow-up comercial.
+Un error transitorio de writer o preparación anterior al envío puede reintentarse
+técnicamente **sin consumir** otro follow-up comercial. Después de persistir el
+outbound/ledger, un fallo o incertidumbre de Graph no autoriza reenviar el job.
 
 Máximo inicial: **3 run attempts**.
 
 Después: `failed` o `blocked` según causa.
 
-- Transitorio (LLM/Meta 5xx / red) → `failed` tras agotar run attempts.
+- Transitorio antes del límite irreversible de envío (writer/preparación) →
+  `failed` tras agotar run attempts. Graph rechazado o incierto después de crear
+  outbound → fallo terminal/humano seguro, sin retry automático del mensaje.
 - Política permanente (ventana cerrada sin plantilla válida, lane HUMAN/STOP,
   handoff, flag off) → `blocked`, sin retry infinito.
 

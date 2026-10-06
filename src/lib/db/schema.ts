@@ -201,6 +201,7 @@ export const lead = pgTable(
     updatedAt: timestamp("updated_at").notNull().defaultNow(),
   },
   (t) => [
+    uniqueIndex("lead_org_id_safety_uq").on(t.organizationId, t.id),
     uniqueIndex("lead_contact_uq").on(t.contactId),
     index("lead_org_stage_idx").on(t.organizationId, t.stageId, t.position),
   ]
@@ -230,9 +231,13 @@ export const conversation = pgTable(
         "ventana",
         "manual_reply",
         "commercial",
+        "unsupported_media",
+        "duplicate_demo",
+        "delivery_failed",
       ],
     }),
     lastInboundAt: timestamp("last_inbound_at"),
+    latestInboundMessageId: text("latest_inbound_message_id"),
     lastMessageAt: timestamp("last_message_at"),
     unreadCount: integer("unread_count").notNull().default(0),
     createdAt: timestamp("created_at").notNull().defaultNow(),
@@ -243,6 +248,7 @@ export const conversation = pgTable(
     uniqueIndex("conversation_org_contact_real_uq")
       .on(t.organizationId, t.contactId)
       .where(sql`${t.isTest} = false`),
+    uniqueIndex("conversation_org_id_safety_uq").on(t.organizationId, t.id),
     index("conversation_org_last_idx").on(t.organizationId, t.lastMessageAt),
   ]
 );
@@ -344,6 +350,7 @@ export const message = pgTable(
     createdAt: timestamp("created_at").notNull().defaultNow(),
   },
   (t) => [
+    uniqueIndex("message_org_id_safety_uq").on(t.organizationId, t.id),
     index("message_org_conv_idx").on(
       t.organizationId,
       t.conversationId,
@@ -539,11 +546,13 @@ export const salesFollowUpJob = pgTable(
     runAttempts: integer("run_attempts").notNull().default(0),
     claimedAt: timestamp("claimed_at"),
     messageId: text("message_id"),
+    sourceMessageId: text("source_message_id"),
     error: text("error"),
     createdAt: timestamp("created_at").notNull().defaultNow(),
     updatedAt: timestamp("updated_at").notNull().defaultNow(),
   },
   (t) => [
+    uniqueIndex("sales_follow_up_job_org_id_safety_uq").on(t.organizationId, t.id),
     index("sales_follow_up_job_org_status_due_idx").on(
       t.organizationId,
       t.status,
@@ -1044,3 +1053,55 @@ export const salesPlaybookVersion = pgTable(
     ),
   ]
 );
+
+/** 017: effect authorization exists BEFORE Graph; status confirmation is transactional. */
+export const salesOutboundDelivery = pgTable("sales_outbound_delivery", {
+  messageId: text("message_id").primaryKey(),
+  organizationId: text("organization_id").notNull().references(() => organization.id, { onDelete: "cascade" }),
+  conversationId: text("conversation_id").notNull(),
+  leadId: text("lead_id"),
+  inboundMessageId: text("inbound_message_id").notNull(),
+  manualMessageId: text("manual_message_id"),
+  plan: jsonb("plan"),
+  demoSlot: text("demo_slot"),
+  paymentGroupId: text("payment_group_id"),
+  paymentPart: integer("payment_part"),
+  paymentParts: integer("payment_parts"),
+  followUpJobId: text("follow_up_job_id"),
+  expectedHandoffAt: timestamp("expected_handoff_at"),
+  confirmedAt: timestamp("confirmed_at"),
+  failedAt: timestamp("failed_at"),
+  invalidatedAt: timestamp("invalidated_at"),
+  factPrevious: jsonb("fact_previous"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+}, t => [index("sales_outbound_delivery_org_conv_idx").on(t.organizationId, t.conversationId),
+  foreignKey({ columns: [t.organizationId, t.messageId], foreignColumns: [message.organizationId, message.id] }).onDelete("cascade"),
+  foreignKey({ columns: [t.organizationId, t.conversationId], foreignColumns: [conversation.organizationId, conversation.id] }).onDelete("cascade"),
+  foreignKey({ columns: [t.organizationId, t.leadId], foreignColumns: [lead.organizationId, lead.id] }).onDelete("cascade"),
+  foreignKey({ columns: [t.organizationId, t.followUpJobId], foreignColumns: [salesFollowUpJob.organizationId, salesFollowUpJob.id] }).onDelete("cascade"),
+]);
+
+/** A reservation is never released on uncertain delivery or restart. */
+export const salesDemoReservation = pgTable("sales_demo_reservation", {
+  id: text("id").primaryKey(),
+  organizationId: text("organization_id").notNull().references(() => organization.id, { onDelete: "cascade" }),
+  conversationId: text("conversation_id").notNull(),
+  slot: text("slot").notNull(),
+  inboundMessageId: text("inbound_message_id").notNull(),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+}, t => [uniqueIndex("sales_demo_reservation_org_conv_slot_uq").on(t.organizationId, t.conversationId, t.slot),
+  foreignKey({ columns: [t.organizationId, t.conversationId], foreignColumns: [conversation.organizationId, conversation.id] }).onDelete("cascade"),
+  check("sales_demo_reservation_slot_check", sql`${t.slot} IN ('demo_enrollment_panel', 'demo_payments_balances', 'demo_online_enrollment')`),
+]);
+
+/** Receipts survive statuses arriving before the sender has bound the wamid. */
+export const waStatusReceipt = pgTable("wa_status_receipt", {
+  id: text("id").primaryKey(),
+  organizationId: text("organization_id").notNull().references(() => organization.id, { onDelete: "cascade" }),
+  waMessageId: text("wa_message_id").notNull(),
+  status: text("status").notNull(),
+  error: text("error"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+}, t => [uniqueIndex("wa_status_receipt_org_wamid_status_uq").on(t.organizationId, t.waMessageId, t.status),
+  check("wa_status_receipt_status_check", sql`${t.status} IN ('sent', 'delivered', 'read', 'failed')`),
+]);

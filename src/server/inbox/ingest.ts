@@ -1,3 +1,6 @@
+import { scoped } from "@/lib/db/tenant";
+import { applyHandoff } from "@/server/ai/delivery";
+import { captureTurnToken, isOpaqueInbound } from "@/server/ai/turn-safety";
 import { and, eq, sql } from "drizzle-orm";
 import { getDb, schema } from "@/lib/db";
 import { newId } from "@/lib/db/ids";
@@ -412,38 +415,29 @@ export async function ingestInboundMessage(input: {
 
   const waTimestamp = toDate(input.timestamp);
 
-  // Idempotencia dura: mismo wa_message_id → sin efectos adicionales.
-  const inserted = await db
-    .insert(schema.message)
-    .values({
-      id: newId("message"),
-      organizationId,
-      conversationId: conversation.id,
-      waMessageId: input.waMessageId,
-      direction: "in",
-      type: input.type,
-      text: input.text,
-      status: "delivered",
-      waTimestamp,
-    })
-    .onConflictDoNothing({ target: [schema.message.waMessageId] })
-    .returning();
-  const message = inserted[0];
-  if (!message) return; // duplicado
-
-  const asset = input.media
-    ? await attachMediaAsset(organizationId, message.id, input.media)
-    : null;
-
-  await db
-    .update(schema.conversation)
-    .set({
-      lastInboundAt: waTimestamp,
-      lastMessageAt: waTimestamp,
-      unreadCount: sql`${schema.conversation.unreadCount} + 1`,
-      updatedAt: new Date(),
-    })
-    .where(eq(schema.conversation.id, conversation.id));
+  // Serialize with status confirmation on the conversation row. The pointer
+  // orders arrivals even when PostgreSQL created_at has identical timestamps.
+  const message = await db.transaction(async tx => {
+    await tx.select({ id: schema.conversation.id }).from(schema.conversation)
+      .where(scoped(schema.conversation.organizationId, organizationId, eq(schema.conversation.id, conversation.id)))
+      .for("update");
+    const [inserted] = await tx.insert(schema.message).values({
+      id: newId("message"), organizationId, conversationId: conversation.id,
+      waMessageId: input.waMessageId, direction: "in", type: input.type,
+      text: input.text, status: "delivered", waTimestamp,
+    }).onConflictDoNothing({ target: [schema.message.waMessageId] }).returning();
+    if (!inserted) return null;
+    await tx.update(schema.conversation).set({ latestInboundMessageId: inserted.id,
+      lastInboundAt: waTimestamp, lastMessageAt: waTimestamp,
+      unreadCount: sql`${schema.conversation.unreadCount} + 1`, updatedAt: new Date(),
+    }).where(scoped(schema.conversation.organizationId, organizationId, eq(schema.conversation.id, conversation.id)));
+    await tx.update(schema.salesOutboundDelivery).set({ invalidatedAt: new Date() })
+      .where(scoped(schema.salesOutboundDelivery.organizationId, organizationId,
+        eq(schema.salesOutboundDelivery.conversationId, conversation.id)));
+    return inserted;
+  });
+  if (!message) return;
+  const asset = input.media ? await attachMediaAsset(organizationId, message.id, input.media) : null;
 
   // 013 C1 - El cliente escribió: si la conversación es del humano, vuelve a
   // "pending" y cualquier recordatorio previo deja de aplicar. Si la IA es la
@@ -505,6 +499,12 @@ export async function ingestInboundMessage(input: {
     data: { conversation: { id: conversation.id } },
   });
 
+  if (isOpaqueInbound(input.type)) {
+    const token = await captureTurnToken(organizationId, conversation.id);
+    if (token) await applyHandoff(conversation.id, organizationId, "unsupported_media", undefined,
+      { ...token, inboundMessageId: message.id, allowOpaqueInbound: true });
+    return;
+  }
   await maybeRunAgentTurn(conversation.id);
 }
 

@@ -1,3 +1,6 @@
+import { readTurnInbound, StaleTurnError, withCurrentTurn, captureTurnToken, isTurnCurrent, isOpaqueInbound, type TurnToken } from "@/server/ai/turn-safety";
+import { reserveDemoSlot, type DeliveryMetadata } from "@/server/sales/delivery-ledger";
+import { newId } from "@/lib/db/ids";
 import { withCommercialEvidenceQuestions, commercialEvidenceHandoff } from "./commercial-evidence";
 import { loadPaymentInstructions, renderPaymentInstructions, PAYMENT_UNAVAILABLE_TEXT } from "@/server/sales/payment-resource";
 import { asc, eq } from "drizzle-orm";
@@ -10,7 +13,6 @@ import { buildJevSalesState } from "@/server/sales/build-state";
 import { evaluateJev } from "@/server/sales/client";
 import type { PipelineSemantic, SalesPlan } from "@/server/sales/resolve-plan";
 import { resolveSalesPlan } from "@/server/sales/resolve-plan";
-import { scheduleNextFollowUp } from "@/server/sales/follow-ups/store";
 import { VENDE_VELOZ_OFFER } from "@/server/sales/vende-veloz";
 import { writeSalesReply } from "@/server/sales/writer";
 import { StageGatewayError, moveLeadStage } from "@/server/leads/stage-gateway";
@@ -72,6 +74,7 @@ export async function runSalesOrchestratorTurn(
     organizationId: string;
     conversationId: string;
     conversation: Conversation;
+    turnToken?: TurnToken;
   },
   opts: RunSalesOrchestratorTurnOptions = {}
 ): Promise<void> {
@@ -82,6 +85,18 @@ export async function runSalesOrchestratorTurn(
   if (opts.playbookOverride !== undefined && !isTest) {
     throw new Error("playbook_override_forbidden_in_production");
   }
+
+  const token = input.turnToken ?? await captureTurnToken(organizationId, conversationId);
+  if (!token) return;
+  token.sales = true;
+  const inbound = await readTurnInbound(token);
+  if (!inbound) return;
+  if (isOpaqueInbound(inbound.type)) {
+    await applyHandoff(conversationId, organizationId, "unsupported_media", undefined, { ...token, allowOpaqueInbound: true });
+    return;
+  }
+  const current = () => isTurnCurrent(token);
+  if (!await current()) return;
 
   const built = await buildJevSalesState({ organizationId, conversationId });
   if (!built.ok) return;
@@ -117,12 +132,13 @@ export async function runSalesOrchestratorTurn(
     state: { ...built.state, commercial_knowledge: kb.map(({ question, answer, content }) => ({ question, answer, content })) },
     questions: withCommercialEvidenceQuestions(jevQuestions),
   });
+  if (!await current()) return;
   if (!jev.ok) {
     console.error("[sales] Jev falló:", jev.error);
     await persistLeadPatch(organizationId, leadCtx.lead.id, {
       lastJevError: sanitizeError(jev.detail),
       updatedAt: new Date(),
-    });
+    }, token);
     publishConversation(organizationId, conversationId);
     return;
   }
@@ -163,11 +179,12 @@ export async function runSalesOrchestratorTurn(
     playbook_version_number: playbook?.version_number ?? null,
   };
 
-  const persistEffectiveDecision = async () => {
+  const persistEffectiveDecision = async (): Promise<boolean> => {
+    if (!await current()) return false;
     snapshotBase.plan = { ...snapshotBase.plan, lane: plan.lane, nextAction: plan.nextAction,
       shouldHandoff: plan.shouldHandoff, paymentDeliveryAuthorized: plan.paymentDeliveryAuthorized === true,
       commercialEvidenceReason: plan.commercialEvidenceReason ?? null };
-    await persistDecision({
+    try { return await persistDecision({
       organizationId,
       conversationId,
       lead: leadCtx.lead,
@@ -175,7 +192,8 @@ export async function runSalesOrchestratorTurn(
       plan,
       snapshot: snapshotBase,
       playbook,
-    });
+      token,
+    }); } catch (err) { if (err instanceof StaleTurnError) return false; throw err; }
   };
 
   const skipRepeatStop =
@@ -183,23 +201,26 @@ export async function runSalesOrchestratorTurn(
   const shouldWrite = plan.shouldReply && !skipRepeatStop;
 
   if (shouldWrite && plan.paymentDeliveryAuthorized) {
-    await persistEffectiveDecision();
-    // Entrega estándar autorizada ANTES de handoff. Sin LLM/KB ni retry incierto.
+    const groupId = newId("message");
+    if (!await persistEffectiveDecision()) return;
     try {
       const payment = await loadPaymentInstructions(organizationId);
       const messages = payment ? renderPaymentInstructions(payment) : [];
+      const parts = messages.length ? messages : [PAYMENT_UNAVAILABLE_TEXT];
       let delivered = messages.length > 0;
-      for (const text of messages.length ? messages : [PAYMENT_UNAVAILABLE_TEXT]) {
-        if (!await deliverReply(conversation, text)) { delivered = false; break; }
+      for (const [part, text] of parts.entries()) {
+        if (!await current()) return;
+        const metadata: DeliveryMetadata = { token, leadId: leadCtx.lead.id, plan,
+          ...(messages.length ? { payment: { groupId, part, parts: parts.length } } : {}) };
+        if (!await deliverReply(conversation, text, metadata)) { delivered = false; break; }
       }
-      if (delivered) await persistLeadPatch(organizationId, leadCtx.lead.id, {
+      if (delivered && isTest && await current()) await persistLeadPatch(organizationId, leadCtx.lead.id, {
         paymentInstructionsSentAt: new Date(), updatedAt: new Date(),
-      });
+      }, token);
     } catch {
-      // Puede haber aceptación antes de un error local: no reenviar ni marcar fact.
       console.warn("[sales] entrega de instrucciones de pago no completada");
     } finally {
-      await applyHandoff(conversationId, organizationId, "commercial");
+      if (await current()) await applyHandoff(conversationId, organizationId, "commercial", groupId, token);
     }
     return;
   }
@@ -243,43 +264,41 @@ export async function runSalesOrchestratorTurn(
     if (!written.ok || written.commercialEvidence === "unknown") {
       plan = commercialEvidenceHandoff(plan, written.ok ? "unknown" : "writer_unavailable");
     }
-    await persistEffectiveDecision();
+    if (!await current()) return;
+    if (written.ok && written.text && !plan.shouldHandoff && demoSlot && demo) {
+      if (!await reserveDemoSlot(token, demoSlot)) {
+        if (await current()) await applyHandoff(conversationId, organizationId, "duplicate_demo", undefined, token);
+        return;
+      }
+    }
+    if (!await persistEffectiveDecision()) return;
 
     if (written.ok && written.text && !plan.shouldHandoff) {
       // deliverReply persiste is_test localmente sin llamar a WhatsApp.
       // Su resultado también gobierna los facts durables del sandbox.
       let demoDelivered = false;
       if (demoSlot && demo) {
-        demoDelivered = await deliverDemo(conversation, demo.file, demoCaption(demoSlot, written.text));
+        demoDelivered = await deliverDemo(conversation, demo.file, demoCaption(demoSlot, written.text),
+          { token, leadId: leadCtx.lead.id, plan, demoSlot, scheduleFollowUp: true });
         sent = demoDelivered;
       } else {
-        sent = await deliverReply(conversation, demoSlot ? DEMO_UNAVAILABLE_TEXT : written.text);
+        sent = await deliverReply(conversation, demoSlot ? DEMO_UNAVAILABLE_TEXT : written.text,
+          { token, leadId: leadCtx.lead.id, plan, scheduleFollowUp: !demoSlot });
       }
-      if (sent) {
-        await persistDeliveryFacts(organizationId, leadCtx.lead.id, plan, demoDelivered);
-        // T308 — sandbox suprime follow-ups. Las filas
-        // sales_follow_up_job no se crean en `is_test=true`, así la
-        // corrida de Laboratorio termina sin jobs pendientes.
-        if (!isTest && (!demoSlot || demoDelivered)) {
-          await scheduleNextFollowUp({
-            organizationId,
-            leadId: leadCtx.lead.id,
-            conversationId,
-            plan,
-            anchorAt: new Date(),
-          });
-        }
+      if (sent && isTest && await current()) {
+        try { await persistDeliveryFacts(organizationId, leadCtx.lead.id, plan, demoDelivered, token); }
+        catch (err) { if (err instanceof StaleTurnError) return; throw err; }
       }
     } else if (!written.ok) {
       console.error("[sales] writer falló:", written.error);
     }
   }
 
-  if (!shouldWrite) await persistEffectiveDecision();
+  if (!shouldWrite && !await persistEffectiveDecision()) return;
 
   // text=null en HUMAN puro omite outbound, pero conserva el efecto interno.
-  if (plan.shouldHandoff) {
-    await applyHandoff(conversationId, organizationId, "commercial");
+  if (plan.shouldHandoff && await current()) {
+    await applyHandoff(conversationId, organizationId, "commercial", undefined, token);
   }
 }
 
@@ -300,7 +319,8 @@ async function persistDecision(input: {
   plan: SalesPlan;
   snapshot: unknown;
   playbook: LoadedPlaybookVersion | null;
-}): Promise<void> {
+  token: TurnToken;
+}): Promise<boolean> {
   const now = new Date();
   const basePatch: Record<string, unknown> = {
     automationLane: input.plan.lane,
@@ -325,6 +345,7 @@ async function persistDecision(input: {
     input.stage
   );
 
+  if (!await isTurnCurrent(input.token)) return false;
   if (nextStageId) {
     // Corte A — Jev deja de escribir `lead.stageId` directo. Conserva la
     // atomicidad original fusionando lane/facts/snapshot en el mismo UPDATE
@@ -339,16 +360,18 @@ async function persistDecision(input: {
         actor: "agent",
         reason: `jev:${input.plan.nextAction}`,
         extra: basePatch,
+        turnToken: input.token,
       });
     } catch (err) {
       if (err instanceof StageGatewayError) {
         console.warn(`[sales] gateway rechazó move de Jev: ${err.message}`);
         // Aun así persistimos el resto (lane, snapshot) para no perder el
         // estado durable: el gateway es estricto, la decisión de Jev no.
+        if (!await isTurnCurrent(input.token)) return false;
         await persistLeadPatch(input.organizationId, input.lead.id, {
           ...basePatch,
           updatedAt: now,
-        });
+        }, input.token);
       } else {
         throw err;
       }
@@ -376,17 +399,19 @@ async function persistDecision(input: {
     await persistLeadPatch(input.organizationId, input.lead.id, {
       ...basePatch,
       updatedAt: now,
-    });
+    }, input.token);
   }
 
   publishConversation(input.organizationId, input.conversationId);
+  return true;
 }
 
 async function persistDeliveryFacts(
   organizationId: string,
   leadId: string,
   plan: SalesPlan,
-  demoDelivered: boolean
+  demoDelivered: boolean,
+  token: TurnToken
 ): Promise<void> {
   if (plan.lane === "human" || plan.shouldHandoff) return;
 
@@ -402,14 +427,17 @@ async function persistDeliveryFacts(
     patch.demoShownAt = now;
   }
   if (Object.keys(patch).length === 1) return;
-  await persistLeadPatch(organizationId, leadId, patch);
+  await persistLeadPatch(organizationId, leadId, patch, token);
 }
 
 async function persistLeadPatch(
   organizationId: string,
   leadId: string,
-  patch: Record<string, unknown>
+  patch: Record<string, unknown>, token?: TurnToken
 ): Promise<void> {
+  if (token) { await withCurrentTurn(token, async tx => {
+    await tx.update(schema.lead).set(patch).where(scoped(schema.lead.organizationId, organizationId, eq(schema.lead.id, leadId)));
+  }); return; }
   const db = getDb();
   await db
     .update(schema.lead)

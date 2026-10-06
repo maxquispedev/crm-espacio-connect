@@ -1,3 +1,4 @@
+import { withCurrentTurn, type SafetyDb, type TurnToken } from "@/server/ai/turn-safety";
 import { and, asc, eq, inArray, sql } from "drizzle-orm";
 import { getDb, schema } from "@/lib/db";
 import { newId } from "@/lib/db/ids";
@@ -80,6 +81,7 @@ export type MoveLeadStageInput = {
    * `updatedAt` cuando apliquen.
    */
   extra?: Record<string, unknown>;
+  turnToken?: TurnToken;
 };
 
 export type MoveLeadStageResult = {
@@ -104,9 +106,10 @@ export type MoveLeadStageResult = {
  * - Lanza `StageGatewayError` con `code` específico si algo no es válido.
  */
 export async function moveLeadStage(
-  input: MoveLeadStageInput
+  input: MoveLeadStageInput, db: SafetyDb = getDb()
 ): Promise<MoveLeadStageResult> {
-  const db = getDb();
+  if (input.turnToken) return withCurrentTurn(input.turnToken, tx =>
+    moveLeadStage({ ...input, turnToken: undefined }, tx));
   const now = new Date();
 
   const currentRows = await db

@@ -4,6 +4,7 @@
  */
 export async function runCommercialDemoSelftest({ BASE, api, ok, waitFor }) {
   const local = url => ["localhost", "127.0.0.1", "[::1]"].includes(new URL(url).hostname);
+  const providerPort = Number(process.env.E2E_COMMERCIAL_PROVIDER_PORT ?? 3033);
   const dbUrl = process.env.E2E_COMMERCIAL_DATABASE_URL ?? process.env.DATABASE_URL;
   if (!dbUrl || !local(BASE) || !local(dbUrl) || !/^(commercial_resources_test|vocero_e2e)(_|$)/.test(new URL(dbUrl).pathname.slice(1)) ||
       process.env.WA_MOCK_ENABLED !== "true" || process.env.NODE_ENV === "production") throw new Error("021 requiere app/BD locales dedicadas y mocks");
@@ -11,7 +12,7 @@ export async function runCommercialDemoSelftest({ BASE, api, ok, waitFor }) {
   if (!health.ok) throw new Error(`021 app/BD no saludables: ${health.status}`);
   for (const key of ["META_GRAPH_BASE_URL", "TYPESAFE_JEV_ENDPOINT", "OPENROUTER_BASE_URL"]) {
     const url = process.env[key];
-    if (!url || !local(url) || new URL(url).port !== "3033") throw new Error(`021 ${key} debe apuntar al proveedor mock localhost:3033 también en la app`);
+    if (!url || !local(url) || Number(new URL(url).port) !== providerPort) throw new Error(`021 ${key} debe apuntar al proveedor mock localhost:3033 también en la app`);
   }
   const { default: http } = await import("node:http");
   const { default: postgres } = await import("postgres");
@@ -41,7 +42,7 @@ export async function runCommercialDemoSelftest({ BASE, api, ok, waitFor }) {
       res.end(JSON.stringify({ choices: [{ message: { content: JSON.stringify({ commercial_evidence: "supported", text: "Así funciona esta parte del sistema." }) } }] }));
     } catch { res.statusCode = 500; res.end("{}"); }
   });
-  await new Promise((resolve, reject) => { provider.once("error", reject); provider.listen(3033, "127.0.0.1", resolve); });
+  await new Promise((resolve, reject) => { provider.once("error", reject); provider.listen(providerPort, "127.0.0.1", resolve); });
   const sql = postgres(dbUrl, { max: 1, onnotice: () => {} });
   let org;
   let previousOrg;
@@ -78,11 +79,16 @@ export async function runCommercialDemoSelftest({ BASE, api, ok, waitFor }) {
           JOIN contact ct ON ct.id=c.contact_id LEFT JOIN media_asset a ON a.id=m.media_asset_id AND a.organization_id=m.organization_id
           WHERE m.organization_id=${org} AND ct.name=${label} AND m.direction='out' ORDER BY m.created_at`;
         const fresh = rows.filter(m => !oldIds.has(m.id));
-        return fresh.length ? fresh : null;
+        return fresh.length && fresh.every(m => m.status === "failed" || m.wa_message_id) ? fresh : null;
       }, 30000);
       if (!messages) throw new Error(`021 sin outbound ${label}`);
+      // Explicit provider status confirms effects; Graph wamid alone is pending.
+      for (const message of messages.filter(m => m.wa_message_id && m.status !== "failed")) {
+        const status = await api("/api/dev/wa-mock/status", { method: "POST", body: JSON.stringify({ waMessageId: message.wa_message_id, status: "sent" }) });
+        if (!status.res.ok) throw new Error("021 successful status rejected");
+      }
       const readFact = async () => (await sql`SELECT l.demo_shown_at FROM lead l JOIN contact c ON c.id=l.contact_id WHERE l.organization_id=${org} AND c.name=${label}`)[0]?.demo_shown_at;
-      const fact = messages[0]?.type === "video" && messages[0]?.status === "sent" ? await waitFor(readFact) : await readFact();
+      const fact = messages[0]?.type === "video" && messages[0]?.status !== "failed" ? await waitFor(readFact) : await readFact();
       const after = (await api("/api/dev/wa-mock/outbox")).json?.outbox ?? [];
       const lead = (await sql`SELECT l.last_jev_decision, c.id AS contact_id FROM lead l JOIN contact c ON c.id=l.contact_id WHERE l.organization_id=${org} AND c.name=${label}`)[0];
       const panel = await api(`/api/contacts/${lead.contact_id}`);
@@ -93,7 +99,7 @@ export async function runCommercialDemoSelftest({ BASE, api, ok, waitFor }) {
       const r = await send(`happy${index}`, text);
       ok(`021 · video nativo+caption en outbox ${index}`, r.outbox.length === 1 && r.outbox[0].type === "video" && !!r.outbox[0].body?.video?.caption);
       ok(`021 · hilo IA media+caption ${index}`, r.messages.length === 1 && r.messages[0].type === "video" && r.messages[0].text === null && !!r.messages[0].caption && r.messages[0].file_name === `${slots[index]}.mp4` && r.messages[0].origin === "ai" && r.messages[0].ai_generated);
-      ok(`021 · fact tras aceptación/persistencia ${index}`, !!r.fact);
+      ok(`021 · fact tras webhook exitoso/persistencia ${index}`, !!r.fact);
     }
     // 015: Jev mock reproduce el fallo proponiendo demo incluso con curiosidad.
     const referral = { source_type: "ad", source_id: "fixture-payments", headline: "Controla pagos y saldos pendientes", body: "Organiza pagos y saldos" };

@@ -174,7 +174,7 @@ describe("runSalesOrchestratorTurn", () => {
     vi.spyOn(console, "error").mockImplementation(() => {});
   });
 
-  it("present_price persiste AUTO_CLOSE y precio solo tras entrega", async () => {
+  it("present_price persiste AUTO_CLOSE y espera status para el precio", async () => {
     queueHappyPath("present_price");
     const { runSalesOrchestratorTurn } = await import(
       "@/server/sales/orchestrator"
@@ -189,11 +189,12 @@ describe("runSalesOrchestratorTurn", () => {
     expect(decisionPatch?.automationLane).toBe("auto_close");
     expect(decisionPatch?.stageId).not.toBe("st_won");
     expect(decisionPatch).not.toHaveProperty("pricePresentedAt");
-    expect(leadPatches[1]?.pricePresentedAt).toBeInstanceOf(Date);
+    expect(leadPatches.some(p => "pricePresentedAt" in p)).toBe(false);
+    expect(deliverReply).toHaveBeenCalledWith(CONVERSATION, "mensaje", expect.objectContaining({ leadId: "ld_1", scheduleFollowUp: true }));
     expect(graphRequest).not.toHaveBeenCalled();
   });
 
-  it("demo marca demoShownAt solo tras entrega", async () => {
+  it("demo aceptada no marca demoShownAt hasta status", async () => {
     queueHappyPath("show_operations_demo");
     const { runSalesOrchestratorTurn } = await import(
       "@/server/sales/orchestrator"
@@ -204,8 +205,8 @@ describe("runSalesOrchestratorTurn", () => {
       conversation: CONVERSATION as never,
     });
     expect(leadPatches[0]).not.toHaveProperty("demoShownAt");
-    expect(leadPatches[1]?.demoShownAt).toBeInstanceOf(Date);
-    expect(deliverDemo).toHaveBeenCalledWith(CONVERSATION, expect.objectContaining({ mimeType: "video/mp4" }), "mensaje");
+    expect(leadPatches.some(p => "demoShownAt" in p)).toBe(false);
+    expect(deliverDemo).toHaveBeenCalledWith(CONVERSATION, expect.objectContaining({ mimeType: "video/mp4" }), "mensaje", expect.objectContaining({ demoSlot: "demo_enrollment_panel" }));
     expect(deliverReply).not.toHaveBeenCalled();
   });
 
@@ -218,7 +219,7 @@ describe("runSalesOrchestratorTurn", () => {
     expect(leadPatches.some(p => "demoShownAt" in p)).toBe(false);
     if (failure === "absent") {
       expect(deliverDemo).not.toHaveBeenCalled();
-      expect(deliverReply).toHaveBeenCalledWith(CONVERSATION, expect.stringContaining("no está disponible"));
+      expect(deliverReply).toHaveBeenCalledWith(CONVERSATION, expect.stringContaining("no está disponible"), expect.any(Object));
       expect(writeSalesReply.mock.calls[0]![0].demo.available).toBe(false);
     } else expect(deliverReply).not.toHaveBeenCalled();
   });
@@ -240,7 +241,7 @@ describe("runSalesOrchestratorTurn", () => {
     });
     expect(deliverReply).not.toHaveBeenCalled();
     expect(leadPatches.some((p) => "pricePresentedAt" in p)).toBe(false);
-    expect(applyHandoff).toHaveBeenCalledWith("cv_1", "org_1", "commercial");
+    expect(applyHandoff).toHaveBeenCalledWith("cv_1", "org_1", "commercial", undefined, expect.any(Object));
   });
 
   it("schedule_call → HUMAN + handoff commercial aun si el writer falla", async () => {
@@ -259,7 +260,7 @@ describe("runSalesOrchestratorTurn", () => {
       conversation: CONVERSATION as never,
     });
     expect(leadPatches[0]?.automationLane).toBe("human");
-    expect(applyHandoff).toHaveBeenCalledWith("cv_1", "org_1", "commercial");
+    expect(applyHandoff).toHaveBeenCalledWith("cv_1", "org_1", "commercial", undefined, expect.any(Object));
   });
 
   it("disqualify mueve a lost, nunca a won, y no inventa nextFollowUpAt", async () => {
@@ -386,7 +387,7 @@ describe("runSalesOrchestratorTurn", () => {
       conversation: CONVERSATION as never,
     });
     expect(leadPatches[0]?.automationLane).toBe("human");
-    expect(applyHandoff).toHaveBeenCalledWith("cv_1", "org_1", "commercial");
+    expect(applyHandoff).toHaveBeenCalledWith("cv_1", "org_1", "commercial", undefined, expect.any(Object));
     expect(leadPatches.some((p) => "demoShownAt" in p)).toBe(false);
     const snapshot = leadPatches[0]?.lastJevDecision as {
       decision: { nextAction: { choice: string } };
@@ -396,3 +397,13 @@ describe("runSalesOrchestratorTurn", () => {
     expect(snapshot.plan.nextAction).toBe("show_operations_demo");
   });
 });
+
+// These tests isolate legacy business/flag contracts; 017 safety has real-module regressions.
+vi.mock("@/server/ai/turn-safety", async original => ({
+  ...await original<object>(),
+  captureTurnToken: async (organizationId: string, conversationId: string) => ({ organizationId, conversationId, inboundMessageId: "msg_1", manualMessageId: null }),
+  readTurnInbound: async () => ({ id: "msg_1", type: "text" }),
+  isTurnCurrent: async () => true,
+  withCurrentTurn: async (_token: unknown, effect: (db: unknown) => Promise<unknown>) => effect((await import("@/lib/db")).getDb()),
+}));
+vi.mock("@/server/sales/delivery-ledger", async original => ({ ...await original<object>(), reserveDemoSlot: async () => true }));

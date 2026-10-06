@@ -1,9 +1,10 @@
 /** 028 — spec 016: webhook real, proveedores mock, hilo/cola/UI; BD exclusiva. */
 export async function runCommercialEvidenceSelftest({ BASE, api, ok, waitFor, getCookie }) {
   const local = value => ["localhost", "127.0.0.1", "[::1]"].includes(new URL(value).hostname);
+  const providerPort = Number(process.env.E2E_COMMERCIAL_PROVIDER_PORT ?? 3033);
   const dbUrl = process.env.E2E_COMMERCIAL_DATABASE_URL ?? process.env.DATABASE_URL;
   if (!dbUrl || !local(BASE) || !local(dbUrl) || !/^(commercial_resources_test|vocero_e2e)(_|$)/.test(new URL(dbUrl).pathname.slice(1)) || process.env.WA_MOCK_ENABLED !== "true" || process.env.NODE_ENV === "production") throw new Error("028 requiere app/BD local dedicada y mocks");
-  for (const key of ["META_GRAPH_BASE_URL", "TYPESAFE_JEV_ENDPOINT", "OPENROUTER_BASE_URL"]) if (!process.env[key] || !local(process.env[key]) || new URL(process.env[key]).port !== "3033") throw new Error(`028 ${key} requiere mock :3033`);
+  for (const key of ["META_GRAPH_BASE_URL", "TYPESAFE_JEV_ENDPOINT", "OPENROUTER_BASE_URL"]) if (!process.env[key] || !local(process.env[key]) || Number(new URL(process.env[key]).port) !== providerPort) throw new Error(`028 ${key} requiere mock :3033`);
   if (!(await fetch(`${BASE}/api/health`)).ok) throw new Error("028 app no saludable");
   const { default: http } = await import("node:http");
   const { default: postgres } = await import("postgres");
@@ -25,7 +26,7 @@ export async function runCommercialEvidenceSelftest({ BASE, api, ok, waitFor, ge
     if (unavailable) { res.statusCode = 503; res.end("{}"); return; }
     res.end(JSON.stringify({ choices: [{ message: { content: JSON.stringify(reply) } }] }));
   });
-  await new Promise((resolve, reject) => { provider.once("error", reject); provider.listen(3033, "127.0.0.1", resolve); });
+  await new Promise((resolve, reject) => { provider.once("error", reject); provider.listen(providerPort, "127.0.0.1", resolve); });
   const sql = postgres(dbUrl, { max: 1, onnotice: () => {} });
   let browser, previousOrg;
   try {
@@ -55,7 +56,7 @@ export async function runCommercialEvidenceSelftest({ BASE, api, ok, waitFor, ge
         if (!rows[0]) return null;
         const messages = await sql`SELECT * FROM message WHERE organization_id=${org} AND conversation_id=${rows[0].id} AND direction='out' ORDER BY created_at`;
         const fresh = messages.filter(m => !old.has(m.id));
-        return (silent ? rows[0].handoff_at : fresh.length && rows[0].last_jev_decision) ? { ...rows[0], messages: fresh } : null;
+        return (silent ? rows[0].handoff_at : fresh.length && fresh.every(m => m.status === "failed" || m.wa_message_id) && rows[0].last_jev_decision) ? { ...rows[0], messages: fresh } : null;
       }, 45000);
       if (!done) throw new Error(`028 turno pendiente ${label}`);
       const after = (await api("/api/dev/wa-mock/outbox")).json?.outbox ?? [];

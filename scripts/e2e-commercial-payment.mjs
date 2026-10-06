@@ -1,6 +1,7 @@
 /** Sección 022: app/PG dedicadas, HTTP mock local, upgrade UI y pipeline de pago. */
 export async function runCommercialPaymentSelftest({ BASE, api, ok, waitFor, getCookie }) {
   const local = url => ["localhost", "127.0.0.1", "[::1]"].includes(new URL(url).hostname);
+  const providerPort = Number(process.env.E2E_COMMERCIAL_PROVIDER_PORT ?? 3033);
   const dbUrl = process.env.E2E_COMMERCIAL_DATABASE_URL ?? process.env.DATABASE_URL;
   if (!dbUrl || !local(BASE) || !local(dbUrl) ||
       !/^(commercial_resources_test|vocero_e2e)(_|$)/.test(new URL(dbUrl).pathname.slice(1)) ||
@@ -8,7 +9,7 @@ export async function runCommercialPaymentSelftest({ BASE, api, ok, waitFor, get
     throw new Error("022 requiere app/BD locales dedicadas y mocks");
   }
   for (const key of ["META_GRAPH_BASE_URL", "TYPESAFE_JEV_ENDPOINT", "OPENROUTER_BASE_URL"]) {
-    if (!process.env[key] || !local(process.env[key]) || new URL(process.env[key]).port !== "3033") {
+    if (!process.env[key] || !local(process.env[key]) || Number(new URL(process.env[key]).port) !== providerPort) {
       throw new Error(`022 ${key} debe apuntar a localhost:3033 también en la app`);
     }
   }
@@ -45,7 +46,7 @@ export async function runCommercialPaymentSelftest({ BASE, api, ok, waitFor, get
       res.end(JSON.stringify({ choices: [{ message: { content: JSON.stringify({ text: "Te paso con el equipo. https://evil.example.test/666" }) } }] }));
     } catch { res.statusCode = 500; res.end("{}"); }
   });
-  await new Promise((resolve, reject) => { provider.once("error", reject); provider.listen(3033, "127.0.0.1", resolve); });
+  await new Promise((resolve, reject) => { provider.once("error", reject); provider.listen(providerPort, "127.0.0.1", resolve); });
   const sql = postgres(dbUrl, { max: 1, onnotice: () => {} });
   let browser, previousOrg;
   try {
@@ -92,7 +93,7 @@ export async function runCommercialPaymentSelftest({ BASE, api, ok, waitFor, get
       const before = (await api("/api/dev/wa-mock/outbox")).json?.outbox ?? [];
       ok(`022 · inbound ${label}`, (await api("/api/dev/wa-mock/inbound", { method: "POST", body: JSON.stringify({ phoneNumberId: pn, from: phone, name: label, text: "Confirmo que quiero pagar para contratar", waMessageId: `wamid.pay.${pn}.${sequence}` }) })).res.ok);
       const result = await waitFor(async () => {
-        const rows = await sql`SELECT l.payment_instructions_sent_at, l.automation_lane, l.last_jev_error, c.handoff_reason, c.ai_enabled
+        const rows = await sql`SELECT c.id AS conversation_id, l.payment_instructions_sent_at, l.automation_lane, l.last_jev_error, c.handoff_reason, c.ai_enabled
           FROM lead l JOIN contact ct ON ct.id=l.contact_id JOIN conversation c ON c.contact_id=ct.id AND c.organization_id=l.organization_id
           WHERE l.organization_id=${org} AND ct.name=${label}`;
         return rows[0]?.handoff_reason || rows[0]?.last_jev_error ? rows[0] : null;
@@ -100,8 +101,17 @@ export async function runCommercialPaymentSelftest({ BASE, api, ok, waitFor, get
       if (!result) throw new Error(`022 turno incompleto ${label}`);
       const messages = await sql`SELECT m.* FROM message m JOIN conversation c ON c.id=m.conversation_id JOIN contact ct ON ct.id=c.contact_id
         WHERE m.organization_id=${org} AND ct.name=${label} AND m.direction='out' ORDER BY m.created_at`;
+      if (label === "payment-happy") ok("022 · wamid pending no payment fact", !result.payment_instructions_sent_at && messages.every(m => m.status === "pending"));
+      for (const message of messages.filter(m => m.wa_message_id && m.status !== "failed")) {
+        const status = await api("/api/dev/wa-mock/status", { method: "POST", body: JSON.stringify({ waMessageId: message.wa_message_id, status: "sent" }) });
+        if (!status.res.ok) throw Error("022 successful status rejected");
+        if (!await waitFor(async () => (await sql`SELECT status FROM message WHERE organization_id=${org} AND id=${message.id}`)[0]?.status === "sent")) throw Error("022 status not applied");
+      }
+      const [fresh] = await sql`SELECT l.payment_instructions_sent_at, l.automation_lane, l.last_jev_error, c.handoff_reason, c.ai_enabled
+        FROM conversation c JOIN lead l ON l.contact_id=c.contact_id AND l.organization_id=c.organization_id
+        WHERE c.organization_id=${org} AND c.id=${result.conversation_id}`;
       const after = (await api("/api/dev/wa-mock/outbox")).json?.outbox ?? [];
-      return { ...result, messages, outbox: after.filter(m => !before.some(b => b.n === m.n)) };
+      return { ...fresh, messages, outbox: after.filter(m => !before.some(b => b.n === m.n)) };
     };
     const happy = await send("payment-happy");
     const text = happy.messages.map(m => m.text).join("\n");
@@ -114,7 +124,7 @@ export async function runCommercialPaymentSelftest({ BASE, api, ok, waitFor, get
     rejectSend = true;
     const beforeReject = graphCalls;
     const failed = await send("payment-failed");
-    ok("022 · fallo sin fact/retry, handoff", !failed.payment_instructions_sent_at && failed.handoff_reason === "commercial" && failed.messages.length === 0 && failed.outbox.length === 0 && graphCalls === beforeReject + 1);
+    ok("022 · fallo sin fact/retry, handoff", !failed.payment_instructions_sent_at && ["commercial", "delivery_failed"].includes(failed.handoff_reason) && failed.messages.length === 1 && failed.messages[0].status === "failed" && failed.outbox.length === 0 && graphCalls === beforeReject + 1);
     rejectSend = false;
     await savePayment({ transfers: [], yape: null, paymentLink: null });
     const absent = await send("payment-absent");

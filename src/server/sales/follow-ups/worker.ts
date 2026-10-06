@@ -1,4 +1,5 @@
-import { asc, desc, eq, gt, or } from "drizzle-orm";
+import { captureTurnToken, type TurnToken } from "@/server/ai/turn-safety";
+import { asc, desc, eq, gt, ne, or } from "drizzle-orm";
 import { getDb, getSql, schema } from "@/lib/db";
 import { newId } from "@/lib/db/ids";
 import { scoped } from "@/lib/db/tenant";
@@ -50,6 +51,7 @@ type RawClaimedJob = {
   run_attempts: number;
   claimed_at: Date | null;
   message_id: string | null;
+  source_message_id: string | null;
   error: string | null;
   created_at: Date;
   updated_at: Date;
@@ -60,6 +62,7 @@ type LoadedContext = {
   lead: Lead;
   conversation: Conversation;
   profile: AgentProfile;
+  turnToken: TurnToken;
 };
 
 type GateFailure =
@@ -113,9 +116,9 @@ async function claimDueJobs(limit: number): Promise<FollowUpJob[]> {
       FROM sales_follow_up_job
       WHERE due_at <= (CURRENT_TIMESTAMP AT TIME ZONE 'UTC')
         AND (
-          status = 'pending'
+          status = 'pending' AND message_id IS NULL
           OR (
-            status = 'processing'
+            status = 'processing' AND message_id IS NULL
             AND claimed_at IS NOT NULL
             AND claimed_at < (CURRENT_TIMESTAMP AT TIME ZONE 'UTC') - (${CLAIM_LEASE_MS}::double precision * INTERVAL '1 millisecond')
           )
@@ -175,7 +178,9 @@ async function processClaimedJob(claimed: FollowUpJob): Promise<void> {
       return;
     }
 
-    await onSendSuccess(job, delivered.messageId);
+    if (conversation.isTest) await onSendSuccess(job, delivered.messageId);
+    // Real Graph acceptance leaves processing+message_id durable and unclaimable.
+    // A successful status confirms/counts/chains in the ledger transaction.
   } catch (err) {
     if (isTransientError(err)) {
       await requeueTechnicalRetry(job, shortError(err));
@@ -237,7 +242,9 @@ async function loadContext(
   const profile = profiles[0];
   if (!profile) return null;
 
-  return { job, lead, conversation, profile };
+  const turnToken = await captureTurnToken(orgId, conversation.id);
+  if (!turnToken) return null;
+  return { job, lead, conversation, profile, turnToken: { ...turnToken, sales: true, allowClosedWindow: true } };
 }
 
 async function revalidate(ctx: LoadedContext): Promise<GateFailure | null> {
@@ -364,6 +371,8 @@ async function sendOpenWindowFollowUp(
       organizationId: ctx.job.organizationId,
       text: written.text,
       aiGenerated: true,
+      deliveryMetadata: { token: { ...ctx.turnToken, allowClosedWindow: false }, leadId: ctx.lead.id, followUpJobId: ctx.job.id },
+      preSendGuard: async () => !await ensureEligibleToSend(ctx.job),
     });
     return { ok: true, messageId: sent.messageId };
   } catch (err) {
@@ -409,6 +418,9 @@ async function sendClosedWindowFollowUp(
       organizationId: ctx.job.organizationId,
       conversationId: ctx.job.conversationId,
       templateId: template.id,
+      aiGenerated: true,
+      deliveryMetadata: { token: ctx.turnToken, leadId: ctx.lead.id, followUpJobId: ctx.job.id },
+      preSendGuard: async () => !await ensureEligibleToSend(ctx.job),
     });
     return { ok: true, messageId: sent.messageId };
   } catch (err) {
@@ -552,6 +564,11 @@ async function requeueTechnicalRetry(
   job: FollowUpJob,
   error: string
 ): Promise<void> {
+  const current = await loadContext(job);
+  if (current?.job.messageId) {
+    await failJob(job, "delivery_uncertain", false);
+    return;
+  }
   const nextAttempts = job.runAttempts + 1;
   const now = new Date();
   if (nextAttempts >= MAX_RUN_ATTEMPTS) {
@@ -676,6 +693,7 @@ async function hasMessageAfterAnchor(job: FollowUpJob): Promise<boolean> {
         schema.message.organizationId,
         job.organizationId,
         eq(schema.message.conversationId, job.conversationId),
+        job.messageId ? ne(schema.message.id, job.messageId) : undefined,
         or(
           gt(schema.message.createdAt, job.anchorAt),
           gt(schema.message.waTimestamp, job.anchorAt)
@@ -833,6 +851,7 @@ function mapClaimedJob(row: RawClaimedJob): FollowUpJob {
     runAttempts: Number(row.run_attempts),
     claimedAt: row.claimed_at ? new Date(row.claimed_at) : null,
     messageId: row.message_id,
+    sourceMessageId: row.source_message_id ?? null,
     error: row.error,
     createdAt: new Date(row.created_at),
     updatedAt: new Date(row.updated_at),
