@@ -1,5 +1,6 @@
 "use client";
 
+import { CommercialExport } from "./commercial-export";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { ChevronLeft, PanelRight } from "lucide-react";
@@ -244,14 +245,17 @@ export function InboxClient() {
           vista === "lista" ? "flex w-full flex-col" : "hidden md:flex md:flex-col"
         )}
       >
-        <ConversationList
-          conversations={conversations}
-          selectedId={selectedId}
-          onSelect={select}
-          onSeeded={() => void refetchConversations()}
-          error={listError}
-          onRetry={() => void refetchConversations()}
-        />
+        <CommercialExport />
+        <div className="min-h-0 flex-1">
+          <ConversationList
+            conversations={conversations}
+            selectedId={selectedId}
+            onSelect={select}
+            onSeeded={() => void refetchConversations()}
+            error={listError}
+            onRetry={() => void refetchConversations()}
+          />
+        </div>
       </section>
 
       <section

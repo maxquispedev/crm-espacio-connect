@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createMemDb, type Row, type Tables } from "../fixtures/mem-db";
 import * as schema from "@/lib/db/schema";
 
@@ -64,6 +64,8 @@ const humanConversation = () => seedConversation({ handoff: true, id: "cv_human"
 const aiConversation = () => seedConversation({ id: "cv_ai" });
 
 beforeEach(() => {
+  vi.useFakeTimers({ toFake: ["Date"] });
+  vi.setSystemTime(T0);
   for (const bucket of Object.values(tables)) bucket!.length = 0;
 });
 
@@ -510,3 +512,6 @@ describe("013 C1 — la tabla declarada coincide con el módulo", () => {
     );
   });
 });
+
+// Fixed fixtures must not depend on the machine calendar.
+afterEach(() => vi.useRealTimers());

@@ -25,7 +25,7 @@
  */
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createMemDb, type Row, type Tables } from "../fixtures/mem-db";
 import { UnauthorizedError } from "@/lib/auth/session";
 import type {
@@ -683,6 +683,8 @@ describe("013 C4 · 'Marcar atendido' saca de 'Por atender'", () => {
 
 describe("013 C4 · 'Recordarme' mueve a la Agenda y 'Reactivar IA' limpia", () => {
   beforeEach(() => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(AHORA);
     for (const t of Object.values(tables)) t.length = 0;
     publish.mockClear();
     org = ORG_A;
@@ -975,3 +977,6 @@ describe("013 C4 · regresión de los filtros de la Bandeja (corte 2)", () => {
     expect(vacia).toContain('data-testid="bandeja-filtro-comprometidos"');
   });
 });
+
+// Fixed fixtures must not depend on the machine calendar.
+afterEach(() => vi.useRealTimers());

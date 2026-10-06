@@ -163,8 +163,11 @@ async function runSection021() {
 
 async function main() {
   // Cortes aislados: UI, demos, pago, la cola "Por atender" de 013 y la Agenda.
-  if (["020", "021", "022", "023", "024", "025", "026", "027", "028", "029"].includes(process.env.E2E_SECTION)) {
-    if (process.env.E2E_SECTION === "029") {
+  if (["020", "021", "022", "023", "024", "025", "026", "027", "028", "029", "030"].includes(process.env.E2E_SECTION)) {
+    if (process.env.E2E_SECTION === "030") {
+      const { runCommercialExportSelftest } = await import("./e2e-commercial-export.mjs");
+      await runCommercialExportSelftest({ BASE, api, ok, getCookie: () => cookie });
+    } else if (process.env.E2E_SECTION === "029") {
       const { runProductionMessagingSafetySelftest } = await import("./e2e-production-messaging-safety.mjs");
       await runProductionMessagingSafetySelftest({ BASE, api, ok, waitFor, getCookie: () => cookie });
     } else if (process.env.E2E_SECTION === "028") {

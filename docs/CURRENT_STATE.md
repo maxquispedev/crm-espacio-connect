@@ -1,3 +1,39 @@
+# Checkpoint 2026-10-06 — Spec 019: dataset comercial JSON
+
+Implementado **Conversaciones → Bandeja → Exportar dataset comercial**. Usuario
+con sesión y organización activa; Desde/Hasta inclusivos America/Lima seleccionan
+`conversation.created_at`, y cada conversación real (`is_test=false`) conserva su
+historial completo. Filtros opcionales: anuncios pagados (`source_type=ad`) y
+source_id. Disponible sin CAPI. Sin migraciones, proveedores, snapshots ni analytics.
+
+Endpoint interno `POST /api/commercial-export`: Zod estricto, joins y queries
+scoped por tenant, seis consultas batch en snapshot read-only repeatable read.
+JSON 1.0 con mensajes cronológicos, lead/etapa/lane/hechos, última decisión Jev
+normalizada, atribución, jobs, conversiones seguras y ledger comercial. No contactos,
+PII estructurada, raw, tokens, identificadores WhatsApp/CTWA ni paths. Textos y
+captions se conservan como fueron escritos (sin anonimización NLP).
+
+Contrato y límites: `docs/COMMERCIAL_DATASET_EXPORT.md`.
+Estado durable: `specs/019-commercial-dataset-export/tasks.md`.
+
+Verificación: typecheck/lint/build exit 0 (3 warnings preexistentes de lint);
+`pnpm test`: **1492 pass / 9 skipped**, 124 archivos (123 pass, 1 skipped).
+Self-test **030: 16/16**, Playwright + app Next dev + PostgreSQL local dedicado
+`commercial_export_test`, CAPI apagado, cero WhatsApp real. Incluye happy/unhappy,
+reintento, org A/B con source compartido, mensaje cross-tenant corrupto, laboratorio,
+PII, historial fuera del rango y límites al milisegundo. Suite E2E histórica completa
+no reejecutada; se ejecutó la sección aplicable a esta feature.
+
+Dos tests históricos de Agenda se hicieron deterministas fijando solo Date al
+reloj de sus fixtures: fallaban con el calendario real avanzado al 6 de octubre;
+no se modificó comportamiento productivo de Agenda.
+
+Sin push/deploy. Siguiente paso operativo: desplegar mediante el flujo habitual y
+usar el export de Vende Veloz con el rango real de campaña. No se exportaron datos
+reales en esta sesión. No hubo cambios de decisiones comerciales ni Obsidian.
+
+---
+
 # Checkpoint 2026-10-06 — Spec 018: horario comercial de los follow-ups
 
 **Los follow-ups automáticos ya no salen de madrugada.** Ventana
