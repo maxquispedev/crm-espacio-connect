@@ -25,4 +25,21 @@ D. Tres envíos de la secuencia → `lane=stop` + `no_reply_exhausted`
 E. Ventana 24h cerrada y sin plantilla → `followUpReason=template_required`,
    sin texto libre por Graph.
 
+## Horario comercial (spec 018)
+
+Regla: los follow-ups **automáticos** solo salen con
+`09:00 <= hora local < 20:00` en `America/Lima` (20:00 es límite **exclusivo**).
+El tick acepta `now` para fijar la hora local de decisión, así que el arnés
+puede provocar madrugada y mediodía a cualquier hora de la corrida.
+
+F. Job vencido reclamado a las **02:00 Lima** → cero outbound en el outbox del
+   mock (cero Graph), el job vuelve a `pending` con `outside_business_hours`,
+   `due_at` en el próximo **09:00 Lima**, `lead.next_follow_up_at` sincronizado
+   y **sin** consumir `attempt_number` ni `run_attempts`.
+G. El **mismo** job, reclamado ya dentro del horario (14:00 Lima), se envía una
+   sola vez y conserva su número de intento.
+
+Ejecutado por `scripts/e2e-follow-ups.mjs` (sección "horario comercial") y por
+el bloque de follow-ups de `scripts/e2e-selftest.mjs`.
+
 Cleanup: apaga Orchestrator y follow-ups (flujo legacy intacto).

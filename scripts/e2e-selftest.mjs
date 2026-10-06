@@ -1711,6 +1711,10 @@ async function main() {
     );
   }
 
+  // 018 · el worker decide el horario comercial con el instante que recibe, así
+  // que el arnés fija un reloj diurno (14:00 America/Lima) para que los ticks
+  // que esperan un envío no dependan de la hora real de la corrida.
+  const FU_DAY_NOW = "2026-09-20T19:00:00Z";
   console.log("\n== sales-follow-ups: motor automático (mocks) ==");
   const fuFlags = await api("/api/agent/profile", {
     method: "PUT",
@@ -1776,7 +1780,7 @@ async function main() {
     ((await api("/api/dev/wa-mock/outbox")).json?.outbox ?? []).length;
   const runB = await api("/api/dev/follow-ups/run", {
     method: "POST",
-    body: JSON.stringify({ expire: true, leadId: fuLeadId }),
+    body: JSON.stringify({ expire: true, leadId: fuLeadId, now: FU_DAY_NOW }),
   });
   ok("B tick expire ejecutado", runB.res.ok, JSON.stringify(runB.json));
   const fuOutB = await waitFor(async () => {
@@ -1834,7 +1838,7 @@ async function main() {
   for (let i = 0; i < 3; i++) {
     const tick = await api("/api/dev/follow-ups/run", {
       method: "POST",
-      body: JSON.stringify({ expire: true, leadId: fuLeadId }),
+      body: JSON.stringify({ expire: true, leadId: fuLeadId, now: FU_DAY_NOW }),
     });
     ok(`D tick ${i + 1}/3`, tick.res.ok, JSON.stringify(tick.json));
     await sleep(300);
@@ -1898,6 +1902,7 @@ async function main() {
       expire: true,
       closeWindow: true,
       leadId: eLeadId,
+      now: FU_DAY_NOW,
     }),
   });
   ok("E tick con ventana cerrada", runE.res.ok, JSON.stringify(runE.json));

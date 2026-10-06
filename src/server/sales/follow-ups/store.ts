@@ -6,6 +6,7 @@ import { scoped } from "@/lib/db/tenant";
 import type { SalesFollowUpJobStatus, SalesFollowUpReason } from "@/lib/types";
 import type { SalesPlan } from "@/server/sales/resolve-plan";
 import {
+  applyBusinessHours,
   classifyFollowUpReason,
   nextFollowUpDelay,
   shouldReactivateDormant,
@@ -44,6 +45,10 @@ export type ScheduleManualFollowUpResult =
 /**
  * Tras un envío comercial exitoso: cancela la secuencia anterior y programa
  * el intento 1. No-op si el plan no admite seguimiento o follow-ups están OFF.
+ *
+ * El `due_at` se normaliza al horario comercial (spec 018): un seguimiento
+ * automático nunca se programa para las 03:00. Los delays no cambian; lo que
+ * cambia es DÓNDE cae el vencimiento dentro del día.
  */
 export async function scheduleNextFollowUp(input: {
   organizationId: string;
@@ -66,7 +71,10 @@ export async function scheduleNextFollowUp(input: {
 
   await cancelOpenJobs(input.organizationId, input.leadId, "replaced_by_new_sequence", db);
 
-  const dueAt = new Date(input.anchorAt.getTime() + delayMs);
+  const dueAt = applyBusinessHours(
+    reason,
+    new Date(input.anchorAt.getTime() + delayMs)
+  );
   const job = await insertJob({
     organizationId: input.organizationId,
     leadId: input.leadId,
@@ -91,6 +99,10 @@ export async function scheduleNextFollowUp(input: {
 /**
  * Programación manual one-shot (`scheduled_wait`). No encadena 3 intentos.
  * Rechaza HUMAN y handoff; DORMANT (STOP + silencio) sí puede reactivarse.
+ *
+ * Spec 018: NO se normaliza al horario comercial. Aquí la fecha la eligió una
+ * persona a propósito (el operador la ve y la acepta); diferirla a las 09:00
+ * cambiaría un compromiso humano por una regla de máquina.
  */
 export async function scheduleManualFollowUp(input: {
   organizationId: string;
@@ -292,6 +304,9 @@ async function cancelOpenJobs(
 
 /**
  * Encola el siguiente intento comercial. No cancela el job ya `sent`.
+ * El `due_at` también se normaliza al horario comercial (spec 018): encadenar
+ * el intento 2 a las 02:00 debe correr tan solo hasta las 09:00, sin perder el
+ * intento ni alterar el delay relativo.
  */
 export async function enqueueFollowUpAttempt(input: {
   organizationId: string;
@@ -305,7 +320,10 @@ export async function enqueueFollowUpAttempt(input: {
   const delayMs = nextFollowUpDelay(input.reason, input.attemptNumber);
   if (delayMs === null) return null;
 
-  const dueAt = new Date(input.anchorAt.getTime() + delayMs);
+  const dueAt = applyBusinessHours(
+    input.reason,
+    new Date(input.anchorAt.getTime() + delayMs)
+  );
   const job = await insertJob({
     organizationId: input.organizationId,
     leadId: input.leadId,

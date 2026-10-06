@@ -1,3 +1,53 @@
+# Contrato vigente — horario comercial de los seguimientos (spec 018, 2026-10-06)
+
+Un seguimiento automático es un mensaje comercial que la máquina decide mandar.
+La política vigente: **solo sale dentro de `[09:00, 20:00)` de `America/Lima`**
+(20:00 es límite **exclusivo**). Quedarse fuera de horario **no** pierde ni
+consume un intento: el seguimiento se aplaza.
+
+Se aplica en **dos niveles**, porque el primero no basta:
+
+| Nivel | Dónde | Qué hace |
+|---|---|---|
+| 1 · programar | `scheduleNextFollowUp` y el encadenado del intento siguiente (`enqueueFollowUpAttempt`) | normaliza `anchorAt + delay` al próximo instante permitido |
+| 2 · antes del envío | `revalidate` del worker | si el instante local está fuera, devuelve el job a `pending` en el próximo inicio permitido |
+
+El nivel 2 es la barrera para jobs históricos ya persistidos con horas nocturnas,
+carreras y cambios futuros. Al diferir **no** se llama al writer, **no** se llama
+a Graph, **no** se incrementa `attempt_number` ni `run_attempts`, y el job
+**no** queda `failed` ni `blocked`: solo cambia su `due_at` (con
+`error = outside_business_hours`) y `lead.next_follow_up_at` se sincroniza. El
+retry técnico (`now + 15min`) también se normaliza por la misma regla.
+
+La zona es **explícita**: `FOLLOW_UP_TIME_ZONE = "America/Lima"`, sin fallback a
+`OPERATOR_TIMEZONE` ni a la zona del servidor. La agenda humana sí agrupa por
+`OPERATOR_TIMEZONE` porque ahí la zona es "qué día ve el operador"; aquí es "puede
+la máquina escribir", y degradar en silencio a la zona del servidor sería una
+política que no existe. Los timestamps durables siguen en UTC: la conversión a
+hora comercial es una decisión de policy.
+
+`scheduled_wait` **queda fuera**: es una fecha que el operador elige
+explícitamente desde el CRM, no una decisión de la máquina, así que su contrato
+se preserva en los dos niveles (incluso a las 03:00). El predicado que decide
+esto es una línea: `isAutomaticFollowUpReason`. La Agenda humana no cambia y
+sigue sin enviar WhatsApp por ningún camino.
+
+Ventana sobre los delays: los delays no cambian (6h/18h/48h y
+20h/+52h/+96h), el máximo sigue siendo 3 intentos y `scheduled_wait` sigue
+siendo one-shot. Lo que cambia es **dónde cae el vencimiento dentro del día**: un
+ancla a las 23:00 con delay 6hprograma las 09:00 en vez de las 05:00.
+
+Política centralizada en `src/server/sales/follow-ups/business-hours.ts` (módulo
+puro, sin BD/rede/reloj implícito); `policy.ts` la reexporta como fachada para
+que quien programa no conozca la regla. Worker con `now` inyectable
+(`runDueFollowUps({ now })`) para que el self-test pueda provocar madrugada y
+mediodía a cualquier hora de la corrida.
+
+Decisión de negocio pendiente de sincronizar en Obsidian: la ventana 09:00–20:00
+en Lima y la excepción `scheduled_wait`.
+
+---
+
 # Contrato vigente — confirmación durable (spec 017, 2026-10-05)
 
 Graph `wamid` deja el mensaje pending. Scheduling inicial, conteo comercial y
@@ -150,6 +200,11 @@ next_follow_up_at   = null
 
 Las constantes de cadencia y el máximo de intentos deben quedar posteriormente
 centralizadas y fáciles de modificar. No hardcodearlas dispersas.
+
+Estos delays son **relativos**: el instante resultante se normaliza después al
+horario comercial 09:00–20:00 `America/Lima` (spec 018, cabecera de este
+documento). Los delays no se tocan; lo que se ajusta es dónde cae el vencimiento
+dentro del día.
 
 ---
 
@@ -464,6 +519,16 @@ sin envío al vencer) y de que la Agenda se ordene por día local del operador
 ---
 
 ## Implementation log
+
+### 2026-10-06 — spec 018 (horario comercial)
+
+Se añadió la ventana `[09:00, 20:00)` en `America/Lima` para los seguimientos
+automáticos, en los dos niveles descritos en la cabecera. `scheduled_wait` y la
+Agenda humana quedan intactos. El worker ahora recibe `now` inyectable; los
+unitarios del worker dejaron de depender del reloj real. E2E de follow-ups
+**48/48** con un caso nocturno (outbox del mock sin cambios, job `pending` con
+`outside_business_hours`, `due_at` a las 09:00 Lima, lead sincronizado, sin
+consumir intento) y el mismo job enviándose ya dentro del horario.
 
 ### 2026-10-04 — 013 C3 (Agenda humana)
 

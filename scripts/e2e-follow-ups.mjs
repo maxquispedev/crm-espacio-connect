@@ -91,6 +91,18 @@ const PN = "PN-E2E-1";
 const FROM_FU = "521555019901";
 const FROM_FU_E = "521555019902";
 
+/**
+ * 018 · reloj comercial explícito para el tick. El worker decide el horario
+ * comercial con el instante que recibe (spec 018), así que un tick nocturno
+ * se puede provocar a las 15:00 y uno diurno a las 03:00: la suite deja de
+ * depender de la hora a la que se ejecuta.
+ *
+ * `America/Lima` es UTC-5: DAY = 14:00 locales (dentro de [09:00, 20:00)) y
+ * NIGHT = 02:00 locales (fuera).
+ */
+const DAY_NOW = "2026-09-20T19:00:00Z";
+const NIGHT_NOW = "2026-09-20T07:00:00Z";
+
 async function waitFor(fn, timeoutMs = 20000, intervalMs = 400) {
   const start = Date.now();
   while (Date.now() - start < timeoutMs) {
@@ -236,7 +248,7 @@ async function main() {
     ((await api("/api/dev/wa-mock/outbox")).json?.outbox ?? []).length;
   const runB = await api("/api/dev/follow-ups/run", {
     method: "POST",
-    body: JSON.stringify({ expire: true, leadId: fuLeadId }),
+    body: JSON.stringify({ expire: true, leadId: fuLeadId, now: DAY_NOW }),
   });
   ok("B tick expire ejecutado", runB.res.ok, JSON.stringify(runB.json));
   const fuOutB = await waitFor(async () => {
@@ -300,7 +312,7 @@ async function main() {
   for (let i = 0; i < 3; i++) {
     const tick = await api("/api/dev/follow-ups/run", {
       method: "POST",
-      body: JSON.stringify({ expire: true, leadId: fuLeadId }),
+      body: JSON.stringify({ expire: true, leadId: fuLeadId, now: DAY_NOW }),
     });
     ok(`D tick ${i + 1}/3`, tick.res.ok, JSON.stringify(tick.json));
     await confirmPending();
@@ -371,6 +383,7 @@ async function main() {
       expire: true,
       closeWindow: true,
       leadId: eLeadId,
+      now: DAY_NOW,
     }),
   });
   ok("E tick con ventana cerrada", runE.res.ok, JSON.stringify(runE.json));
@@ -420,7 +433,7 @@ async function main() {
   }
   const job = async (id) => (await sql`select * from sales_follow_up_job where id=${id}`)[0];
   const outCount = async () => ((await api('/api/dev/wa-mock/outbox')).json?.outbox ?? []).length;
-  const tick = async () => { const result = await api('/api/dev/follow-ups/run', {method:'POST',body:JSON.stringify({expire:false})}); await confirmPending(); return result; };
+  const tick = async () => { const result = await api('/api/dev/follow-ups/run', {method:'POST',body:JSON.stringify({expire:false, now: DAY_NOW})}); await confirmPending(); return result; };
   const before = await outCount();
   const concurrentId = await seedJob();
   writerDelay = 500;
@@ -454,7 +467,7 @@ async function main() {
   ok('retry técnico no consume intento comercial ni envía', retry.status==='pending' && retry.run_attempts===1 &&
     retry.attempt_number===1 && retryLead.follow_up_count===0 && retryLead.due===retryDue && (await outCount())===retryBefore);
   writerFail = false;
-  await api('/api/dev/follow-ups/run',{method:'POST',body:JSON.stringify({expire:true,leadId:ctx.lead})});
+  await api('/api/dev/follow-ups/run',{method:'POST',body:JSON.stringify({expire:true,leadId:ctx.lead, now: DAY_NOW})});
   await confirmPending();
   ok('retry entrega el mismo job una sola vez', (await job(retryId)).status==='sent' &&
     (await job(retryId)).attempt_number===1 && (await outCount())===retryBefore+1);
@@ -474,6 +487,53 @@ async function main() {
     const id=await seedJob(ctx,opts);const count=await outCount();await tick();const row=await job(id);
     ok(`${label} cancela y no envía`,row.status==='cancelled' && row.error===error && (await outCount())===count);
   }
+
+  // ---------------------------------------------------------------------
+  // F · 018 horario comercial: 09:00 <= hora local < 20:00 en America/Lima
+  // ---------------------------------------------------------------------
+  console.log('\n== follow-ups: horario comercial 09:00-20:00 America/Lima (spec 018) ==');
+  const jobDue = async (id) => (await sql`select due_at at time zone 'UTC' as due
+    from sales_follow_up_job where id=${id}`)[0]?.due;
+  const leadDue = async (leadId) => (await sql`select next_follow_up_at at time zone 'UTC' as due,
+    follow_up_count from lead where organization_id=${ctx.org} and id=${leadId}`)[0];
+
+  const nightId = await seedJob();
+  const nightOutboxBefore = await outCount();
+  const runNight = await api('/api/dev/follow-ups/run', {
+    method: 'POST',
+    body: JSON.stringify({ expire: true, leadId: ctx.lead, now: NIGHT_NOW }),
+  });
+  ok('F tick de madrugada aceptado por el arnés', runNight.res.ok, JSON.stringify(runNight.json));
+  const nightJob = await job(nightId);
+  const nightLead = await leadDue(ctx.lead);
+  const nightDue = await jobDue(nightId);
+
+  ok('F 02:00 Lima: cero Graph (el outbox del mock no crece)', (await outCount()) === nightOutboxBefore,
+    `${nightOutboxBefore} → ${await outCount()}`);
+  ok('F el job vuelve a pending, ni failed ni blocked',
+    nightJob.status === 'pending' && nightJob.error === 'outside_business_hours',
+    JSON.stringify({ status: nightJob.status, error: nightJob.error }));
+  ok('F reprogramado al próximo inicio permitido (09:00 Lima)',
+    nightDue instanceof Date && nightDue.getHours() === 9 && nightDue.getMinutes() === 0,
+    nightDue instanceof Date ? nightDue.toISOString() : String(nightDue));
+  ok('F lead.next_follow_up_at queda sincronizado con el job',
+    nightLead?.due instanceof Date && nightLead.due.getTime() === nightDue.getTime(),
+    `${nightLead?.due instanceof Date ? nightLead.due.toISOString() : null} vs ${nightDue instanceof Date ? nightDue.toISOString() : null}`);
+  ok('F quedarse fuera de horario no consume intento comercial ni run attempt',
+    nightJob.attempt_number === 1 && nightJob.run_attempts === 0 && nightLead?.follow_up_count === 0,
+    JSON.stringify({ attempt: nightJob.attempt_number, run: nightJob.run_attempts, count: nightLead?.follow_up_count }));
+
+  const dayOutboxBefore = await outCount();
+  const runDay = await api('/api/dev/follow-ups/run', {
+    method: 'POST',
+    body: JSON.stringify({ expire: true, leadId: ctx.lead, now: DAY_NOW }),
+  });
+  ok('F tick de día aceptado por el arnés', runDay.res.ok, JSON.stringify(runDay.json));
+  await confirmPending();
+  const dayJob = await job(nightId);
+  ok('F el mismo job se envía dentro del horario y conserva su intento',
+    dayJob.status === 'sent' && dayJob.attempt_number === 1 && (await outCount()) === dayOutboxBefore + 1,
+    JSON.stringify({ status: dayJob.status, attempt: dayJob.attempt_number, outbox: `${dayOutboxBefore} → ${await outCount()}` }));
 
   const orgB = `org_fu_${Date.now()}`;
   await sql`insert into organization(id,name,slug,created_at) values (${orgB},'Follow-up tenant B',${orgB},CURRENT_TIMESTAMP)`;

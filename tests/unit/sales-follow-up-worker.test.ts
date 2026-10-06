@@ -46,12 +46,12 @@ vi.mock("@/lib/db", () => ({
     update: () => ({
       set: (patch: Record<string, unknown>) => {
         updates.push(patch);
+        const rows = updateRows ?? [{ id: "x" }];
         return {
           where: () => {
             const chain = {
-              returning: () => Promise.resolve([{ id: "x" }]),
-              then: (resolve: (v: unknown) => void) =>
-                Promise.resolve([{ id: "x" }]).then(resolve),
+              returning: () => Promise.resolve(rows),
+              then: (resolve: (v: unknown) => void) => Promise.resolve(rows).then(resolve),
             };
             return chain;
           },
@@ -95,6 +95,24 @@ vi.mock("@/server/events/bus", () => ({ publish: vi.fn() }));
 
 const due = new Date("2026-09-20T12:00:00Z");
 const claimedAt = new Date("2026-09-20T12:00:01Z");
+
+/**
+ * 018 — reloj comercial explícito. Antes de este spec el worker usaba el reloj
+ * real, así que estos tests dependían de la hora a la que se ejecutaban: un
+ * caso que exige envío fallaría de madrugada y al mediodía. `America/Lima` es
+ * UTC-5, de modo que 19:00Z son las 14:00 locales (dentro de la ventana) y
+ * 07:00Z son las 02:00 (fuera).
+ */
+const NOW = new Date("2026-09-20T19:00:00Z"); // 14:00 Lima: permitido
+const NIGHT = new Date("2026-09-20T07:00:00Z"); // 02:00 Lima: diferido a 09:00
+const NEXT_ALLOWED = new Date("2026-09-20T14:00:00.000Z"); // 09:00 Lima del mismo día
+
+/**
+ * Cuando el update no toca fila (lease perdido, cancelación concurrente), el
+ * mock devuelve una lista vacía: es lo que impide que un reschedule escriba
+ * sobre un job que ya no es nuestro.
+ */
+let updateRows: Record<string, unknown>[] | null = null;
 
 function rawJob(over: Record<string, unknown> = {}) {
   return {
@@ -221,6 +239,7 @@ describe("worker de follow-ups", () => {
     capturedClaimValues = [];
     claimLocked = false;
     claimRows = [rawJob()];
+    updateRows = null;
     writeFollowUpText.mockReset();
     sendText.mockReset();
     sendTemplate.mockReset();
@@ -245,7 +264,7 @@ describe("worker de follow-ups", () => {
     const { runDueFollowUps, CLAIM_LEASE_MS } = await import(
       "@/server/sales/follow-ups/worker"
     );
-    await runDueFollowUps();
+    await runDueFollowUps({ now: NOW });
     expect(capturedClaimSql).toMatch(/FOR UPDATE SKIP LOCKED/);
     expect(capturedClaimSql).toMatch(/status = 'pending'/);
     expect(capturedClaimSql).toMatch(/status = 'processing'/);
@@ -257,7 +276,7 @@ describe("worker de follow-ups", () => {
     const { runDueFollowUps, CLAIM_LEASE_MS } = await import(
       "@/server/sales/follow-ups/worker"
     );
-    await runDueFollowUps();
+    await runDueFollowUps({ now: NOW });
     expect(capturedClaimValues).toEqual([CLAIM_LEASE_MS, 10]);
     expect(capturedClaimValues.some((value) => value instanceof Date)).toBe(false);
     expect(capturedClaimSql).toMatch(/claimed_at = date_trunc\('milliseconds', CURRENT_TIMESTAMP AT TIME ZONE 'UTC'\)/);
@@ -274,7 +293,7 @@ describe("worker de follow-ups", () => {
     queueContext();
     queueOpenWindowSelects();
     const { runDueFollowUps } = await import("@/server/sales/follow-ups/worker");
-    await Promise.all([runDueFollowUps(), runDueFollowUps()]);
+    await Promise.all([runDueFollowUps({ now: NOW }), runDueFollowUps({ now: NOW })]);
     expect(sendText).toHaveBeenCalledTimes(1);
     expect(writeFollowUpText).toHaveBeenCalledTimes(1);
   });
@@ -283,7 +302,7 @@ describe("worker de follow-ups", () => {
     queueContext();
     queueOpenWindowSelects();
     const { runDueFollowUps } = await import("@/server/sales/follow-ups/worker");
-    await runDueFollowUps();
+    await runDueFollowUps({ now: NOW });
     expect(writeFollowUpText).toHaveBeenCalledOnce();
     expect(sendText).toHaveBeenCalledOnce();
     expect(sendTemplate).not.toHaveBeenCalled();
@@ -299,7 +318,7 @@ describe("worker de follow-ups", () => {
       conversation: { lastInboundAt: new Date("2020-01-01T00:00:00Z") },
     });
     const { runDueFollowUps } = await import("@/server/sales/follow-ups/worker");
-    await runDueFollowUps();
+    await runDueFollowUps({ now: NOW });
     expect(sendText).not.toHaveBeenCalled();
     expect(sendTemplate).not.toHaveBeenCalled();
     expect(updates.some((u) => u.status === "blocked" && u.error === "template_required")).toBe(
@@ -315,7 +334,7 @@ describe("worker de follow-ups", () => {
     });
     selectQueue.push([{ id: "tpl_1", status: "pending", body: "Hola {{1}}" }]);
     const { runDueFollowUps } = await import("@/server/sales/follow-ups/worker");
-    await runDueFollowUps();
+    await runDueFollowUps({ now: NOW });
     expect(sendTemplate).not.toHaveBeenCalled();
     expect(updates.some((u) => u.status === "blocked")).toBe(true);
   });
@@ -325,7 +344,7 @@ describe("worker de follow-ups", () => {
     queueContext({ job: { attemptNumber: 3 } });
     queueOpenWindowSelects({ job: { attemptNumber: 3 } });
     const { runDueFollowUps } = await import("@/server/sales/follow-ups/worker");
-    await runDueFollowUps();
+    await runDueFollowUps({ now: NOW });
     expect(sendText).toHaveBeenCalledOnce();
     expect(inserts.some((v) => (v as { attemptNumber?: number }).attemptNumber === 4)).toBe(
       false
@@ -346,7 +365,7 @@ describe("worker de follow-ups", () => {
       lead: { automationLane: "wait", followUpReason: "scheduled_wait" },
     });
     const { runDueFollowUps } = await import("@/server/sales/follow-ups/worker");
-    await runDueFollowUps();
+    await runDueFollowUps({ now: NOW });
     expect(sendText).toHaveBeenCalledOnce();
     expect(inserts.filter((v) => (v as { reason?: string }).reason === "scheduled_wait")).toHaveLength(
       0
@@ -357,7 +376,7 @@ describe("worker de follow-ups", () => {
   it("handoff activo cancela y no envía", async () => {
     queueContext({ conversation: { handoffAt: new Date() } });
     const { runDueFollowUps } = await import("@/server/sales/follow-ups/worker");
-    await runDueFollowUps();
+    await runDueFollowUps({ now: NOW });
     expect(sendText).not.toHaveBeenCalled();
     expect(updates.some((u) => u.status === "cancelled" && u.error === "handoff_active")).toBe(
       true
@@ -367,7 +386,7 @@ describe("worker de follow-ups", () => {
   it("salesFollowUpsEnabled=false no envía", async () => {
     queueContext({ profile: { salesFollowUpsEnabled: false } });
     const { runDueFollowUps } = await import("@/server/sales/follow-ups/worker");
-    await runDueFollowUps();
+    await runDueFollowUps({ now: NOW });
     expect(sendText).not.toHaveBeenCalled();
     expect(updates.some((u) => u.error === "follow_ups_disabled")).toBe(true);
   });
@@ -377,7 +396,7 @@ describe("worker de follow-ups", () => {
       profile: { salesFollowUpsEnabled: true, salesOrchestratorEnabled: false },
     });
     const { runDueFollowUps } = await import("@/server/sales/follow-ups/worker");
-    await runDueFollowUps();
+    await runDueFollowUps({ now: NOW });
     expect(sendText).not.toHaveBeenCalled();
     expect(updates.some((u) => u.error === "follow_ups_disabled")).toBe(true);
   });
@@ -390,7 +409,7 @@ describe("worker de follow-ups", () => {
       detail: "timeout",
     });
     const { runDueFollowUps } = await import("@/server/sales/follow-ups/worker");
-    await runDueFollowUps();
+    await runDueFollowUps({ now: NOW });
     expect(sendText).not.toHaveBeenCalled();
     expect(updates.some((u) => u.followUpCount !== undefined)).toBe(false);
     const retry = updates.find((u) => u.status === "pending" && u.runAttempts === 1);
@@ -409,7 +428,7 @@ describe("worker de follow-ups", () => {
       detail: "timeout",
     });
     const { runDueFollowUps } = await import("@/server/sales/follow-ups/worker");
-    await runDueFollowUps();
+    await runDueFollowUps({ now: NOW });
 
     const retry = updates.find((u) => u.status === "pending" && u.runAttempts === 1);
     expect(retry?.dueAt).toBeInstanceOf(Date);
@@ -447,7 +466,7 @@ describe("worker de follow-ups", () => {
       lead: { nextFollowUpAt: retryDueAt },
     });
 
-    await runDueFollowUps();
+    await runDueFollowUps({ now: NOW });
     expect(updates.some((u) => u.error === "due_mismatch")).toBe(false);
     expect(sendText).toHaveBeenCalledOnce();
     expect(updates.some((u) => u.status === "sent")).toBe(false);
@@ -463,7 +482,7 @@ describe("worker de follow-ups", () => {
       },
     });
     const { runDueFollowUps } = await import("@/server/sales/follow-ups/worker");
-    await runDueFollowUps();
+    await runDueFollowUps({ now: NOW });
     expect(sendText).not.toHaveBeenCalled();
     expect(writeFollowUpText).not.toHaveBeenCalled();
     expect(updates.some((u) => u.error === "agent_disabled")).toBe(true);
@@ -482,7 +501,7 @@ describe("worker de follow-ups", () => {
     );
 
     const { runDueFollowUps } = await import("@/server/sales/follow-ups/worker");
-    const tick = runDueFollowUps();
+    const tick = runDueFollowUps({ now: NOW });
 
     // Esperar a que el writer quede pendiente.
     await vi.waitFor(() => {
@@ -526,7 +545,7 @@ describe("worker de follow-ups", () => {
       new SendError("meta_unavailable", "Graph 503")
     );
     const { runDueFollowUps } = await import("@/server/sales/follow-ups/worker");
-    await runDueFollowUps();
+    await runDueFollowUps({ now: NOW });
     expect(updates.some((u) => u.status === "failed")).toBe(true);
     expect(updates.some((u) => u.status === "pending")).toBe(false);
     expect(updates.some((u) => u.followUpReason === "follow_up_failed")).toBe(true);
@@ -536,7 +555,7 @@ describe("worker de follow-ups", () => {
     queueContext({ conversation: { isTest: true } });
     queueOpenWindowSelects({ conversation: { isTest: true } });
     const { runDueFollowUps } = await import("@/server/sales/follow-ups/worker");
-    await runDueFollowUps();
+    await runDueFollowUps({ now: NOW });
     expect(sendText).not.toHaveBeenCalled();
     expect(sendTemplate).not.toHaveBeenCalled();
     expect(inserts.some((v) => (v as { direction?: string }).direction === "out")).toBe(
@@ -544,10 +563,121 @@ describe("worker de follow-ups", () => {
     );
   });
 
+  // ---------------------------------------------------------------------
+  // 018 · horario comercial (segunda barrera, justo antes del outbound)
+  // ---------------------------------------------------------------------
+
+  it("02:00 Lima: ni writer, ni Graph, ni intento; vuelve a pending a las 09:00", async () => {
+    queueContext();
+    const { runDueFollowUps } = await import("@/server/sales/follow-ups/worker");
+    await runDueFollowUps({ now: NIGHT });
+
+    expect(writeFollowUpText).not.toHaveBeenCalled();
+    expect(sendText).not.toHaveBeenCalled();
+    expect(sendTemplate).not.toHaveBeenCalled();
+    expect(inserts).toHaveLength(0);
+
+    const defer = updates.find((u) => u.error === "outside_business_hours");
+    expect(defer).toBeTruthy();
+    expect(defer?.status).toBe("pending");
+    expect((defer?.dueAt as Date).toISOString()).toBe(NEXT_ALLOWED.toISOString());
+    expect(defer?.claimedAt).toBeNull();
+    // Un aplazamiento no es un fallo: nada de `failed` ni `blocked`.
+    expect(updates.some((u) => u.status === "failed" || u.status === "blocked")).toBe(
+      false
+    );
+
+    const leadPatch = updates.find((u) => u.nextFollowUpAt instanceof Date);
+    expect(leadPatch?.nextFollowUpAt).toEqual(NEXT_ALLOWED);
+  });
+
+  it("aplazar por horario NO consume attempt_number ni run_attempts", async () => {
+    claimRows = [rawJob({ attempt_number: 2, run_attempts: 1 })];
+    queueContext({ job: { attemptNumber: 2, runAttempts: 1 } });
+    const { runDueFollowUps } = await import("@/server/sales/follow-ups/worker");
+    await runDueFollowUps({ now: NIGHT });
+
+    const defer = updates.find((u) => u.error === "outside_business_hours");
+    expect(defer).toBeTruthy();
+    // `runAttempts` ni siquiera se escribe: el valor anterior (1) se conserva.
+    expect(Object.prototype.hasOwnProperty.call(defer!, "runAttempts")).toBe(false);
+    expect(updates.some((u) => u.attemptNumber !== undefined)).toBe(false);
+    // El intento comercial tampoco avanza: `followUpCount` es lo que lo cuenta.
+    expect(updates.some((u) => u.followUpCount !== undefined)).toBe(false);
+  });
+
+  it("10:00 Lima: el mismo job se envía con normalidad", async () => {
+    queueContext();
+    queueOpenWindowSelects();
+    const morning = new Date("2026-09-20T15:00:00Z"); // 10:00 Lima
+    const { runDueFollowUps } = await import("@/server/sales/follow-ups/worker");
+    await runDueFollowUps({ now: morning });
+    expect(writeFollowUpText).toHaveBeenCalledOnce();
+    expect(sendText).toHaveBeenCalledOnce();
+    expect(updates.some((u) => u.error === "outside_business_hours")).toBe(false);
+  });
+
+  it("20:30 Lima también se aplaza (límite superior exclusivo)", async () => {
+    queueContext();
+    const { runDueFollowUps } = await import("@/server/sales/follow-ups/worker");
+    await runDueFollowUps({ now: new Date("2026-09-21T01:30:00Z") });
+    const defer = updates.find((u) => u.error === "outside_business_hours");
+    expect(defer).toBeTruthy();
+    expect((defer?.dueAt as Date).toISOString()).toBe("2026-09-21T14:00:00.000Z");
+  });
+
+  it("si el job ya no es nuestro, el aplazamiento no escribe ni en job ni en lead", async () => {
+    queueContext();
+    updateRows = [];
+    const { runDueFollowUps } = await import("@/server/sales/follow-ups/worker");
+    await runDueFollowUps({ now: NIGHT });
+    expect(updates.some((u) => u.nextFollowUpAt instanceof Date)).toBe(false);
+    expect(sendText).not.toHaveBeenCalled();
+  });
+
+  it("cancelación gana al horario: un job en handoff a las 02:00 se cancela", async () => {
+    queueContext({ conversation: { handoffAt: new Date() } });
+    const { runDueFollowUps } = await import("@/server/sales/follow-ups/worker");
+    await runDueFollowUps({ now: NIGHT });
+    expect(updates.some((u) => u.status === "cancelled" && u.error === "handoff_active")).toBe(
+      true
+    );
+    expect(updates.some((u) => u.error === "outside_business_hours")).toBe(false);
+  });
+
+  it("un retry que caería a las 20:05 se reprograma al día siguiente a las 09:00", async () => {
+    // A las 19:50 la ventana sigue abierta, así que el writer corre y falla; el
+    // retry caería 15 minutos después, ya de noche.
+    queueContext();
+    writeFollowUpText.mockResolvedValue({
+      ok: false,
+      error: "provider_error",
+      detail: "timeout",
+    });
+    const { runDueFollowUps } = await import("@/server/sales/follow-ups/worker");
+    await runDueFollowUps({ now: new Date("2026-09-21T00:50:00Z") }); // 19:50 Lima
+
+    const retry = updates.find((u) => u.status === "pending" && u.runAttempts === 1);
+    expect(retry).toBeTruthy();
+    expect((retry?.dueAt as Date).toISOString()).toBe("2026-09-21T14:00:00.000Z");
+    expect(updates.find((u) => u.nextFollowUpAt instanceof Date)?.nextFollowUpAt).toEqual(
+      new Date("2026-09-21T14:00:00.000Z")
+    );
+  });
+
+  it("sandbox a las 02:00 tampoco sale: ni outbound local ni Graph", async () => {
+    queueContext({ conversation: { isTest: true } });
+    const { runDueFollowUps } = await import("@/server/sales/follow-ups/worker");
+    await runDueFollowUps({ now: NIGHT });
+    expect(inserts).toHaveLength(0);
+    expect(sendText).not.toHaveBeenCalled();
+    expect(sendTemplate).not.toHaveBeenCalled();
+  });
+
   it("claim de otra org no carga contexto (tenant)", async () => {
     selectQueue.push([]);
     const { runDueFollowUps } = await import("@/server/sales/follow-ups/worker");
-    await runDueFollowUps();
+    await runDueFollowUps({ now: NOW });
     expect(sendText).not.toHaveBeenCalled();
     expect(updates.some((u) => u.error === "context_missing")).toBe(true);
   });

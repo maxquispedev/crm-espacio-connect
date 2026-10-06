@@ -13,6 +13,13 @@ const bodySchema = z.object({
   expire: z.boolean().optional(),
   closeWindow: z.boolean().optional(),
   leadId: z.string().min(1).optional(),
+  /**
+   * Instante con el que el worker evalúa el horario comercial (spec 018).
+   * Solo mocks: permite verificar el caso nocturno a cualquier hora del día.
+   * El `due_at` sigue venciendo por el reloj de PostgreSQL; esto solo cambia
+   * la hora local de DECISIÓN del tick.
+   */
+  now: z.string().min(1).optional(),
 });
 
 /**
@@ -152,6 +159,16 @@ export const POST = withAuth(async (session, req: Request) => {
     });
   }
 
-  const processed = await runDueFollowUps();
-  return Response.json({ ok: true, processed });
+  const tickNow = body.data.now ? new Date(body.data.now) : undefined;
+  if (tickNow !== undefined && Number.isNaN(tickNow.getTime())) {
+    return Response.json(
+      { ok: false, error: "invalid_now" },
+      { status: 400 }
+    );
+  }
+
+  const processed = await runDueFollowUps(
+    tickNow ? { now: tickNow } : {}
+  );
+  return Response.json({ ok: true, processed, now: tickNow ?? null });
 });

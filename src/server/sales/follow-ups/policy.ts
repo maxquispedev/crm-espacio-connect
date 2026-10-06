@@ -1,6 +1,22 @@
 import type { SalesFollowUpReason } from "@/lib/types";
 import type { SalesPlan } from "@/server/sales/resolve-plan";
 
+/**
+ * Fachada de la ventana comercial (spec 018). Quien programa un follow-up
+ * importa desde aquí: la política vive entera en `business-hours.ts` y esto
+ * evita dispersar horarios por el motor.
+ */
+export {
+  applyBusinessHours,
+  isAutomaticFollowUpReason,
+  isWithinBusinessHours,
+  nextAllowedInstant,
+  BUSINESS_HOURS_END_MINUTE,
+  BUSINESS_HOURS_START_MINUTE,
+  FOLLOW_UP_TIME_ZONE,
+  OUTSIDE_BUSINESS_HOURS,
+} from "@/server/sales/follow-ups/business-hours";
+
 /** Máximo de mensajes comerciales por secuencia automática. */
 export const MAX_FOLLOW_UP_ATTEMPTS = 3;
 

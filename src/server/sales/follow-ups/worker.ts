@@ -12,6 +12,11 @@ import { writeFollowUpText } from "@/server/sales/follow-ups/follow-up-writer";
 import {
   hasMoreCommercialAttempts,
   MAX_RUN_ATTEMPTS,
+  applyBusinessHours,
+  isAutomaticFollowUpReason,
+  isWithinBusinessHours,
+  nextAllowedInstant,
+  OUTSIDE_BUSINESS_HOURS,
 } from "@/server/sales/follow-ups/policy";
 import {
   enqueueFollowUpAttempt,
@@ -67,7 +72,14 @@ type LoadedContext = {
 
 type GateFailure =
   | { kind: "cancelled"; error: string }
-  | { kind: "blocked"; error: string };
+  | { kind: "blocked"; error: string }
+  /**
+   * Spec 018: el job es válido pero la hora local está fuera de la ventana
+   * comercial. NO es un fallo: no se intentó enviar, no se consume intento
+   * comercial ni run attempt, y el job vuelve a `pending` en el próximo
+   * instante permitido.
+   */
+  | { kind: "defer"; error: string; nextDueAt: Date };
 
 /**
  * Arranca el interval in-process. Idempotente ante HMR.
@@ -85,17 +97,30 @@ export function startSalesFollowUpWorker(): void {
   });
 }
 
-/** Reclama y procesa un batch de jobs vencidos. Un job malo no tumba el resto. */
-export async function runDueFollowUps(): Promise<number> {
+/**
+ * Reclama y procesa un batch de jobs vencidos. Un job malo no tumba el resto.
+ *
+ * `now` es inyectable (spec 018): el timer real usa el reloj de siempre y el
+ * arnés de pruebas puede fijar un instante nocturno o de día para que el
+ * resultado no dependa de la hora a la que se ejecuta la suite.
+ *
+ * `now` es la foto del tick, no una lectura por envío: el residual de ventana
+ * es la duración del propio tick (segundos), y como el `due_at` ya entra
+ * normalizado en la ventana, ningún seguimiento se emite de madrugada.
+ */
+export async function runDueFollowUps(options: {
+  now?: Date;
+} = {}): Promise<number> {
+  const now = options.now ?? new Date();
   const claimed = await claimDueJobs(BATCH_SIZE);
   let processed = 0;
   for (const job of claimed) {
     try {
-      await processClaimedJob(job);
+      await processClaimedJob(job, now);
       processed += 1;
     } catch (err) {
       console.error(`[follow-up] job ${job.id} lanzó:`, err);
-      await recoverUnexpectedError(job, err);
+      await recoverUnexpectedError(job, err, now);
     }
   }
   return processed;
@@ -137,7 +162,10 @@ async function claimDueJobs(limit: number): Promise<FollowUpJob[]> {
   return rows.map(mapClaimedJob);
 }
 
-async function processClaimedJob(claimed: FollowUpJob): Promise<void> {
+async function processClaimedJob(
+  claimed: FollowUpJob,
+  now: Date
+): Promise<void> {
   const loaded = await loadContext(claimed);
   if (!loaded) {
     await finishJob(claimed, {
@@ -147,7 +175,7 @@ async function processClaimedJob(claimed: FollowUpJob): Promise<void> {
     return;
   }
 
-  const gate = await revalidate(loaded);
+  const gate = await revalidate(loaded, now);
   if (gate) {
     await applyGateFailure(loaded.job, gate);
     return;
@@ -157,21 +185,26 @@ async function processClaimedJob(claimed: FollowUpJob): Promise<void> {
 
   try {
     const delivered = conversation.isTest
-      ? await sendSandboxFollowUp(loaded)
+      ? await sendSandboxFollowUp(loaded, now)
       : isWindowOpen(conversation.lastInboundAt)
-        ? await sendOpenWindowFollowUp(loaded)
-        : await sendClosedWindowFollowUp(loaded);
+        ? await sendOpenWindowFollowUp(loaded, now)
+        : await sendClosedWindowFollowUp(loaded, now);
 
     if (!delivered.ok) {
       if (delivered.aborted) {
-        await applyGateFailure(job, {
-          kind: delivered.blocked ? "blocked" : "cancelled",
-          error: delivered.error,
-        });
+        // El gate pre-send viaja entero: un `defer` no puede convertirse en
+        // `cancelled` al perder el `kind` por el camino (spec 018).
+        await applyGateFailure(
+          job,
+          delivered.gate ?? {
+            kind: delivered.blocked ? "blocked" : "cancelled",
+            error: delivered.error,
+          }
+        );
         return;
       }
       if (delivered.retry) {
-        await requeueTechnicalRetry(job, delivered.error);
+        await requeueTechnicalRetry(job, delivered.error, now);
       } else {
         await failJob(job, delivered.error, delivered.blocked);
       }
@@ -183,7 +216,7 @@ async function processClaimedJob(claimed: FollowUpJob): Promise<void> {
     // A successful status confirms/counts/chains in the ledger transaction.
   } catch (err) {
     if (isTransientError(err)) {
-      await requeueTechnicalRetry(job, shortError(err));
+      await requeueTechnicalRetry(job, shortError(err), now);
       return;
     }
     throw err;
@@ -247,7 +280,10 @@ async function loadContext(
   return { job, lead, conversation, profile, turnToken: { ...turnToken, sales: true, allowClosedWindow: true } };
 }
 
-async function revalidate(ctx: LoadedContext): Promise<GateFailure | null> {
+async function revalidate(
+  ctx: LoadedContext,
+  now: Date
+): Promise<GateFailure | null> {
   const { job, lead, conversation, profile } = ctx;
 
   if (job.status !== "processing") {
@@ -290,15 +326,32 @@ async function revalidate(ctx: LoadedContext): Promise<GateFailure | null> {
   if (await hasMessageAfterAnchor(job)) {
     return { kind: "cancelled", error: "message_after_anchor" };
   }
+  // Última comprobación, a propósito (spec 018): si el job ya es inválido por
+  // otra causa (handoff, lane STOP, mensaje posterior al ancla) debe terminar en
+  // `cancelled` como siempre, no en un reschedule inútil. Y si es válido pero
+  // la máquina ya no puede escribir a esta hora, se difiere sin tocar intentos.
+  if (
+    isAutomaticFollowUpReason(job.reason) &&
+    !isWithinBusinessHours(now)
+  ) {
+    return {
+      kind: "defer",
+      error: OUTSIDE_BUSINESS_HOURS,
+      nextDueAt: nextAllowedInstant(now),
+    };
+  }
   return null;
 }
 
 /**
  * Revalidación justo antes de side effects externos (Graph / sandbox persist).
- * Cierra la ventana de carrera del writer LLM frente a inbound/cancel.
+ * Cierra la ventana de carrera del writer LLM frente a inbound/cancel, y
+ * vuelve a mirar el reloj comercial: si el writer tardó lo suficiente para
+ * cruzar las 20:00, el envío tampoco ocurre (spec 018).
  */
 async function ensureEligibleToSend(
-  claimed: FollowUpJob
+  claimed: FollowUpJob,
+  now: Date
 ): Promise<GateFailure | null> {
   const loaded = await loadContext(claimed);
   if (!loaded) {
@@ -307,7 +360,7 @@ async function ensureEligibleToSend(
   if (!claimMatches(claimed, loaded.job)) {
     return { kind: "cancelled", error: "claim_lost" };
   }
-  return revalidate(loaded);
+  return revalidate(loaded, now);
 }
 
 function claimMatches(claimed: FollowUpJob, current: FollowUpJob): boolean {
@@ -320,6 +373,10 @@ async function applyGateFailure(
   job: FollowUpJob,
   gate: GateFailure
 ): Promise<void> {
+  if (gate.kind === "defer") {
+    await deferUntilAllowed(job, gate.nextDueAt);
+    return;
+  }
   // Cancelación/lease ajeno: no sobrescribir error ni estado existentes.
   if (gate.error === "job_not_processing" || gate.error === "claim_lost") {
     return;
@@ -333,8 +390,48 @@ async function applyGateFailure(
   }
 }
 
+/**
+ * Segunda barrera del spec 018: el job se devuelve a `pending` en el próximo
+ * instante permitido.
+ *
+ * Lo que NO hace, y es el punto: no llama al writer, no llama a Graph, no
+ * incrementa `attempt_number` ni `run_attempts`, y no deja el job `failed` ni
+ * `blocked`. Quedarse fuera de horario no es un fallo de nada: es una espera.
+ *
+ * La escritura va bajo `stillOwnedWhere` (misma org + `processing` + mismo
+ * lease): si mientras tanto el job se canceló por inbound o respuesta manual,
+ * no se toca la fila ni el lead.
+ */
+async function deferUntilAllowed(
+  job: FollowUpJob,
+  nextDueAt: Date
+): Promise<void> {
+  const db = getDb();
+  const now = new Date();
+  const updated = await db
+    .update(schema.salesFollowUpJob)
+    .set({
+      status: "pending",
+      dueAt: nextDueAt,
+      claimedAt: null,
+      error: OUTSIDE_BUSINESS_HOURS,
+      updatedAt: now,
+    })
+    .where(stillOwnedWhere(job))
+    .returning({ id: schema.salesFollowUpJob.id });
+  if (updated.length === 0) return;
+
+  // El resumen de UI sigue al job: mismo intento, nueva hora.
+  await patchLeadFollowUp(job.organizationId, job.leadId, {
+    nextFollowUpAt: nextDueAt,
+    updatedAt: now,
+  });
+  publishConversation(job.organizationId, job.conversationId);
+}
+
 async function sendOpenWindowFollowUp(
-  ctx: LoadedContext
+  ctx: LoadedContext,
+  now: Date
 ): Promise<DeliverResult> {
   const turns = await loadTurns(ctx.job.organizationId, ctx.job.conversationId);
   const kb = await loadKb(ctx.job.organizationId);
@@ -354,15 +451,9 @@ async function sendOpenWindowFollowUp(
     };
   }
 
-  const preSend = await ensureEligibleToSend(ctx.job);
+  const preSend = await ensureEligibleToSend(ctx.job, now);
   if (preSend) {
-    return {
-      ok: false,
-      retry: false,
-      aborted: true,
-      blocked: preSend.kind === "blocked",
-      error: preSend.error,
-    };
+    return abortedByGate(preSend);
   }
 
   try {
@@ -372,22 +463,23 @@ async function sendOpenWindowFollowUp(
       text: written.text,
       aiGenerated: true,
       deliveryMetadata: { token: { ...ctx.turnToken, allowClosedWindow: false }, leadId: ctx.lead.id, followUpJobId: ctx.job.id },
-      preSendGuard: async () => !await ensureEligibleToSend(ctx.job),
+      preSendGuard: async () => !await ensureEligibleToSend(ctx.job, now),
     });
     return { ok: true, messageId: sent.messageId };
   } catch (err) {
     if (err instanceof SendError && err.code === "window_closed") {
-      return sendClosedWindowFollowUp(ctx);
+      return sendClosedWindowFollowUp(ctx, now);
     }
     if (err instanceof SendError && err.code === "sandbox_violation") {
-      return sendSandboxFollowUp(ctx);
+      return sendSandboxFollowUp(ctx, now);
     }
     throw err;
   }
 }
 
 async function sendClosedWindowFollowUp(
-  ctx: LoadedContext
+  ctx: LoadedContext,
+  now: Date
 ): Promise<DeliverResult> {
   const templateId = ctx.profile.salesFollowUpTemplateId;
   if (!templateId) {
@@ -402,15 +494,9 @@ async function sendClosedWindowFollowUp(
     return { ok: false, retry: false, blocked: true, error: "template_required" };
   }
 
-  const preSend = await ensureEligibleToSend(ctx.job);
+  const preSend = await ensureEligibleToSend(ctx.job, now);
   if (preSend) {
-    return {
-      ok: false,
-      retry: false,
-      aborted: true,
-      blocked: preSend.kind === "blocked",
-      error: preSend.error,
-    };
+    return abortedByGate(preSend);
   }
 
   try {
@@ -420,7 +506,7 @@ async function sendClosedWindowFollowUp(
       templateId: template.id,
       aiGenerated: true,
       deliveryMetadata: { token: ctx.turnToken, leadId: ctx.lead.id, followUpJobId: ctx.job.id },
-      preSendGuard: async () => !await ensureEligibleToSend(ctx.job),
+      preSendGuard: async () => !await ensureEligibleToSend(ctx.job, now),
     });
     return { ok: true, messageId: sent.messageId };
   } catch (err) {
@@ -440,7 +526,10 @@ async function sendClosedWindowFollowUp(
   }
 }
 
-async function sendSandboxFollowUp(ctx: LoadedContext): Promise<DeliverResult> {
+async function sendSandboxFollowUp(
+  ctx: LoadedContext,
+  now: Date
+): Promise<DeliverResult> {
   const windowOpen = isWindowOpen(ctx.conversation.lastInboundAt);
   if (!windowOpen) {
     const templateId = ctx.profile.salesFollowUpTemplateId;
@@ -464,15 +553,9 @@ async function sendSandboxFollowUp(ctx: LoadedContext): Promise<DeliverResult> {
         error: "template_required",
       };
     }
-    const preSend = await ensureEligibleToSend(ctx.job);
+    const preSend = await ensureEligibleToSend(ctx.job, now);
     if (preSend) {
-      return {
-        ok: false,
-        retry: false,
-        aborted: true,
-        blocked: preSend.kind === "blocked",
-        error: preSend.error,
-      };
+      return abortedByGate(preSend);
     }
     const messageId = await persistSandboxOutbound(
       ctx.conversation,
@@ -498,15 +581,9 @@ async function sendSandboxFollowUp(ctx: LoadedContext): Promise<DeliverResult> {
       error: written.error,
     };
   }
-  const preSend = await ensureEligibleToSend(ctx.job);
+  const preSend = await ensureEligibleToSend(ctx.job, now);
   if (preSend) {
-    return {
-      ok: false,
-      retry: false,
-      aborted: true,
-      blocked: preSend.kind === "blocked",
-      error: preSend.error,
-    };
+    return abortedByGate(preSend);
   }
   const messageId = await persistSandboxOutbound(ctx.conversation, written.text);
   return { ok: true, messageId };
@@ -562,7 +639,8 @@ async function onSendSuccess(
 
 async function requeueTechnicalRetry(
   job: FollowUpJob,
-  error: string
+  error: string,
+  now: Date
 ): Promise<void> {
   const current = await loadContext(job);
   if (current?.job.messageId) {
@@ -570,12 +648,17 @@ async function requeueTechnicalRetry(
     return;
   }
   const nextAttempts = job.runAttempts + 1;
-  const now = new Date();
   if (nextAttempts >= MAX_RUN_ATTEMPTS) {
     await failJob(job, error, false, nextAttempts);
     return;
   }
-  const retryDueAt = new Date(now.getTime() + RETRY_DELAY_MS);
+  // Retry técnico del mismo intento comercial: mismo contrato, otra hora. Se
+  // normaliza al horario comercial (spec 018) para no despertar el worker de
+  // madrugada cada 15 minutos esperando a las 09:00; el nivel 2 lo haría igual.
+  const retryDueAt = applyBusinessHours(
+    job.reason,
+    new Date(now.getTime() + RETRY_DELAY_MS)
+  );
   const db = getDb();
   const updated = await db
     .update(schema.salesFollowUpJob)
@@ -585,7 +668,7 @@ async function requeueTechnicalRetry(
       claimedAt: null,
       error,
       dueAt: retryDueAt,
-      updatedAt: now,
+      updatedAt: new Date(),
     })
     .where(stillOwnedWhere(job))
     .returning({ id: schema.salesFollowUpJob.id });
@@ -620,11 +703,12 @@ async function failJob(
 
 async function recoverUnexpectedError(
   job: FollowUpJob,
-  err: unknown
+  err: unknown,
+  now: Date
 ): Promise<void> {
   try {
     if (isTransientError(err)) {
-      await requeueTechnicalRetry(job, shortError(err));
+      await requeueTechnicalRetry(job, shortError(err), now);
       return;
     }
     await failJob(job, shortError(err));
@@ -877,4 +961,21 @@ type DeliverResult =
       blocked?: boolean;
       /** Gate pre-send: no reintentar ni fallar; respetar cancelación. */
       aborted?: boolean;
+      /**
+       * El gate pre-send completo. Viaja entero para que `defer` (spec 018) no
+       * se degrade a `cancelled` al cruzar esta frontera.
+       */
+      gate?: GateFailure;
     };
+
+/** Gate pre-send → resultado abortado que conserva el `kind` del gate. */
+function abortedByGate(gate: GateFailure): DeliverResult {
+  return {
+    ok: false,
+    retry: false,
+    aborted: true,
+    blocked: gate.kind === "blocked",
+    error: gate.error,
+    gate,
+  };
+}

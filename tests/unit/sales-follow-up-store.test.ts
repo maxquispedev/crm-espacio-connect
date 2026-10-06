@@ -333,4 +333,82 @@ describe("store de follow-ups", () => {
     expect(fuOff).toEqual({ ok: false, error: "follow_ups_disabled" });
     expect(inserts).toHaveLength(0);
   });
+
+  // ---------------------------------------------------------------------
+  // 018 · nivel 1: el `due_at` se normaliza al horario comercial
+  // ---------------------------------------------------------------------
+
+  it("anchor de día: el delay no mueve un due_at ya válido", async () => {
+    selectQueue.push([PROFILE_ON]);
+    const { scheduleNextFollowUp } = await import(
+      "@/server/sales/follow-ups/store"
+    );
+    // 10:00 Lima + 6h = 16:00 Lima (09:00Z + 6h = 15:00Z → 10:00 local... se
+    // ancla a las 09:00 Lima para que el resultado sea inequívoco).
+    const job = await scheduleNextFollowUp({
+      organizationId: "org_1",
+      leadId: "ld_1",
+      conversationId: "cv_1",
+      plan: PLAN_AUTO,
+      anchorAt: new Date("2026-09-20T14:00:00Z"), // 09:00 Lima
+    });
+    expect((job?.dueAt as Date).toISOString()).toBe("2026-09-20T20:00:00.000Z"); // 15:00 Lima
+    expect(leadPatches.at(-1)?.nextFollowUpAt).toEqual(job?.dueAt);
+  });
+
+  it("anchor de noche: el intento 1 se difiere a las 09:00 del mismo día", async () => {
+    selectQueue.push([PROFILE_ON]);
+    const { scheduleNextFollowUp } = await import(
+      "@/server/sales/follow-ups/store"
+    );
+    // 23:00 Lima + 6h = 05:00 del día siguiente, todavía de madrugada.
+    const job = await scheduleNextFollowUp({
+      organizationId: "org_1",
+      leadId: "ld_1",
+      conversationId: "cv_1",
+      plan: PLAN_AUTO,
+      anchorAt: new Date("2026-09-21T04:00:00Z"), // 23:00 Lima del 20
+    });
+    expect((job?.dueAt as Date).toISOString()).toBe("2026-09-21T14:00:00.000Z"); // 09:00 Lima
+    // El resumen de UI sigue al job: mismo instante, sin desfase.
+    expect(leadPatches.at(-1)?.nextFollowUpAt).toEqual(job?.dueAt);
+  });
+
+  it("el intento encadenado también se normaliza, sin perder el delay relativo", async () => {
+    const { enqueueFollowUpAttempt } = await import(
+      "@/server/sales/follow-ups/store"
+    );
+    // Intento 2: +18h desde las 04:00 Lima caen a las 22:00 del día siguiente.
+    const job = await enqueueFollowUpAttempt({
+      organizationId: "org_1",
+      leadId: "ld_1",
+      conversationId: "cv_1",
+      reason: "awaiting_reply",
+      attemptNumber: 2,
+      anchorAt: new Date("2026-09-21T09:00:00Z"), // 04:00 Lima
+    });
+    expect((job?.dueAt as Date).toISOString()).toBe("2026-09-22T14:00:00.000Z"); // 09:00 Lima
+    expect(leadPatches.at(-1)?.nextFollowUpAt).toEqual(job?.dueAt);
+  });
+
+  it("scheduled_wait conserva la fecha que eligió el operador, de noche y de día", async () => {
+    const night = new Date("2026-09-21T08:00:00Z"); // 03:00 Lima
+    selectQueue.push([PROFILE_ON]);
+    selectQueue.push([{ id: "ld_1", contactId: "ct_1", automationLane: "auto" }]);
+    selectQueue.push([{ id: "cv_1", handoffAt: null }]);
+    const { scheduleManualFollowUp } = await import(
+      "@/server/sales/follow-ups/store"
+    );
+    const result = await scheduleManualFollowUp({
+      organizationId: "org_1",
+      leadId: "ld_1",
+      dueAt: night,
+      now: new Date("2026-09-20T14:00:00Z"),
+    });
+    expect(result.ok).toBe(true);
+    expect((inserts[0] as { dueAt: Date }).dueAt.toISOString()).toBe(
+      "2026-09-21T08:00:00.000Z"
+    );
+    expect(leadPatches.at(-1)?.nextFollowUpAt).toEqual(night);
+  });
 });

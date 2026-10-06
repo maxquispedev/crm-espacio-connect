@@ -1,3 +1,102 @@
+# Checkpoint 2026-10-06 — Spec 018: horario comercial de los follow-ups
+
+**Los follow-ups automáticos ya no salen de madrugada.** Ventana
+`09:00 <= hora local < 20:00` en `America/Lima` (20:00 **exclusivo**),
+aplicada en dos niveles y sin UI ni configuración por organización. Cero
+WhatsApp real, cero proveedor real, cero deploy, cero push.
+
+Récord durable: `specs/018-follow-up-business-hours/` (spec, plan, tasks).
+
+**El contrato que cambia de fondo.** Un `due_at` calculado como
+`anchorAt + delay` ya no significa "ese instante": significa "el primer
+instante permitido a partir de él". Un ancla a las 23:00 con delay 6h programa
+las 09:00, no las 05:00. Los delays no se tocan, ni el máximo de 3 intentos, ni
+la ventana de 24h, ni las plantillas, ni las lanes.
+
+**Dos barreras, porque la primera no basta.** Al programar
+(`scheduleNextFollowUp` y el encadenado del intento siguiente) el `due_at` se
+normaliza. Y el worker **revalida la hora local justo antes del outbound**: si
+un job vencido se reclama a las 02:00, no se llama al writer, no se llama a
+Graph, no se incrementa `attempt_number` ni `run_attempts`, no queda `failed`
+ni `blocked`; el job vuelve a `pending` con `due_at` en el próximo inicio
+permitido y `lead.next_follow_up_at` sincronizado. La segunda barrera existe
+para jobs históricos ya guardados con horas nocturnas, carreras y cambios
+futuros. Si el job además es inválido por otra causa (handoff, lane STOP,
+mensaje posterior al ancla), manda esa: el horario se evalúa **último** a
+propósito.
+
+**Zona explícita.** `FOLLOW_UP_TIME_ZONE = "America/Lima"`, sin fallback a
+`OPERATOR_TIMEZONE` ni a la zona del servidor: la agenda usa `OPERATOR_TIMEZONE`
+porque allí la zona es "qué día ve el operador"; aquí es "puede la máquina
+escribir". La aritmética de zona reutiliza `zonedParts`/`fromLocalWall` de
+`agenda-buckets` (sin dependencias nuevas, solo `Intl`). Los timestamps durables
+siguen en UTC: convertir a hora comercial es policy, no almacenamiento.
+
+**`scheduled_wait` y la Agenda humana, intactos.** `scheduled_wait` es una fecha
+que elige una persona desde el CRM, no una decisión de la máquina: no se
+normaliza en ninguno de los dos niveles (incluso a las 03:00). La Agenda nunca
+envió WhatsApp y sigue igual. El predicado es una línea
+(`isAutomaticFollowUpReason`), por si el dueño decide lo contrario.
+
+## Verificación ejecutada
+
+| Gate | Resultado |
+|---|---|
+| `pnpm typecheck` | exit 0 |
+| `pnpm lint` | exit 0 — 0 errores, 3 warnings preexistentes |
+| `pnpm build` | exit 0 |
+| `pnpm test` | **1472 pass / 9 skipped**, 121 archivos (120 pass + 1 skipped) |
+| E2E follow-ups (`scripts/e2e-follow-ups.mjs`) | **48/48**, exit 0 |
+
+26 tests nuevos: 14 de la policy pura (08:59→09:00, 09:00/15:00/19:59 permitidos,
+20:00 y 20:01 al día siguiente, cruce de día/mes/año, UTC que es madrugada en
+Lima, idempotencia, independencia de la zona del proceso y de
+`OPERATOR_TIMEZONE`), 4 de store (programación, encadenado y `scheduled_wait`) y
+8 de worker (02:00 sin writer/Graph/intento, 10:00 flujo normal, límite de 20:30,
+cancelación gana al horario, retry que caería a las 20:05, sandbox).
+
+E2E con app Next real (`next dev`, `WA_MOCK_ENABLED=true`), PostgreSQL 18.4 en
+base exclusiva `commercial_resources_test_bizhours`, Graph y LLM deterministas
+locales. El caso nocturno comprueba **texto emitido y estado durable**, no un
+status 2xx: outbox del mock sin cambios, job `pending` con
+`outside_business_hours`, `due_at` a las 09:00 Lima, `attempt_number` 1 y
+`run_attempts` 0, y el mismo job enviándose ya dentro del horario conservando su
+intento. Las regresiones A–E, tenant y sandbox siguen verdes.
+
+**Determinismo del arnés.** El worker acepta `now` inyectado
+(`runDueFollowUps({ now })`, expuesto en `POST /api/dev/follow-ups/run`), así que
+la suite provoca madrugada y mediodía a cualquier hora de la corrida. Antes de
+este spec, los unitarios del worker usaban el reloj real: un caso que exige
+envío fallaría si se ejecutara de madrugada.
+
+## Pendientes honestos
+
+1. **`pnpm test:e2e` completo sigue sin completar, y no por este spec.** El
+   `main()` de `scripts/e2e-selftest.mjs` muere en la sección de UI `011`
+   (`scripts/e2e-selftest.mjs:2098`) sin try/catch, y en una base recién
+   migrada además falla antes: el operador `e2e@vocero.test` se crea sin
+   organización y toda llamada autenticada responde 401. Se comprobó con línea
+   base (`git stash`, mismo Postgres, misma app, misma base): **sin los cambios
+   de 018 el bloque de follow-ups falla igual o peor** (7 FAIL frente a 6). Los
+   ticks de ese bloque se les pasó `now: FU_DAY_NOW` para que no dependan de la
+   hora real, pero su resultado depende del arnés general. **Dueño
+   pendiente**: arreglar la precondición de organización y el crash sin
+   try/catch de la 011. El E2E dedicado de follow-ups (`scripts/e2e-follow-ups.mjs`)
+   no depende de esa precondición y está verde.
+2. **Decisión de negocio por confirmar en Obsidian**: la ventana 09:00–20:00 Lima
+   y, sobre todo, la excepción `scheduled_wait` (un operador que programe a las
+   03:00 sigue recibiendo el envío a las 03:00). Si se quiere cubrirlo, es
+   invertir el predicado de una línea.
+3. `now` es la foto del tick: el residual de ventana es la duración del propio
+   tick (segundos), no una lectura por envío. No se considera un hueco.
+4. Sin migración de schema, sin UI, sin dependencias nuevas, sin backfill: los
+   jobs históricos con hora nocturna no se reescriben; los difiere el worker la
+   primera vez que los reclama.
+5. Nada se desplegó. La migración previa `0011` (spec 017) sigue siendo
+   requisito del entorno destino antes de desplegar este código.
+
+---
+
 # Checkpoint 2026-10-06 — Spec 017: seguridad de mensajería productiva
 
 **Los siete incidentes están implementados, integrated y verificados en vivo.

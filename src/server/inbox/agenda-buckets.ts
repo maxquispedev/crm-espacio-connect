@@ -128,8 +128,12 @@ function offsetMs(instantMs: number, timeZone: string): number {
  * en su reloj) al instante UTC real. Dos rondas corrigen el offset porque en un
  * cambio de horario el primer guess puede usar el offset equivocado: el muro se
  * calcula con un offset y el resultado se vuelve a interpretar con otro.
+ *
+ * Exportado (no solo interno) porque es la aritmética de zona canónica del
+ * repo: la policy de horario comercial de follow-ups (spec 018) la reutiliza
+ * en vez de reimplementar el offset en un segundo sitio.
  */
-function fromLocalWall(wallMs: number, timeZone: string): number {
+export function fromLocalWall(wallMs: number, timeZone: string): number {
   let instant = wallMs - offsetMs(wallMs, timeZone);
   instant = wallMs - offsetMs(instant, timeZone);
   return instant;
