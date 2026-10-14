@@ -75,6 +75,7 @@ export async function findOrgBySlug(
 export async function reserveEvent(input: {
   organizationId: string;
   externalId: string;
+  eventType?: string;
 }): Promise<ReservedEvent> {
   const db = getDb();
   const inserted = await db
@@ -83,7 +84,7 @@ export async function reserveEvent(input: {
       id: newId("integrationEvent"),
       organizationId: input.organizationId,
       source: WHMCS_SOURCE,
-      eventType: INVOICE_CREATED_EVENT,
+      eventType: input.eventType ?? INVOICE_CREATED_EVENT,
       externalId: input.externalId,
       status: "reserved",
     })
@@ -110,7 +111,7 @@ export async function reserveEvent(input: {
         schema.integrationEvent.organizationId,
         input.organizationId,
         eq(schema.integrationEvent.source, WHMCS_SOURCE),
-        eq(schema.integrationEvent.eventType, INVOICE_CREATED_EVENT),
+        eq(schema.integrationEvent.eventType, input.eventType ?? INVOICE_CREATED_EVENT),
         eq(schema.integrationEvent.externalId, input.externalId)
       )
     )
@@ -224,6 +225,25 @@ export async function processInvoiceCreated(
   payload: InvoiceCreatedPayload,
   deps: InvoiceCreatedDeps = defaultInvoiceCreatedDeps
 ): Promise<ProcessInvoiceCreatedResult> {
+  return processWhmcsTemplate({
+    client: payload.client,
+    externalId: invoiceExternalId(payload.invoiceId),
+    variables: buildInvoiceTemplateVariables(payload),
+    urlButtonSuffix: String(payload.invoiceId),
+  }, deps);
+}
+
+/** Shared at-most-once orchestration; existing created defaults stay unchanged. */
+export async function processWhmcsTemplate(
+  input: {
+    client: InvoiceCreatedPayload["client"];
+    externalId: string;
+    variables: string[];
+    urlButtonSuffix: string;
+    validate?: () => void;
+  },
+  deps: InvoiceCreatedDeps
+): Promise<ProcessInvoiceCreatedResult> {
   const org = await deps.findOrgBySlug(WHMCS_ORG_SLUG);
   if (!org) {
     throw new WhmcsIntegrationError(
@@ -233,8 +253,8 @@ export async function processInvoiceCreated(
     );
   }
 
-  const phone = normalizeClientPhone(payload.client.phone);
-  const externalId = invoiceExternalId(payload.invoiceId);
+  const phone = normalizeClientPhone(input.client.phone);
+  const externalId = input.externalId;
 
   const reserved = await deps.reserveEvent({
     organizationId: org.id,
@@ -250,10 +270,11 @@ export async function processInvoiceCreated(
   }
 
   try {
+    input.validate?.();
     const { contact } = await deps.getOrCreateContact(
       org.id,
       phone,
-      payload.client.name
+      input.client.name
     );
     const conversation = await deps.getOrCreateConversation(org.id, contact.id);
     if (conversation.isTest) {
@@ -277,8 +298,8 @@ export async function processInvoiceCreated(
       organizationId: org.id,
       conversationId: conversation.id,
       templateId: template.id,
-      variables: buildInvoiceTemplateVariables(payload),
-      urlButtonSuffix: String(payload.invoiceId),
+      variables: input.variables,
+      urlButtonSuffix: input.urlButtonSuffix,
     });
 
     await deps.markEvent({

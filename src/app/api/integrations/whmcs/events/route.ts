@@ -8,12 +8,16 @@ import {
   INVOICE_PAID_EVENT,
   invoiceCreatedSchema,
   invoicePaidSchema,
+  invoiceReminderSchema,
+  serviceSuspendedSchema,
 } from "@/server/integrations/whmcs/payload";
 import {
   processInvoiceCreated,
   WhmcsIntegrationError,
 } from "@/server/integrations/whmcs/invoice-created";
 import { processInvoicePaid } from "@/server/integrations/whmcs/invoice-paid";
+
+import { processInvoiceReminder, processServiceSuspended } from "@/server/integrations/whmcs/notifications";
 
 export const dynamic = "force-dynamic";
 
@@ -67,6 +71,17 @@ export async function POST(req: Request) {
       return apiError(400, "invalid_body", "Payload inválido");
     }
     return runProcessor(() => processInvoicePaid(parsed.data));
+  }
+
+  if (envelope.data.event === "invoice.reminder") {
+    const parsed = invoiceReminderSchema.safeParse(json);
+    if (!parsed.success) return apiError(400, "invalid_body", "Payload inválido");
+    return runProcessor(() => processInvoiceReminder(parsed.data));
+  }
+  if (envelope.data.event === "service.suspended") {
+    const parsed = serviceSuspendedSchema.safeParse(json);
+    if (!parsed.success) return apiError(400, "invalid_body", "Payload inválido");
+    return runProcessor(() => processServiceSuspended(parsed.data));
   }
 
   return apiError(422, "unsupported_event", "Evento no soportado");

@@ -4,6 +4,10 @@ import { processInvoiceCreated } from "@/server/integrations/whmcs/invoice-creat
 import { processInvoicePaid } from "@/server/integrations/whmcs/invoice-paid";
 import { resetRateLimit } from "@/lib/rate-limit";
 
+import { processInvoiceReminder, processServiceSuspended } from "@/server/integrations/whmcs/notifications";
+vi.mock("@/server/integrations/whmcs/notifications", () => ({
+  processInvoiceReminder: vi.fn(), processServiceSuspended: vi.fn(),
+}));
 const SECRET = "whmcs-secret-de-prueba-32ch";
 
 vi.mock("@/lib/env", () => ({
@@ -187,4 +191,16 @@ describe("POST /api/integrations/whmcs/events", () => {
     expect(vi.mocked(processInvoicePaid)).not.toHaveBeenCalled();
     expect(vi.mocked(processInvoiceCreated)).not.toHaveBeenCalled();
   });
+});
+
+const reminderBody = { ...validBody, event: "invoice.reminder", reminderId: "due-2026-04-02" };
+const suspensionBody = { event: "service.suspended", suspensionId: "transition-1", serviceId: 42,
+  invoiceId: 1296, client: validBody.client,
+  service: { productName: "Espacio Impulsa", domain: "ejemplo.com", status: "Suspended", suspensionReason: "nonpayment" },
+  invoice: { serviceId: 42, number: "1296", currency: "USD", balance: "49.99", status: "Unpaid" } };
+describe.each([{ body: reminderBody, processor: processInvoiceReminder }, { body: suspensionBody, processor: processServiceSuspended }])("nuevo evento $body.event", ({ body, processor }) => {
+  beforeEach(() => { resetRateLimit(); vi.mocked(processor).mockReset(); vi.mocked(processor).mockResolvedValue({ ok: true, duplicate: false, status: "completed" }); });
+  it("HMAC válido", async () => { const { POST } = await import("@/app/api/integrations/whmcs/events/route"); expect((await POST(signedRequest(body))).status).toBe(200); expect(processor).toHaveBeenCalledTimes(1); });
+  it("HMAC inválido", async () => { const { POST } = await import("@/app/api/integrations/whmcs/events/route"); expect((await POST(signedRequest(body, { signature: "sha256=00" }))).status).toBe(401); expect(processor).not.toHaveBeenCalled(); });
+  it("payload inválido", async () => { const { POST } = await import("@/app/api/integrations/whmcs/events/route"); expect((await POST(signedRequest({ ...body, client: null }))).status).toBe(400); expect(processor).not.toHaveBeenCalled(); });
 });

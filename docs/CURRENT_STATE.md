@@ -1,3 +1,22 @@
+# Checkpoint 2026-10-14 — Spec 021: WHMCS recordatorio y suspensión
+
+Receptor implementado para `invoice.reminder` → `invoice_reminder` y
+`service.suspended` → `service_suspended`, ambos exactos `es_PE` approved.
+Created/paid conservan contratos e idiomas. Orquestación compartida con created,
+sender existente, HMAC, tenant espacio-veloz, reserva UNIQUE antes de efectos.
+Sin cron, UI, migración ni cambios en WHMCS. Factura ambigua/ausente en suspensión:
+failed controlado sin mensaje; nombre real de producto/dominio obligatorios.
+
+Contrato JSON e instrucciones WHMCS: `docs/WHMCS_EVENTS.md`.
+Estado/evidencia: `specs/021-whmcs-reminder-suspension/tasks.md`.
+87/87 tests WHMCS; typecheck/lint/build verdes (warnings históricos).
+E2E Next + PostgreSQL temporal + Graph stub: 26 PASS, happy/unhappy, regresiones.
+Suite global: 1572 pass / 3 failed / 9 skipped; mismos tres fallos reproducidos
+en base original da04397 (fixtures de Agenda con fechas ya vencidas). Gate global
+pendiente; no READY global. Plantillas/hook/proveedor real pendientes externos.
+No push/deploy. Próximo paso: hooks WHMCS con IDs estables y asociación inequívoca,
+aprobación/sync de plantillas; corregir fixtures de Agenda en corte separado.
+
 # Checkpoint 2026-10-06 — Spec 020: correcciones conversacionales de producción
 
 Implementados los cuatro incidentes reales de Vende Veloz 365 en un corte

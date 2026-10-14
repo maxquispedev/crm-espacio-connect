@@ -190,3 +190,76 @@ export function buildInvoicePaidTemplateVariables(
     formatPaidAt(payload.invoice.paidAt),
   ];
 }
+
+export const INVOICE_REMINDER_EVENT = "invoice.reminder";
+export const SERVICE_SUSPENDED_EVENT = "service.suspended";
+export const INVOICE_REMINDER_TEMPLATE = "invoice_reminder";
+export const SERVICE_SUSPENDED_TEMPLATE = "service_suspended";
+
+// New contracts use canonical positive IDs, unlike the historical contracts.
+const canonicalIdSchema = z.union([
+  z.number().int().positive().max(2_147_483_647),
+  z.string().regex(/^[1-9][0-9]{0,19}$/),
+]);
+const occurrenceIdSchema = z.string().trim().min(1).max(100).regex(/^[A-Za-z0-9._:-]+$/);
+const amountSchema = z.string().trim().regex(/^\d{1,15}\.\d{2}$/);
+const currencySchema = z.string().regex(/^[A-Z]{3}$/);
+const dateSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/).refine((value) => {
+  const date = new Date(`${value}T00:00:00Z`);
+  return !Number.isNaN(date.getTime()) && date.toISOString().slice(0, 10) === value;
+}, "Fecha inválida");
+
+export const invoiceReminderSchema = isolateWhmcsPayload(z.object({
+  event: z.literal(INVOICE_REMINDER_EVENT),
+  reminderId: occurrenceIdSchema,
+  invoiceId: canonicalIdSchema,
+  client: clientSchema,
+  invoice: z.object({
+    number: z.string().trim().min(1).max(40),
+    currency: currencySchema,
+    total: amountSchema,
+    dueDate: dateSchema,
+  }),
+}));
+export type InvoiceReminderPayload = z.infer<typeof invoiceReminderSchema>;
+
+export const serviceSuspendedSchema = isolateWhmcsPayload(z.object({
+  event: z.literal(SERVICE_SUSPENDED_EVENT),
+  suspensionId: occurrenceIdSchema,
+  serviceId: canonicalIdSchema,
+  invoiceId: canonicalIdSchema.nullable(),
+  client: clientSchema,
+  service: z.object({
+    productName: z.string().trim().min(1).max(200),
+    domain: z.string().trim().min(1).max(253),
+    status: z.literal("Suspended"),
+    suspensionReason: z.literal("nonpayment"),
+  }),
+  invoice: z.object({
+    serviceId: canonicalIdSchema,
+    number: z.string().trim().min(1).max(40),
+    currency: currencySchema,
+    balance: amountSchema,
+    status: z.literal("Unpaid"),
+  }).nullable(),
+}));
+export type ServiceSuspendedPayload = z.infer<typeof serviceSuspendedSchema>;
+
+export function reminderExternalId(payload: InvoiceReminderPayload): string {
+  return JSON.stringify([String(payload.invoiceId), payload.reminderId]);
+}
+export function suspensionExternalId(payload: ServiceSuspendedPayload): string {
+  return JSON.stringify([String(payload.serviceId), payload.suspensionId]);
+}
+export function buildInvoiceReminderTemplateVariables(payload: InvoiceReminderPayload): string[] {
+  return [payload.client.name.trim(), payload.invoice.number.trim(),
+    formatInvoiceAmount(payload.invoice.total, payload.invoice.currency),
+    formatDueDate(payload.invoice.dueDate)];
+}
+export function buildServiceSuspendedTemplateVariables(payload: ServiceSuspendedPayload): string[] {
+  if (!payload.invoice || !payload.invoiceId ||
+      String(payload.invoice.serviceId) !== String(payload.serviceId) ||
+      Number(payload.invoice.balance) <= 0) return [];
+  return [payload.client.name.trim(), `${payload.service.productName.trim()} - ${payload.service.domain.trim()}`,
+    payload.invoice.number.trim(), formatInvoiceAmount(payload.invoice.balance, payload.invoice.currency)];
+}
